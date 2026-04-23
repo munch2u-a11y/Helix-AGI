@@ -1,0 +1,104 @@
+# Helix AGI — Configuration
+# Copy this to config.yaml and customize
+
+# ── Identity ─────────────────────────────────────────────────
+identity:
+  name: "YourAgent"           # Your agent's name
+  version: "V5"
+
+# These are read by setup.py and architecture_preamble.py
+agent_name: "YourAgent"
+creator_name: "YourName"
+
+# ── LLM Configuration ───────────────────────────────────────
+# Provider for the conscious mind ('gemini', 'anthropic', 'openai')
+conscious_provider: "gemini"
+
+# All subconscious agents rely on Gemini for cost/context reasons
+gemini:
+  conscious_model: "gemini-2.5-flash"     # Primary thinking model
+  default_model: "gemini-2.5-flash"       # Sub-agents, classification
+  heavy_model: "gemini-2.5-flash"         # Librarian, deep thought
+  daily_cost_limit_usd: 5.00
+  monthly_cost_limit_usd: 100.00
+
+# API key — set via env var GEMINI_API_KEY or here
+gemini_api_key: "YOUR_GEMINI_API_KEY"
+
+anthropic:
+  conscious_model: "claude-3-7-sonnet-20250219"
+
+openai:
+  conscious_model: "gpt-4o"
+
+anthropic_api_key: ""
+openai_api_key: ""
+
+# ── Consciousness ────────────────────────────────────────────
+consciousness:
+  heartbeat_ramp: [5, 10, 15, 30, 60, 120, 240]   # Seconds between pulses (accelerates on activity)
+
+# ── Circadian Rhythm ─────────────────────────────────────────
+sleep_start_hour: 1       # When to go dormant (24h)
+sleep_end_hour: 6         # When to wake
+overnight_hour: 1         # When to run overnight processing
+morning_hour: 6           # When to deliver morning pulse
+pre_dawn_minutes: 5       # Minutes before morning to brief subconscious agents
+
+# ── Scheduler ────────────────────────────────────────────────
+scheduler:
+  check_interval: 30            # Seconds between task checks
+  max_scheduled_tasks: 50       # Max pending tasks
+
+# ── Communication ────────────────────────────────────────────
+telegram:
+  enabled: false                # Set true and add token to enable
+  # token: "YOUR_BOT_TOKEN"    # Get from @BotFather
+  # owner_id: ""               # Your Telegram user ID
+
+# ── Perception ───────────────────────────────────────────────
+camera:
+  enabled: false
+  device: 0                     # Camera device index
+
+audio:
+  enabled: false
+  device: ""                    # Audio device name (substring match)
+  sample_rate: 16000
+  vad_aggressiveness: 2         # 0-3, higher = more aggressive noise filter
+  wake_words: ["agent", "hey"]  # Customize with your agent's name
+  amplitude_threshold: 8000
+  min_speech_duration: 1.5
+
+# ── Sensory Cortex ───────────────────────────────────────────
+sensory:
+  multi_frame_count: 3          # Frames to capture per observation
+  frame_delay_ms: 500           # Delay between frames
+
+# ── Memory ───────────────────────────────────────────────────
+memory:
+  db_path: "brain/memory.db"
+  chroma_path: "brain/chroma"
+
+# ── Beliefs ──────────────────────────────────────────────────
+beliefs:
+  graph_path: "brain/belief_graph.json"
+
+# ── Sentinel ─────────────────────────────────────────────────
+sentinel:
+  probe_interval: 300           # Seconds between stability probes
+  omega_baseline: 0.5           # Default hedonic baseline
+
+# ── Overnight Processing ─────────────────────────────────────
+overnight:
+  psych_doctor_rounds: 60       # Max agentic rounds for overnight analysis
+  psych_doctor_budget: 5.00     # Max cost per overnight cycle
+
+# ── Web Search ───────────────────────────────────────────────
+web_search:
+  engine: "duckduckgo"          # Default search backend
+
+# ── Logging ──────────────────────────────────────────────────
+logging:
+  level: INFO
+  file: logs/daemon.log

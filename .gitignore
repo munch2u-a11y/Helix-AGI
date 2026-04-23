@@ -1,0 +1,52 @@
+# Runtime data
+data/
+*.db
+*.sqlite3
+memory_store/
+chroma_shadow/
+chroma_db/
+
+# Spatial mind runtime state
+*.npy
+*_space_state.json
+attention_center*.npy
+
+# Personal data
+journals/
+profiles/
+logs/
+briefings/
+scratchpad.md
+contacts.json
+belief_graph.json
+emerging_beliefs.json
+sensory_journal.json
+scheduled_tasks.json
+
+# Config with secrets
+config.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.sw[mnop]
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
+nohup.out
