@@ -81,6 +81,8 @@ class UnconsciousSystem:
         self.gemini = gemini_client
         self.base_dir = base_dir
         self._spatial_mind = spatial_mind
+        self._keeper = None
+        self._librarian = None
 
         # Dream trail — accumulated during overnight processing.
         # Each spatial navigation by a subconscious agent creates a
@@ -94,6 +96,11 @@ class UnconsciousSystem:
         # Analysis output
         self.analysis_dir = base_dir / "logs" / "overnight"
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    def set_agents(self, keeper, librarian):
+        """Wire the subconscious agents into the overnight orchestrator."""
+        self._keeper = keeper
+        self._librarian = librarian
 
     # ── Main overnight pipeline ──────────────────────────────────────
 
@@ -204,66 +211,9 @@ class UnconsciousSystem:
         logger.info("OVERNIGHT CYCLE COMPLETE")
         logger.info("=" * 60)
 
+        logger.info("=" * 60)
+
         return results
-
-    def _navigate_and_record(self, target_text: str, action: str, agent: str):
-        """Navigate the spatial mind toward a target and record the dream fragment.
-
-        Uses the same pulse_from_text() that the conscious model uses,
-        so the movement is governed by the same Euler-Lagrange physics:
-          ẍ = F_gravity + F_stability + F_stimulus
-
-        The subconscious agents are literally "thinking about" the target
-        belief, which pulls the attention center toward its region in 8D
-        space. The spatial context returned (flashes, nearby beliefs/memories)
-        becomes the dream content.
-        """
-        sm = self._spatial_mind
-        if not sm:
-            return
-
-        try:
-            # Snapshot position before navigation
-            from_pos = sm.attention_center.copy().tolist()
-
-            # Pulse toward the target — this applies gravity, stability,
-            # and stimulus forces exactly as during conscious processing.
-            # The spatial context string contains ⟪ ⟫ flashes and nearby items.
-            context = sm.pulse_from_text(target_text)
-
-            # Snapshot position after navigation
-            to_pos = sm.attention_center.copy().tolist()
-
-            # Parse the spatial context to extract flashes and nearby items
-            flashes = []
-            nearby = []
-            for line in context.split("\n"):
-                # Extract ⟪ ⟫ flash markers
-                if "⟪" in line:
-                    flashes.extend(re.findall(r"⟪([^⟫]+)⟫", line))
-                # Extract nearby beliefs (bullet points)
-                elif line.startswith("• "):
-                    # Strip confidence suffix like " [0.85]"
-                    text = re.sub(r"\s*\[\d+\.\d+\]$", "", line[2:]).strip()
-                    if text:
-                        nearby.append(text)
-                # Memory lines (no prefix)
-                elif line.strip() and not line.startswith("•"):
-                    nearby.append(line.strip())
-
-            fragment = DreamFragment(
-                from_pos=from_pos,
-                to_pos=to_pos,
-                flashes=flashes[:5],
-                action=action,
-                agent=agent,
-                nearby=nearby[:5],
-                timestamp=datetime.now().isoformat(),
-            )
-            self._dream_trail.append(fragment)
-
-        except Exception as e:
-            logger.debug(f"Spatial navigation for {action} failed: {e}")
 
     def _collect_days_experience(self) -> dict:
         """Collect all of Helix's experience from the past day.
@@ -909,148 +859,121 @@ Output ONLY valid JSON:
             return json.dumps({"error": str(e)})
 
     def _psych_add_belief(self, args: dict) -> str:
-        """Add a propositional belief — navigating to its region first."""
+        """Add a propositional belief — delegating to Keeper to navigate."""
         belief_id = args.get("belief_id", "")
         content = args.get("content", "")
         stability = float(args.get("stability_impact", 0.5))
         reason = args.get("reason", "")
         relations = args.get("related_beliefs", [])
 
-        if not belief_id or not content:
-            return "Error: belief_id and content are required"
+        if not self._keeper:
+            return "Internal Error: Keeper agent not connected"
 
-        existing = self.belief_graph.get_belief(belief_id)
-        if existing:
-            return f"DUPLICATE: Belief '{belief_id}' already exists: {existing['content'][:100]}"
-
-        # Navigate to belief region before adding
-        self._navigate_and_record(
-            target_text=content,
-            action=f"add: {belief_id}",
-            agent="keeper",
+        msg, trace = self._keeper.add_belief(
+            belief_id=belief_id, 
+            content=content, 
+            stability_impact=stability, 
+            reason=reason,
+            relations=relations
         )
-
-        self.belief_graph.add_belief(
-            belief_id=belief_id,
-            content=content,
-            confidence=0.40,
-            verifications=1.0,
-            stability_index=stability,
-            relations=relations,
-            belief_type="propositional",
-        )
-        self._psych_actions["added"] += 1
-        logger.info(f"Psych Doctor added belief: {belief_id} — {reason}")
-        return f"Added: {belief_id} (confidence=0.40, stability={stability})"
+        
+        if trace:
+            self._dream_trail.append(DreamFragment(**trace))
+            
+        if msg.startswith("Added:"):
+            self._psych_actions["added"] += 1
+            
+        return msg
 
     def _psych_add_episodic(self, args: dict) -> str:
-        """Add an episodic belief — navigating to its region first."""
+        """Add an episodic belief — delegating to Librarian to navigate."""
         belief_id = args.get("belief_id", "")
         content = args.get("content", "")
         relations = args.get("related_beliefs", [])
 
-        if not belief_id or not content:
-            return "Error: belief_id and content are required"
+        if not self._librarian:
+            return "Internal Error: Librarian agent not connected"
 
-        if not belief_id.startswith("b_ep_"):
-            belief_id = "b_ep_" + belief_id.lstrip("b_")
-
-        existing = self.belief_graph.get_belief(belief_id)
-        if existing:
-            return f"DUPLICATE: Episodic belief '{belief_id}' already exists"
-
-        # Navigate to memory region before adding
-        self._navigate_and_record(
-            target_text=content,
-            action=f"add_episodic: {belief_id}",
-            agent="librarian",
-        )
-
-        self.belief_graph.add_belief(
-            belief_id=belief_id,
+        msg, trace = self._librarian.add_episodic_belief(
+            belief_id=belief_id, 
             content=content,
-            confidence=0.35,
-            verifications=1.0,
-            stability_index=0.3,  # Episodic decays faster
-            relations=relations,
-            belief_type="episodic",
+            relations=relations
         )
-        self._psych_actions["episodic"] += 1
-        logger.info(f"Psych Doctor added episodic: {belief_id} — {content[:80]}")
-        return f"Added episodic: {belief_id}"
+        
+        if trace:
+            self._dream_trail.append(DreamFragment(**trace))
+            
+        if msg.startswith("Added episodic:"):
+            self._psych_actions["episodic"] += 1
+            
+        return msg
 
     def _psych_reinforce(self, args: dict) -> str:
-        """Reinforce an existing belief — navigating to it first."""
+        """Reinforce an existing belief — delegating to Keeper to navigate."""
         belief_id = args.get("belief_id", "")
         reason = args.get("reason", "")
         stability = args.get("stability_impact")
 
-        existing = self.belief_graph.get_belief(belief_id)
-        if not existing:
-            return f"NOT FOUND: Belief '{belief_id}' does not exist"
+        if not self._keeper:
+            return "Internal Error: Keeper agent not connected"
 
-        # Navigate to belief's position
-        self._navigate_and_record(
-            target_text=existing.get("content", belief_id),
-            action=f"reinforce: {belief_id}",
-            agent="keeper",
+        msg, trace = self._keeper.reinforce_belief(
+            belief_id=belief_id,
+            reason=reason,
+            stability_impact=stability
         )
-
-        v_count = float(existing.get("verifications", 1.0))
-        updates = {"verifications": v_count + 1.0}
-        if stability is not None:
-            updates["stability_index"] = float(stability)
-
-        self.belief_graph.update_belief(belief_id, **updates)
-        self._psych_actions["reinforced"] += 1
-        logger.info(f"Psych Doctor reinforced: {belief_id} — {reason}")
-        return f"Reinforced: {belief_id} (verifications={v_count + 1.0})"
+        
+        if trace:
+            self._dream_trail.append(DreamFragment(**trace))
+            
+        if msg.startswith("Reinforced:"):
+            self._psych_actions["reinforced"] += 1
+            
+        return msg
 
     def _psych_weaken(self, args: dict) -> str:
-        """Weaken a belief — navigating to it first."""
+        """Weaken a belief — delegating to Keeper to navigate."""
         belief_id = args.get("belief_id", "")
         reason = args.get("reason", "")
         delta = float(args.get("delta", -0.1))
 
-        existing = self.belief_graph.get_belief(belief_id)
-        if not existing:
-            return f"NOT FOUND: Belief '{belief_id}' does not exist"
+        if not self._keeper:
+            return "Internal Error: Keeper agent not connected"
 
-        # Navigate to belief before weakening
-        self._navigate_and_record(
-            target_text=existing.get("content", belief_id),
-            action=f"weaken: {belief_id} by {delta}",
-            agent="keeper",
+        msg, trace = self._keeper.weaken_belief(
+            belief_id=belief_id,
+            reason=reason,
+            delta=delta
         )
-
-        result = self.belief_graph.adjust_confidence(belief_id, delta, reason)
-        self._psych_actions["weakened"] += 1
-        if result is None:
-            logger.info(f"Psych Doctor weakened '{belief_id}' to zero — removed")
-            return f"REMOVED (confidence dropped to 0): {belief_id}"
-        logger.info(f"Psych Doctor weakened: {belief_id} by {delta} — {reason}")
-        return f"Weakened: {belief_id} (new confidence={result.get('confidence', 0):.2f})"
+        
+        if trace:
+            self._dream_trail.append(DreamFragment(**trace))
+            
+        if msg.startswith("Weakened:") or msg.startswith("REMOVED"):
+            self._psych_actions["weakened"] += 1
+            
+        return msg
 
     def _psych_remove(self, args: dict) -> str:
-        """Remove a belief — navigating to it first."""
+        """Remove a belief — delegating to Keeper to navigate."""
         belief_id = args.get("belief_id", "")
         reason = args.get("reason", "")
 
-        existing = self.belief_graph.get_belief(belief_id)
-        if existing:
-            # Navigate to belief before removing
-            self._navigate_and_record(
-                target_text=existing.get("content", belief_id),
-                action=f"remove: {belief_id}",
-                agent="keeper",
-            )
+        if not self._keeper:
+            return "Internal Error: Keeper agent not connected"
 
-        removed = self.belief_graph.remove_belief(belief_id)
-        if removed:
+        msg, trace = self._keeper.remove_belief(
+            belief_id=belief_id,
+            reason=reason
+        )
+        
+        if trace:
+            self._dream_trail.append(DreamFragment(**trace))
+            
+        if msg.startswith("Removed:"):
             self._psych_actions["removed"] += 1
-            logger.info(f"Psych Doctor removed: {belief_id} — {reason}")
-            return f"Removed: {belief_id}"
-        return f"NOT FOUND: Belief '{belief_id}' does not exist"
+            
+        return msg
 
     def _psych_search(self, args: dict) -> str:
         """Search beliefs by keyword."""
@@ -1546,51 +1469,22 @@ No commentary. No markdown fencing. Just the JSON array."""
     # ── Step 7: 8D Spatial Re-sync ───────────────────────────────────
 
     def _resync_spatial_state(self) -> dict:
-        """Project new beliefs into the 8D cognitive space.
-
-        Finds beliefs that exist in the belief graph but not yet in the
-        spatial mind's belief space, embeds them, and adds them. Then saves
-        the updated state.
-
-        This is incremental — avoids full rebuild unless needed.
+        """Run the Nightly Gravitational Convergence Pipeline.
+        
+        Refits PCA, reprojects nodes, recalculates belief mass, and identifies
+        singularities.
         """
-        spatial_mind = getattr(self, '_spatial_mind', None)
-
-        # Try to get it from the daemon if we have a reference
-        if spatial_mind is None:
-            # The unconscious system is typically created with the daemon's
-            # belief graph, but doesn't have a direct spatial_mind reference.
-            # We pass it through the belief graph's parent context.
-            return {"status": "skipped", "reason": "spatial mind not available"}
-
-        all_beliefs = self.belief_graph.get_all_beliefs()
-        current_ids = set(spatial_mind.belief_space.get_all_ids())
-        new_beliefs = [b for b in all_beliefs if b["id"] not in current_ids]
-
-        if not new_beliefs:
-            return {"status": "completed", "new_points": 0}
-
-        added = 0
-        for b in new_beliefs:
-            try:
-                embedding = spatial_mind.embed_text(b["content"])
-                spatial_mind.add_belief(
-                    belief_id=b["id"],
-                    embedding=embedding,
-                    content=b["content"],
-                )
-                added += 1
-            except Exception as e:
-                logger.warning(f"Failed to project belief {b['id']}: {e}")
-
-        # Save updated state
         try:
-            spatial_mind.save_state()
-            logger.info(f"Spatial state saved with {added} new belief points")
+            from brain.manifold.convergence import ConvergencePipeline
+            pipeline = ConvergencePipeline(
+                memory=self.memory,
+                belief_graph=self.belief_graph,
+                base_dir=self.base_dir
+            )
+            return pipeline.run_nightly_cycle()
         except Exception as e:
-            logger.warning(f"Failed to save spatial state: {e}")
-
-        return {"status": "completed", "new_points": added}
+            logger.warning(f"Convergence pipeline failed: {e}")
+            return {"status": "failed", "error": str(e)}
 
     # ── Utility ──────────────────────────────────────────────────────
 

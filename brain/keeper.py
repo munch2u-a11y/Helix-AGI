@@ -1,5 +1,5 @@
 """
-Helix V5 — Belief Keeper
+Helix V4 — Belief Keeper
 
 The subconscious belief assembler. Runs BEFORE every conscious pulse to
 build the "Keeper Horizon" — a contextually relevant subset of beliefs
@@ -27,7 +27,10 @@ import logging
 import os
 import time
 import threading
+import re
+import numpy as np
 from pathlib import Path
+from datetime import datetime
 from typing import Optional
 from brain.architecture_preamble import KEEPER_PREAMBLE, BELIEF_EXTRACTOR_PREAMBLE
 
@@ -77,7 +80,16 @@ class BeliefKeeper:
         # V5: Spatial Mind reference — for positioning new beliefs in 8D
         self._spatial_mind = None  # Set via set_spatial_mind() after init
 
+        # Manifold Integration (8D Unified Space)
+        self.manifold = None
+        self.projector = None
+
         self._init_chroma()
+
+    def set_manifold(self, manifold, projector):
+        """Wire the Keeper to the unified Cognitive Manifold."""
+        self.manifold = manifold
+        self.projector = projector
 
     def set_state_board(self, state_board: dict):
         """Wire the Keeper to the live state board.
@@ -96,6 +108,121 @@ class BeliefKeeper:
         in the belief 8D space so they participate in gravity queries.
         """
         self._spatial_mind = spatial_mind
+
+    # ── 8D Navigation & Belief Maintenance ───────────────────────────
+
+    def _navigate(self, target_text: str, action: str) -> Optional[dict]:
+        """Navigate the spatial mind to a target and return the path trace.
+        
+        This physically moves the 8D attention center to execute belief changes,
+        leaving emergent 'dream' paths in its wake.
+        """
+        if not self._spatial_mind:
+            return None
+            
+        try:
+            from_pos = self._spatial_mind.attention_center.copy().tolist()
+            # Pulse toward the target — applies gravity, stability, stimulus
+            context = self._spatial_mind.pulse_from_text(target_text)
+            to_pos = self._spatial_mind.attention_center.copy().tolist()
+            
+            flashes = []
+            nearby = []
+            for line in context.split("\n"):
+                if "⟪" in line:
+                    flashes.extend(re.findall(r"⟪([^⟫]+)⟫", line))
+                elif line.startswith("• "):
+                    text = re.sub(r"\s*\[\d+\.\d+\]$", "", line[2:]).strip()
+                    if text:
+                        nearby.append(text)
+                elif line.strip() and not line.startswith("•"):
+                    nearby.append(line.strip())
+                    
+            return {
+                "from_pos": from_pos,
+                "to_pos": to_pos,
+                "flashes": flashes[:5],
+                "action": action,
+                "agent": "keeper",
+                "nearby": nearby[:5],
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            logger.debug(f"Spatial navigation for {action} failed: {e}")
+            return None
+
+    def add_belief(self, belief_id: str, content: str, stability_impact: float, reason: str, relations: list = None) -> tuple[str, Optional[dict]]:
+        """Add a propositional belief — navigating to its region first."""
+        if not belief_id or not content:
+            return "Error: belief_id and content are required", None
+
+        existing = self.belief_graph.get_belief(belief_id)
+        if existing:
+            return f"DUPLICATE: Belief '{belief_id}' already exists: {existing['content'][:100]}", None
+
+        trace = self._navigate(target_text=content, action=f"add: {belief_id}")
+
+        self.belief_graph.add_belief(
+            belief_id=belief_id,
+            content=content,
+            confidence=0.40,
+            verifications=1.0,
+            stability_index=stability_impact,
+            relations=relations or [],
+            belief_type="propositional",
+        )
+        
+        # Also sync to chroma instantly
+        self.sync_single_belief(self.belief_graph.get_belief(belief_id))
+        
+        logger.info(f"Keeper added belief: {belief_id} — {reason}")
+        return f"Added: {belief_id} (confidence=0.40, stability={stability_impact})", trace
+
+    def reinforce_belief(self, belief_id: str, reason: str, stability_impact: Optional[float] = None) -> tuple[str, Optional[dict]]:
+        """Reinforce an existing belief — navigating to it first."""
+        existing = self.belief_graph.get_belief(belief_id)
+        if not existing:
+            return f"NOT FOUND: Belief '{belief_id}' does not exist", None
+
+        trace = self._navigate(target_text=existing.get("content", belief_id), action=f"reinforce: {belief_id}")
+
+        v_count = float(existing.get("verifications", 1.0))
+        updates = {"verifications": v_count + 1.0}
+        if stability_impact is not None:
+            updates["stability_index"] = float(stability_impact)
+
+        self.belief_graph.update_belief(belief_id, **updates)
+        logger.info(f"Keeper reinforced: {belief_id} — {reason}")
+        return f"Reinforced: {belief_id} (verifications={v_count + 1.0})", trace
+
+    def weaken_belief(self, belief_id: str, reason: str, delta: float = -0.1) -> tuple[str, Optional[dict]]:
+        """Weaken a belief — navigating to it first."""
+        existing = self.belief_graph.get_belief(belief_id)
+        if not existing:
+            return f"NOT FOUND: Belief '{belief_id}' does not exist", None
+
+        trace = self._navigate(target_text=existing.get("content", belief_id), action=f"weaken: {belief_id} by {delta}")
+
+        result = self.belief_graph.adjust_confidence(belief_id, delta, reason)
+        if result is None:
+            logger.info(f"Keeper weakened '{belief_id}' to zero — removed")
+            return f"REMOVED (confidence dropped to 0): {belief_id}", trace
+            
+        logger.info(f"Keeper weakened: {belief_id} by {delta} — {reason}")
+        return f"Weakened: {belief_id} (new confidence={result.get('confidence', 0):.2f})", trace
+
+    def remove_belief(self, belief_id: str, reason: str) -> tuple[str, Optional[dict]]:
+        """Remove a belief — navigating to it first."""
+        existing = self.belief_graph.get_belief(belief_id)
+        trace = None
+        if existing:
+            trace = self._navigate(target_text=existing.get("content", belief_id), action=f"remove: {belief_id}")
+
+        removed = self.belief_graph.remove_belief(belief_id)
+        if removed:
+            logger.info(f"Keeper removed: {belief_id} — {reason}")
+            return f"Removed: {belief_id}", trace
+        return f"NOT FOUND: Belief '{belief_id}' does not exist", trace
 
     # ── Emerging beliefs persistence ─────────────────────────────────
 
@@ -344,19 +471,35 @@ class BeliefKeeper:
                 action_text = " ".join(recent_actions[-5:])
                 search_seed += f" {action_text}"
 
-        # 1. ChromaDB semantic search (if available)
-        chroma_beliefs = self._search_chroma(search_seed, k=k)
-        horizon.extend(chroma_beliefs)
-
-        # 2. Belief graph keyword fallback / supplement
-        if self.belief_graph:
-            graph_beliefs = self._search_belief_graph(search_seed, k=k)
-            # Add only beliefs not already in horizon
-            existing = set(horizon)
-            for b in graph_beliefs:
-                if b not in existing:
-                    horizon.append(b)
-                    existing.add(b)
+        # 1. Cognitive Manifold query (unified geodesic retrieval)
+        if self.manifold and self.projector and self.projector.is_fitted:
+            # Embed the seed
+            from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+            embedder = DefaultEmbeddingFunction()
+            emb_384 = np.array(embedder([search_seed])[0])
+            pos_8d = self.projector.project(emb_384)
+            
+            # Unified request (beliefs and memories)
+            results = self.manifold.get_nearest(pos_8d, n=max(k, 30))
+            
+            # Extract content from nodes and add to horizon
+            # (Keeper relies solely on the manifold positioning logic now)
+            for node, dist in results:
+                if node.content and node.content not in set(horizon):
+                    horizon.append(node.content)
+        else:
+            # Fallback 1: ChromaDB semantic search directly
+            chroma_beliefs = self._search_chroma(search_seed, k=k)
+            horizon.extend(chroma_beliefs)
+    
+            # Fallback 2: Belief graph keyword supplement
+            if self.belief_graph:
+                graph_beliefs = self._search_belief_graph(search_seed, k=k)
+                existing = set(horizon)
+                for b in graph_beliefs:
+                    if b not in existing:
+                        horizon.append(b)
+                        existing.add(b)
 
         # 3. Drive belief — always include if not already present
         if self.belief_graph:

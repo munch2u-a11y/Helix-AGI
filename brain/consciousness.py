@@ -79,64 +79,11 @@ class ConsciousnessLoop:
         # Wire the Keeper to the state board (it needs write access)
         self.keeper.set_state_board(self._state_board)
 
-        # V5: Spatial Mind — dual 8D cognitive fields (belief + memory)
-        self._spatial_mind = None
-        try:
-            from brain.spatial_mind import SpatialMind
-
-            self._spatial_mind = SpatialMind(
-                embedding_dim=384,  # ChromaDB default (all-MiniLM-L6-v2)
-                base_dir=base_dir,
-                sentinel=sentinel,
-            )
-
-            # Load cached state if available
-            b_loaded, m_loaded = self._spatial_mind.load_state()
-
-            if b_loaded == 0 and m_loaded == 0:
-                # First run or fresh install — bootstrap from ChromaDB
-                logger.info("No cached spatial state — bootstrapping from ChromaDB...")
-                b_count, m_count = self._spatial_mind.bootstrap(
-                    belief_graph=belief_graph,
-                    memory=memory,
-                )
-                if b_count > 0 or m_count > 0:
-                    self._spatial_mind.save_state()
-                    agent_age = memory.get_agent_age() if memory else 3600.0
-                    self._spatial_mind.update_gravity_fields(agent_age)
-            else:
-                # Loaded from cache — just update gravity fields
-                agent_age = memory.get_agent_age() if memory else 3600.0
-                self._spatial_mind.update_gravity_fields(agent_age)
-
-            stats = self._spatial_mind.get_stats()
-            b_stats = stats["belief_space"]
-            m_stats = stats["memory_space"]
-            logger.info(
-                f"Spatial mind ready: "
-                f"{b_stats['total_points']} beliefs, "
-                f"{m_stats['total_points']} memories, "
-                f"belief_potential={b_stats['gravity_field_max_potential']:.1f}"
-            )
-        except Exception as e:
-            logger.warning(f"Spatial mind init failed (non-fatal): {e}")
-            self._spatial_mind = None
-
-        # Wire SpatialMind to Keeper (for positioning new beliefs)
-        if self._spatial_mind:
-            self.keeper.set_spatial_mind(self._spatial_mind)
-            # Wire SpatialMind to Sentinel (for spatial coherence probes)
-            if self.sentinel:
-                self.sentinel._spatial_mind = self._spatial_mind
-            # Wire SpatialMind to Memory (for positioning new memories)
-            if self.memory:
-                self.memory._spatial_mind = self._spatial_mind
+        # V5: Cognitive Manifold (Unified Space) - injected by Daemon
+        self._manifold = None
 
         # V4: Previous thoughts — rolling seed for Keeper horizon
         self._previous_thoughts = ""
-
-        # V5: Spatial context — populated each heartbeat by spatial_mind.pulse()
-        self._spatial_context = ""
 
         self._thought_callback = thought_callback
 
@@ -346,28 +293,7 @@ class ConsciousnessLoop:
             except Exception as e:
                 logger.debug(f"Sensory cortex pulse_tick failed: {e}")
 
-        # 1c. V5: Spatial pulse — compute cognitive trail + nearby context
-        #     Uses previous thought output to move the attention center
-        #     and surfaces spatially relevant beliefs + memories
-        if self._spatial_mind and self._previous_thoughts:
-            try:
-                agent_age = self.memory.get_agent_age() if self.memory else 3600.0
-                # Build incoming stimulus from events
-                incoming = None
-                if events:
-                    incoming = " ".join(
-                        str(e.get("content", e.get("data", "")))
-                        if isinstance(e, dict) else str(e)
-                        for e in events[:3]  # Cap at 3 events for embedding
-                    )
-                self._spatial_context = self._spatial_mind.pulse_from_text(
-                    thought_text=self._previous_thoughts,
-                    incoming_text=incoming,
-                    agent_age_seconds=agent_age,
-                )
-            except Exception as e:
-                logger.debug(f"Spatial pulse failed: {e}")
-                self._spatial_context = ""
+
 
         # 2. Build the user message for this heartbeat
         user_content = self._build_heartbeat_message(events)
@@ -583,10 +509,7 @@ class ConsciousnessLoop:
         if belief_text:
             sections.append(belief_text)
 
-        # 1b. V5: Spatial context — trail flashes + nearby beliefs + memories
-        #     Raw injection. No labels. If it's here, Helix thought it.
-        if self._spatial_context:
-            sections.append(self._spatial_context)
+
 
         # 2. V4: State Board — volatile working memory with stability
         state_text = self._build_state_board_context()

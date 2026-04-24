@@ -56,6 +56,14 @@ telegram:
   # token: "YOUR_BOT_TOKEN"    # Get from @BotFather
   # owner_id: ""               # Your Telegram user ID
 
+discord:
+  enabled: false
+  # token: ""
+
+moltbook:
+  enabled: false
+  # api_key: ""
+
 # ── Perception ───────────────────────────────────────────────
 camera:
   enabled: false

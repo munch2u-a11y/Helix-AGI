@@ -131,6 +131,27 @@ class HelixDaemon:
             f"surface={stats.get('surface', 0)})"
         )
 
+        # 3b. Cognitive Manifold (8D spatial folding)
+        step += 1
+        self.logger.info(f"[{step}/10] Initializing Cognitive Manifold...")
+        try:
+            from brain.manifold.projector import ManifoldProjector
+            from brain.manifold.manifold import CognitiveManifold
+            
+            manifold_dir = self.base_dir / "brain" / "manifold"
+            self.manifold_projector = ManifoldProjector(manifold_dir)
+            self.manifold = CognitiveManifold()
+            
+            # Load nodes from Memory and Belief Graph
+            beliefs = self.belief_graph.get_all_beliefs() if self.belief_graph else []
+            memories = self.memory.get_all_with_positions() if self.memory else []
+            self.manifold.rebuild_index(beliefs, memories)
+            self.logger.info(f"Cognitive Manifold ready: {len(self.manifold.nodes)} nodes indexed")
+        except Exception as e:
+            self.manifold = None
+            self.manifold_projector = None
+            self.logger.warning(f"Cognitive Manifold init failed: {e}")
+
         # 4. Librarian
         step += 1
         self.logger.info(f"[{step}/10] Initializing Librarian...")
@@ -176,6 +197,14 @@ class HelixDaemon:
 
         # Wire Librarian into consciousness for memory grounding
         self.consciousness._librarian = self.librarian
+
+        # Wire Cognitive Manifold to Librarian and Consciousness
+        if hasattr(self, 'manifold') and self.manifold:
+            if hasattr(self.librarian, 'set_manifold'):
+                self.librarian.set_manifold(self.manifold, self.manifold_projector)
+            if hasattr(self.consciousness, 'keeper') and self.consciousness.keeper:
+                self.consciousness.keeper.set_manifold(self.manifold, self.manifold_projector)
+            self.consciousness._manifold = self.manifold
 
         # Wire Sensory Cortex into consciousness for perception
         try:
@@ -258,9 +287,9 @@ class HelixDaemon:
         except Exception as e:
             self.logger.warning(f"Deep Thought Engine init skipped: {e}")
 
-        # Wire imagination engine (needs spatial mind from consciousness)
+        # Wire imagination engine (needs spatial mind/manifold from consciousness)
         try:
-            spatial_mind = getattr(self.consciousness, '_spatial_mind', None)
+            spatial_mind = getattr(self.consciousness, '_manifold', None)
             if spatial_mind:
                 from brain.imagination import ImaginationEngine
                 self.imagination = ImaginationEngine(spatial_mind)
@@ -280,8 +309,14 @@ class HelixDaemon:
                 belief_graph=self.belief_graph,
                 gemini_client=self.gemini,
                 base_dir=self.base_dir,
-                spatial_mind=getattr(self.consciousness, 'spatial_mind', None),
+                spatial_mind=getattr(self.consciousness, '_manifold', None),
             )
+            
+            # Wire agents to unconscious for nightly convergence
+            keeper = getattr(self.consciousness, 'keeper', None)
+            if keeper and hasattr(self, 'librarian'):
+                if hasattr(self.unconscious, 'set_agents'):
+                    self.unconscious.set_agents(keeper=keeper, librarian=self.librarian)
             # Schedule first overnight cycle + pre-dawn + morning pulse
             self._schedule_overnight()
             self._schedule_pre_dawn_briefing()

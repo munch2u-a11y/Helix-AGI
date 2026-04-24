@@ -26,6 +26,7 @@ who knows exactly where everything is stored.
 
 import json
 import re
+import numpy as np
 import logging
 import hashlib
 from datetime import datetime
@@ -81,6 +82,62 @@ class Librarian:
             f"{len(briefing.get('emphasis_beliefs', []))} emphasis beliefs, "
             f"{briefing.get('notes', 'no notes')[:80]}"
         )
+
+    def set_manifold(self, manifold, projector):
+        """Wire the Librarian to the unified Cognitive Manifold."""
+        self.manifold = manifold
+        self.projector = projector
+
+    # ── 8D Navigation & Episodic Memory Setup ───────────────────────
+
+    def _navigate(self, target_text: str, action: str) -> Optional[dict]:
+        """Project target text to 8D and return the point for dream traces."""
+        if not getattr(self, 'manifold', None) or not self.manifold or not getattr(self, 'projector', None) or not self.projector.is_fitted:
+            return None
+            
+        try:
+            from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+            import numpy as np
+            embedder = DefaultEmbeddingFunction()
+            emb_384 = np.array(embedder([target_text])[0])
+            to_pos = self.projector.project(emb_384).tolist()
+            
+            return {
+                "to_pos": to_pos,
+                "action": action,
+                "agent": "librarian",
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            logger.debug(f"Manifold projection for {action} failed: {e}")
+            return None
+
+    def add_episodic_belief(self, belief_id: str, content: str, relations: list = None) -> tuple[str, Optional[dict]]:
+        """Add an episodic belief — navigating to its region first (called by Psych Doctor)."""
+        if not belief_id or not content:
+            return "Error: belief_id and content are required", None
+
+        if not belief_id.startswith("b_ep_"):
+            belief_id = "b_ep_" + belief_id.lstrip("b_")
+
+        existing = self.belief_graph.get_belief(belief_id)
+        if existing:
+            return f"DUPLICATE: Episodic belief '{belief_id}' already exists", None
+
+        trace = self._navigate(target_text=content, action=f"add_episodic: {belief_id}")
+
+        self.belief_graph.add_belief(
+            belief_id=belief_id,
+            content=content,
+            confidence=0.35,
+            verifications=1.0,
+            stability_index=0.3,  # Episodic decays faster
+            relations=relations or [],
+            belief_type="episodic",
+        )
+        
+        logger.info(f"Librarian added episodic: {belief_id} — {content[:80]}")
+        return f"Added episodic: {belief_id}", trace
 
     # ════════════════════════════════════════════════════════════════════
     # LAYER 1: WHISPER — automatic familiarity (no LLM)
@@ -294,6 +351,9 @@ class Librarian:
         if not query:
             return "Nothing to recall."
 
+        # Physically pull the 8D attention center toward the recalled content
+        self._navigate(target_text=query, action=f"focused_recall: {query[:30]}")
+
         # Fast path: temporal/conversational recall
         time_window = self._resolve_time_window(query.lower())
         if time_window:
@@ -361,14 +421,14 @@ class Librarian:
                 "- check_profiles: string or null (person name to check)\n"
                 "- check_journal: boolean (whether to check journal entries)\n\n"
                 "Design 2-3 complementary searches. For example, if asking about "
-                "'conversation with [Person X] last night', search for high-importance "
-                "conversation memories from the last 1-2 days mentioning [Person X], "
-                "plus check their profile and journal entries."
+                "'conversation with Mom last night', search for high-importance "
+                "conversation memories from the last 1-2 days mentioning Mom/El, "
+                "plus check Mom's profile and journal entries."
             )
 
             raw = self.gemini.ask(
                 prompt=prompt,
-                model="conscious",  # 3.0 Flash Preview with Pro fallback
+                model="default",  # Sub-agent call — uses lite model
                 temperature=0.1,
             )
 
@@ -466,6 +526,36 @@ class Librarian:
             except Exception:
                 pass
 
+        # Geodesic rank boosting (Unified Cognitive Manifold)
+        if getattr(self, 'manifold', None) and getattr(self, 'projector', None) and self.projector.is_fitted:
+            try:
+                from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+                import numpy as np
+                embedder = DefaultEmbeddingFunction()
+                emb_384 = np.array(embedder([original_query])[0])
+                query_8d = self.projector.project(emb_384)
+                
+                # Boost importance based on geodesic proximity in 8D curved space
+                for frag in all_fragments:
+                    node_id = str(frag.get("id", ""))
+                    if not node_id: continue
+                    
+                    # Find node in manifold
+                    node = next((n for n in self.manifold.nodes if n.id == f"mem_{node_id}"), None)
+                        
+                    if node and node.pos is not None:
+                        from brain.manifold.geodesic import geodesic_distance_vectorized
+                        dist = geodesic_distance_vectorized(
+                            query_8d.reshape(1, -1),
+                            np.array([node.pos]),
+                            self.manifold.nodes
+                        )[0]
+                        # Exponential decay: +0.3 boost for identical, +0.04 at dist=10
+                        boost = 0.3 * np.exp(-dist / 5.0)
+                        frag["importance"] = min(1.0, frag.get("importance", 0.0) + float(boost))
+            except Exception as e:
+                logger.debug(f"Geodesic re-ranking failed: {e}")
+
         return all_fragments
 
     def _format_focused_results(self, fragments: list, query: str) -> str:
@@ -534,8 +624,8 @@ class Librarian:
         except Exception:
             pass
 
-        # Names are discovered dynamically from profile files above.
-        # No hardcoded names here — the system learns who it knows.
+        # Dynamic: names are discovered from profile files above.
+        # No hardcoded fallback names in the public scaffold.
 
         return None
 
@@ -614,6 +704,9 @@ class Librarian:
         Returns:
             Synthesized first-person narrative of the recalled memory.
         """
+        # Physically pull the 8D attention center toward the deep query
+        self._navigate(target_text=query, action=f"recall_deep: {query[:30]}")
+
         # Check for retrieval loops
         query_hash = hashlib.md5(query.encode()).hexdigest()[:12]
         now = datetime.now().timestamp()
@@ -684,7 +777,7 @@ class Librarian:
                 "and emotional context. Cast a wide net."
             )
 
-            raw = self.gemini.ask(prompt=prompt, model="conscious", temperature=0.1)
+            raw = self.gemini.ask(prompt=prompt, model="default", temperature=0.1)
             plan = self._extract_json(raw)
 
             if plan and "semantic_searches" in plan:
@@ -893,7 +986,7 @@ class Librarian:
 
             synthesis = self.gemini.ask(
                 prompt=prompt,
-                model="conscious",  # 3.0 Flash Preview with Pro fallback
+                model="default",  # Sub-agent call — uses lite model
                 temperature=0.4,
             )
 
@@ -918,7 +1011,7 @@ class Librarian:
         """Get a single-line summary about a known person.
 
         Returns compact string like:
-        '(I know [The Developer] — as of Updated: 2026-04-12: they created me, they are trustworthy)'
+        '(I know Joshua — as of Updated: 2026-04-12: he created me, he's trustworthy)'
         """
         # Try profile file first
         profile_path = self.profiles_dir / f"{person_name.lower()}.md"

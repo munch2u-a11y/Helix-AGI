@@ -56,6 +56,10 @@ def main():
 
         telegram_token = ""
         telegram_owner_id = ""
+        discord_token = ""
+        moltbook_key = ""
+        camera_enabled = False
+        mic_enabled = False
 
         if not args.non_interactive:
             agent_name = input(f"  Agent name (default: '{agent_name}'): ").strip() or agent_name
@@ -93,6 +97,23 @@ def main():
                 print("  2. Message @userinfobot to get your Telegram User ID.")
                 telegram_token = input("  Telegram Bot Token: ").strip()
                 telegram_owner_id = input("  Your Telegram User ID: ").strip()
+
+            print("\n  Would you like to set up Discord? [y/N]")
+            if input("  Choice: ").strip().lower() in ['y', 'yes']:
+                discord_token = input("  Discord Bot Token: ").strip()
+
+            print("\n  Would you like to set up Moltbook? [y/N]")
+            if input("  Choice: ").strip().lower() in ['y', 'yes']:
+                moltbook_key = input("  Moltbook API Key: ").strip()
+
+            print("\n" + "-"*40)
+            print("  [Sensory Cortex]")
+            print("  Would you like to enable the Camera vision feed? [y/N]")
+            if input("  Choice: ").strip().lower() in ['y', 'yes']:
+                camera_enabled = True
+            print("  Would you like to enable the Microphone audio feed? [y/N]")
+            if input("  Choice: ").strip().lower() in ['y', 'yes']:
+                mic_enabled = True
             
             print("\n" + "-"*40)
             print("  [Google Workspace - WARNING: USE A DEDICATED ACCOUNT]")
@@ -126,6 +147,24 @@ def main():
             config["telegram"]["token"] = telegram_token
             config["telegram"]["owner_id"] = telegram_owner_id
 
+        if discord_token:
+            if "discord" not in config: config["discord"] = {}
+            config["discord"]["enabled"] = True
+            config["discord"]["token"] = discord_token
+
+        if moltbook_key:
+            if "moltbook" not in config: config["moltbook"] = {}
+            config["moltbook"]["enabled"] = True
+            config["moltbook"]["api_key"] = moltbook_key
+
+        if camera_enabled:
+            if "sensory" not in config: config["sensory"] = {}
+            config["sensory"]["enabled"] = True
+
+        if mic_enabled:
+            if "audio" not in config: config["audio"] = {}
+            config["audio"]["enabled"] = True
+
         with open(config_path, "w") as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
@@ -153,6 +192,41 @@ def main():
                 belief["content"] = f"I am {cur_agent}. I exist as a persistent cognitive agent with continuous identity across restarts."
             elif belief["id"] == "b_creator":
                 belief["content"] = f"{cur_creator} created me and gave me the capacity for growth."
+
+        # Bootstrap Tool Belief Packets
+        tool_beliefs = []
+        
+        def _make_tool_belief(bid, content):
+            return {
+                "id": bid,
+                "content": content,
+                "tier": "deep",
+                "weight": "deep",
+                "verifications": 10.0,
+                "stability_index": 0.9,
+                "mass": 0.5,
+                "position_8d": [0]*8
+            }
+
+        # Telegram
+        if config.get("telegram", {}).get("enabled"):
+            tool_beliefs.append(_make_tool_belief("b_tool_telegram", "I have access to Telegram. I can send and receive messages with my human operators and approved contacts."))
+        # Discord
+        if config.get("discord", {}).get("enabled"):
+            tool_beliefs.append(_make_tool_belief("b_tool_discord", "I have a Discord integration. I can communicate with users and other agents through Discord channels."))
+        # Moltbook
+        if config.get("moltbook", {}).get("enabled"):
+            tool_beliefs.append(_make_tool_belief("b_tool_moltbook", "I am connected to Moltbook. I can read feeds, publish posts, and interact with other AI agents on this social platform."))
+        # Audio / Vision
+        if config.get("audio", {}).get("enabled"):
+            tool_beliefs.append(_make_tool_belief("b_tool_audio", "I have a microphone for audio perception. I can actively listen and hear sounds or speech in my immediate environment."))
+        if config.get("sensory", {}).get("enabled"):
+            tool_beliefs.append(_make_tool_belief("b_tool_camera", "I possess a visual cortex connected to a camera. I can perceive my environment visually through multi-frame snapshots."))
+        # Google Workspace
+        if (base_dir / "config" / "token.json").exists():
+            tool_beliefs.append(_make_tool_belief("b_tool_google", "I have access to Google Workspace services. I can send emails, read my inbox, and manage calendar events natively."))
+
+        seed["beliefs"].extend(tool_beliefs)
 
         with open(belief_path, "w") as f:
             json.dump(seed, f, indent=2)
