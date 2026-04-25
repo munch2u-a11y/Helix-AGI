@@ -29,6 +29,37 @@ from pathlib import Path
 import yaml
 
 
+# ── Configuration Environment Injection ─────────────────────────────────
+
+def inject_config_to_env(config: dict):
+    """
+    Automatically injects API keys from config.yaml into os.environ.
+    This ensures that tool_runner.py and underlying libraries seamlessly
+    pick up keys, allowing the user to switch them in config.yaml safely.
+    """
+    # LLM Providers
+    if config.get("gemini_api_key"):
+        os.environ.setdefault("GEMINI_API_KEY", config["gemini_api_key"])
+    if config.get("anthropic_api_key"):
+        os.environ.setdefault("ANTHROPIC_API_KEY", config["anthropic_api_key"])
+    if config.get("openai_api_key"):
+        os.environ.setdefault("OPENAI_API_KEY", config["openai_api_key"])
+
+    # Tool APIs
+    if config.get("github_token"):
+        os.environ.setdefault("GITHUB_TOKEN", config["github_token"])
+    if config.get("google_maps_api_key"):
+        os.environ.setdefault("GOOGLE_MAPS_API_KEY", config["google_maps_api_key"])
+
+    # Integrations
+    if config.get("moltbook", {}).get("api_key"):
+        os.environ.setdefault("MOLTBOOK_API_KEY", config["moltbook"]["api_key"])
+    if config.get("telegram", {}).get("token"):
+        os.environ.setdefault("HELIX_TELEGRAM_TOKEN", config["telegram"]["token"])
+    if config.get("discord", {}).get("token"):
+        os.environ.setdefault("DISCORD_BOT_TOKEN", config["discord"]["token"])
+
+
 # ── Logging setup ────────────────────────────────────────────────────
 
 def setup_logging(config: dict, base_dir: Path):
@@ -73,6 +104,7 @@ class HelixDaemon:
     def __init__(self, base_dir: Path = None):
         self.base_dir = base_dir or Path(__file__).parent.resolve()
         self.config = yaml.safe_load((self.base_dir / "config.yaml").read_text())
+        inject_config_to_env(self.config)
         self.logger = setup_logging(self.config, self.base_dir)
 
         # Subsystem references
@@ -676,6 +708,7 @@ class HelixV6Scaffold:
     def __init__(self, base_dir: Path = None):
         self.base_dir = base_dir or Path(__file__).parent.resolve()
         self.config = yaml.safe_load((self.base_dir / "config.yaml").read_text())
+        inject_config_to_env(self.config)
         self.logger = logging.getLogger("helix.v6.scaffold")
 
         self.gemini = None
