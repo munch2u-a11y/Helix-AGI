@@ -1195,69 +1195,93 @@ class ConsciousnessLoop:
 
     # ── System prompt ────────────────────────────────────────────────
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self) -> str | list[dict]:
         """Build the system prompt from beliefs and working state.
 
         Identity comes entirely from the belief graph — no hardcoded
         personality, name, or relationship blocks. The only hardcoded
         content is mechanical: how to use tools and output formats.
+        
+        V6: Returns a list of content blocks if provider is Anthropic
+        to enable prompt caching, otherwise returns a single string.
         """
-        sections = []
+        core_text, horizon_text = self._build_belief_context()
 
-        # 1. V4: Keeper-driven belief context (identity + contextual beliefs)
-        belief_text = self._build_belief_context()
-        if belief_text:
-            sections.append(belief_text)
+        static_sections = []
+        if core_text:
+            static_sections.append(core_text)
 
-        # 1b. V5: Spatial context — trail flashes + nearby beliefs + memories
-        #     Raw injection. No labels. If it's here, Helix thought it.
-        if self._spatial_context:
-            sections.append(self._spatial_context)
-
-        # 2. V4: State Board — volatile working memory with stability
-        state_text = self._build_state_board_context()
-        if state_text:
-            sections.append(state_text)
-
-        # 3. Recent memories (context)
-        memory_context = self._build_memory_context()
-        if memory_context:
-            sections.append(memory_context)
-
-        # 4. Scratchpad (persistent notes)
-        scratchpad_text = self._build_scratchpad_context()
-        if scratchpad_text:
-            sections.append(scratchpad_text)
-
-        # 5. Response format (mechanical — how to use tools, not who you are)
-        sections.append(
+        static_sections.append(
             "## Mechanical notes\n"
             "To schedule a future task, include this tag in your thoughts:\n"
             "[SCHEDULE:minutes] description of what to do"
         )
+        static_block = "\n\n".join(static_sections)
 
-        return "\n\n".join(sections)
+        dynamic_sections = []
+        if horizon_text:
+            dynamic_sections.append(horizon_text)
 
-    def _build_belief_context(self) -> str:
+        if self._spatial_context:
+            dynamic_sections.append(self._spatial_context)
+
+        state_text = self._build_state_board_context()
+        if state_text:
+            dynamic_sections.append(state_text)
+
+        memory_context = self._build_memory_context()
+        if memory_context:
+            dynamic_sections.append(memory_context)
+
+        scratchpad_text = self._build_scratchpad_context()
+        if scratchpad_text:
+            dynamic_sections.append(scratchpad_text)
+
+        dynamic_block = "\n\n".join(dynamic_sections)
+
+        # Provider specific format
+        if self._provider_name == "anthropic":
+            blocks = [
+                {
+                    "type": "text",
+                    "text": static_block,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ]
+            if dynamic_block:
+                blocks.append({
+                    "type": "text",
+                    "text": dynamic_block
+                })
+            return blocks
+        else:
+            final_sections = [static_block]
+            if dynamic_block:
+                final_sections.append(dynamic_block)
+            return "\n\n".join(final_sections)
+
+    def _build_belief_context(self) -> tuple[str, str]:
         """V4: Build belief context using the Keeper's horizon system.
 
         Instead of dumping ALL beliefs (~15K tokens), this surfaces:
         1. Core beliefs (identity axioms, always present)
         2. Keeper horizon (contextually relevant beliefs for THIS pulse)
 
-        The Keeper uses previous thoughts + state board as its search
-        seed, creating a rolling awareness horizon that extends just
-        far enough to keep thinking meaningful.
+        Returns:
+            (core_beliefs_str, horizon_beliefs_str)
         """
-        sections = ["## My Beliefs"]
+        core_sections = ["## My Beliefs"]
 
         # 1. Core beliefs — always present, identity floor
         core = self.keeper.get_core_beliefs()
         if core:
-            sections.append("### Core")
+            core_sections.append("### Core")
             for b in core:
-                sections.append(f"- {b}")
+                core_sections.append(f"- {b}")
 
+        core_str = "\n".join(core_sections)
+        
+        horizon_sections = []
         # 2. Keeper horizon — contextually relevant beliefs for this pulse
         #    Uses previous thoughts as seed for rolling horizon
         seed = self._previous_thoughts
@@ -1273,11 +1297,12 @@ class ConsciousnessLoop:
             k=20,
         )
         if horizon:
-            sections.append("\n### What feels familiar right now")
+            horizon_sections.append("### What feels familiar right now")
             for b in horizon:
-                sections.append(f"- {b}")
+                horizon_sections.append(f"- {b}")
 
-        return "\n".join(sections)
+        horizon_str = "\n".join(horizon_sections) if horizon_sections else ""
+        return (core_str, horizon_str)
 
     def _build_state_board_context(self) -> str:
         """V6: Build the State Board — raw spatial physics, no interpretation.
