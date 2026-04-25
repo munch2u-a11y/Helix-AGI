@@ -1,42 +1,56 @@
-# Helix AGI — Configuration
+# Helix AGI — Configuration (V6: Cognitive Cosmology)
 # Copy this to config.yaml and customize
 
 # ── Identity ─────────────────────────────────────────────────
 identity:
   name: "YourAgent"           # Your agent's name
-  version: "V5"
+  version: "V6"
 
 # These are read by setup.py and architecture_preamble.py
 agent_name: "YourAgent"
 creator_name: "YourName"
 
 # ── LLM Configuration ───────────────────────────────────────
-# Provider for the conscious mind ('gemini', 'anthropic', 'openai')
+# Provider for the conscious mind: 'gemini', 'anthropic', or 'openai'
+# Swap providers by changing this single value.
 conscious_provider: "gemini"
 
-# All subconscious agents rely on Gemini for cost/context reasons
+# Gemini (default provider — used for subconscious agents too)
 gemini:
-  conscious_model: "gemini-2.5-flash"     # Primary thinking model
-  default_model: "gemini-2.5-flash"       # Sub-agents, classification
-  heavy_model: "gemini-2.5-flash"         # Librarian, deep thought
+  conscious_model: "gemini-2.5-flash-preview-04-17"
+  default_model: "gemini-2.5-flash-preview-04-17"
+  heavy_model: "gemini-2.5-flash-preview-04-17"
   daily_cost_limit_usd: 5.00
   monthly_cost_limit_usd: 100.00
 
-# API key — set via env var GEMINI_API_KEY or here
-gemini_api_key: "YOUR_GEMINI_API_KEY"
-
+# Anthropic Claude (alternative conscious provider)
 anthropic:
-  conscious_model: "claude-3-7-sonnet-20250219"
+  conscious_model: "claude-haiku-4-5"
 
+# OpenAI GPT (alternative conscious provider)
 openai:
-  conscious_model: "gpt-4o"
+  conscious_model: "gpt-4o-mini"
 
+# API Keys — Set via environment variables (recommended) or here
+# Environment variables take priority:
+#   GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY
+gemini_api_key: ""
 anthropic_api_key: ""
 openai_api_key: ""
 
-# ── Consciousness ────────────────────────────────────────────
+# ── Consciousness V6 ────────────────────────────────────────
 consciousness:
-  heartbeat_ramp: [5, 10, 15, 30, 60, 120, 240]   # Seconds between pulses (accelerates on activity)
+  pulse_interval: 240           # Seconds between follow-up pulses (default: 4 min)
+  max_idle_pulses: 5            # Idle pulses before nap
+  sequential_chain_limit: 15    # Max tool-chaining pulses per heartbeat
+
+# ── Cognitive Space (V6) ────────────────────────────────────
+spatial:
+  projection_dim: 8             # Manifold dimensionality
+  n_anchors: 512                # Gravity field anchor count
+  embedding_dim: 384            # Embedding model output dim
+  trail_decay_rate: 0.995       # Trail particle decay per tick
+  precipitation_interval: 50    # Heartbeats between precipitation scans
 
 # ── Circadian Rhythm ─────────────────────────────────────────
 sleep_start_hour: 1       # When to go dormant (24h)

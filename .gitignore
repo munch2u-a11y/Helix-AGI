@@ -5,13 +5,15 @@ data/
 memory_store/
 chroma_shadow/
 chroma_db/
+brain/chroma/
 
-# Spatial mind / manifold runtime state
+# Spatial mind / manifold runtime state (V6)
 *.npy
 *.npz
 *_space_state.json
 attention_center*.npy
 brain/manifold/projection.npz
+cognitive_projection.npy
 
 # Personal data
 journals/
@@ -21,17 +23,33 @@ briefings/
 scratchpad.md
 contacts.json
 belief_graph.json
+belief_graph.json.backup
 emerging_beliefs.json
 sensory_journal.json
 scheduled_tasks.json
 email_reply_ledger.json
 cost_tracker.json
 
+# V6 runtime artifacts
+model_routes.json
+domain_whitelist.txt
+overnight_trail.json
+overnight_trail.loaded.json
+
 # Config with secrets
 config.yaml
 config/*.json
 token.json
 credentials.json
+
+# Helper/test scripts (not core)
+shadow_seeder.py
+test_cost.py
+test_emb.py
+test_pca.py
+
+# Service files (contain local paths)
+*.service
 
 # Python
 __pycache__/
@@ -57,3 +75,4 @@ Thumbs.db
 # Misc
 *.log
 nohup.out
+

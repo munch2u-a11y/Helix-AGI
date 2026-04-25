@@ -84,6 +84,15 @@ class BeliefKeeper:
         self.manifold = None
         self.projector = None
 
+        # V6: Belief precipitation — dense trail clusters → new beliefs
+        # The Keeper owns this because precipitation IS belief formation.
+        self.precipitation = None  # Set via set_precipitation() after init
+
+        # V6: Static prompt blocklist — beliefs already in the cached
+        # static prompt. These are excluded from spatial/horizon queries
+        # to prevent duplication. Rebuilt each morning, cleared after sleep.
+        self._static_blocklist: set[str] = set()
+
         self._init_chroma()
 
     def set_manifold(self, manifold, projector):
@@ -389,19 +398,21 @@ class BeliefKeeper:
     # ════════════════════════════════════════════════════════════════════
 
     def get_core_beliefs(self) -> list[str]:
-        """Return the highest-gravity identity axioms.
+        """Return the highest-gravity identity beliefs.
 
         These ALWAYS appear at the top of the context window.
         They are the gravity floor — even if the Keeper fails entirely,
         these ensure Helix knows who he is.
 
-        Sources: core + deep beliefs from belief_graph.json,
-        ordered by confidence (highest first).
+        V6: Core + deep beliefs in the cached static block.
+        Caching makes them nearly free (~10% of input cost).
+        The spatial system steers ATTENTION through the horizon,
+        but full identity context stays always-available.
         """
         if not self.belief_graph:
             return []
 
-        # Core beliefs (absolute truths) + deep beliefs (strongly held)
+        # Core beliefs (identity axioms) + deep beliefs (strongly held)
         core = self.belief_graph.get_core_beliefs()
         deep = self.belief_graph.get_deep_beliefs()
 
@@ -414,6 +425,44 @@ class BeliefKeeper:
 
         # Return content strings only
         return [b["content"] for b in all_heavy]
+
+    # ── Static Prompt Blocklist (daily cycle) ─────────────────────────
+
+    def refresh_static_blocklist(self) -> int:
+        """Rebuild the static prompt blocklist from current core + deep beliefs.
+
+        Called once at morning boot (after sleep cycle completes).
+        Everything in the static cached prompt gets blocklisted so
+        spatial/horizon queries don't duplicate them during the day.
+
+        Returns: number of beliefs blocklisted.
+        """
+        self._static_blocklist = set(self.get_core_beliefs())
+        logger.info(
+            f"Static blocklist refreshed: {len(self._static_blocklist)} beliefs "
+            f"excluded from spatial queries"
+        )
+        return len(self._static_blocklist)
+
+    def clear_static_blocklist(self):
+        """Clear the blocklist after sleep.
+
+        Called as the last step of the nightly sleep cycle,
+        before the next morning's refresh rebuilds it with
+        any beliefs that changed overnight (via precipitation).
+        """
+        count = len(self._static_blocklist)
+        self._static_blocklist.clear()
+        logger.info(f"Static blocklist cleared ({count} beliefs released)")
+
+    def get_static_blocklist(self) -> set[str]:
+        """Get the current blocklist for external consumers.
+
+        Used by spatial queries (gravity_ranked_query) and
+        consciousness prompt builders to skip beliefs already
+        in the cached static prompt.
+        """
+        return self._static_blocklist
 
     # ════════════════════════════════════════════════════════════════════
     # KEEPER HORIZON — contextually relevant beliefs for this pulse
@@ -517,9 +566,13 @@ class BeliefKeeper:
                 horizon.append(eb_text)
                 existing.add(eb_text)
 
-        # 5. Deduplicate against core beliefs (they're in a separate section)
-        core_set = set(self.get_core_beliefs())
-        horizon = [b for b in horizon if b not in core_set]
+        # 5. Deduplicate against static blocklist (already in cached prompt)
+        if self._static_blocklist:
+            horizon = [b for b in horizon if b not in self._static_blocklist]
+        else:
+            # Fallback: at least dedup against core beliefs
+            core_set = set(self.get_core_beliefs())
+            horizon = [b for b in horizon if b not in core_set]
 
         # 6. Cap and track
         horizon = horizon[:k]
@@ -649,28 +702,25 @@ class BeliefKeeper:
         return round(gravity, 4)
 
     # ════════════════════════════════════════════════════════════════════
-    # V4.1: SUBCONSCIOUS BELIEF FORMATION
+    # V6: POST-PULSE PROCESSING (no LLM — physics-based belief formation)
     # ════════════════════════════════════════════════════════════════════
 
     def extract_and_stage(self, thought_output: str, state_board: dict):
-        """Post-pulse belief extraction — the subconscious belief loop.
+        """Post-pulse processing — action tracking + belief graduation.
 
-        Called after every conscious pulse. Runs asynchronously so it
-        doesn't block the next heartbeat.
-
-        1. Sends thought output to Gemini Flash for belief extraction
-        2. Stages candidates as emerging_beliefs on the State Board
-        3. Over subsequent pulses, established beliefs naturally surface
-           alongside candidates via the horizon mechanism
-        4. When a candidate stabilizes (seen across N pulses), it
-           graduates into belief_graph.json
+        V6: No LLM call here. Belief formation is handled by
+        BeliefPrecipitation (physics-based trail cluster → belief).
+        This method only:
+          1. Tracks significant actions on the state board
+          2. Graduates any mature emerging beliefs
+          3. Persists emerging state to disk
         """
         if not thought_output or not thought_output.strip():
             return
 
         self._pulse_count += 1
 
-        # Run extraction in background thread to avoid blocking heartbeat
+        # Run in background thread to avoid blocking heartbeat
         thread = threading.Thread(
             target=self._extract_and_stage_sync,
             args=(thought_output, state_board),
@@ -679,27 +729,16 @@ class BeliefKeeper:
         thread.start()
 
     def _extract_and_stage_sync(self, thought_output: str, state_board: dict):
-        """Synchronous extraction — runs in background thread."""
+        """Synchronous post-pulse processing — runs in background thread."""
         try:
-            # 0. Track significant actions on the state board
+            # 1. Track significant actions on the state board
             #    This is how the Keeper maintains awareness of what Helix
-            #    has DONE, not just what he believes. Actions like replying
-            #    to emails get recorded here so the horizon can surface
-            #    them as context when the same topic comes up again.
+            #    has DONE, not just what he believes. Pure regex, no LLM.
             self._track_actions(thought_output)
 
-            # 1. Extract candidate beliefs from thought output
-            candidates = self._extract_beliefs_from_thought(thought_output)
-
-            if candidates:
-                # 2. Stage them (merge with existing emerging beliefs)
-                self._stage_candidates(candidates)
-                logger.debug(
-                    f"Keeper extracted {len(candidates)} candidate beliefs, "
-                    f"{len(self._emerging_beliefs)} total emerging"
-                )
-
-            # 3. Check if any emerging beliefs should graduate
+            # 2. Check if any emerging beliefs should graduate
+            #    (emerging beliefs are populated by BeliefPrecipitation,
+            #    not by LLM extraction)
             graduated = self._graduate_stable_beliefs()
             if graduated:
                 logger.info(
@@ -707,11 +746,11 @@ class BeliefKeeper:
                     f"{', '.join(b['id'] for b in graduated)}"
                 )
 
-            # 4. Persist to disk so overnight system can read them
+            # 3. Persist to disk so overnight system can read them
             self._persist_emerging()
 
         except Exception as e:
-            logger.warning(f"Keeper belief extraction failed: {e}")
+            logger.warning(f"Keeper post-pulse processing failed: {e}")
 
     def _track_actions(self, thought_output: str):
         """Detect significant actions in the thought output and record
@@ -1068,3 +1107,252 @@ Example: [
             "emerging_beliefs": len(self._emerging_beliefs),
             "pulse_count": self._pulse_count,
         }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# V6: BELIEF PRECIPITATION — Phase Transition Engine
+# ═══════════════════════════════════════════════════════════════════════
+#
+# When trail particle density exceeds a threshold in a region of
+# cognitive space, a new belief crystallizes — like stars forming
+# from gas clouds. No LLM needed (Gemini lite fallback for edge cases).
+#
+# This is the V6 evolution of the Keeper's belief formation path:
+#   V4: Gemini Flash extracts beliefs from conscious output
+#   V6: Dense trail clusters precipitate into beliefs via physics
+# ═══════════════════════════════════════════════════════════════════════
+
+from collections import Counter
+
+# Minimum trail particles in a region to trigger precipitation
+PRECIPITATION_THRESHOLD = 15
+
+# Radius in 8D space to consider particles as part of a cluster
+CLUSTER_RADIUS = 0.5
+
+# Minimum age of particles before they can precipitate (prevent instant beliefs)
+MIN_AGE_SECONDS = 300  # 5 minutes
+
+# Stop words for content extraction
+_STOP_WORDS = {
+    "i", "me", "my", "the", "a", "an", "is", "am", "are", "was", "were",
+    "be", "been", "being", "have", "has", "had", "do", "does", "did",
+    "will", "would", "could", "should", "may", "might", "shall", "can",
+    "to", "of", "in", "for", "on", "with", "at", "by", "from", "as",
+    "into", "about", "between", "through", "during", "before", "after",
+    "and", "but", "or", "nor", "not", "so", "yet", "both", "either",
+    "neither", "each", "every", "all", "any", "few", "more", "most",
+    "other", "some", "such", "no", "only", "own", "same", "than",
+    "too", "very", "just", "that", "this", "these", "those", "it",
+    "its", "he", "she", "they", "them", "their", "we", "us", "our",
+    "you", "your", "what", "which", "who", "whom", "when", "where",
+    "why", "how", "if", "then", "else", "there", "here",
+}
+
+
+def extract_common_theme(contents: list[str], max_words: int = 12) -> str:
+    """Extract the common theme from a list of short content fragments.
+
+    Uses simple word frequency (TF) with stop word removal.
+    Returns a short phrase capturing the cluster's essence.
+    """
+    if not contents:
+        return ""
+
+    all_words = []
+    for content in contents:
+        words = re.findall(r'\b[a-zA-Z]+\b', content.lower())
+        words = [w for w in words if w not in _STOP_WORDS and len(w) > 2]
+        all_words.extend(words)
+
+    if not all_words:
+        return contents[0][:80] if contents else ""
+
+    freq = Counter(all_words)
+    top_words = [word for word, _ in freq.most_common(max_words)]
+
+    if not top_words:
+        return contents[0][:80] if contents else ""
+
+    best_fragment = ""
+    best_score = 0
+    top_set = set(top_words[:6])
+
+    for content in contents:
+        words = set(re.findall(r'\b[a-zA-Z]+\b', content.lower()))
+        score = len(words & top_set)
+        if score > best_score:
+            best_score = score
+            best_fragment = content
+
+    if best_fragment:
+        return best_fragment[:120]
+
+    return " ".join(top_words[:8])
+
+
+class BeliefPrecipitation:
+    """Phase transition engine: dense trail clusters → new beliefs.
+
+    Like stellar nucleosynthesis — when enough hydrogen (trail particles)
+    accumulates under sufficient gravity, it ignites into a star (belief).
+    """
+
+    def __init__(
+        self,
+        cognitive_space=None,
+        belief_graph=None,
+        gemini_client=None,
+        threshold: int = PRECIPITATION_THRESHOLD,
+        cluster_radius: float = CLUSTER_RADIUS,
+    ):
+        self.space = cognitive_space
+        self.belief_graph = belief_graph
+        self.gemini = gemini_client
+        self.threshold = threshold
+        self.cluster_radius = cluster_radius
+
+        self._precipitated_regions: list[np.ndarray] = []
+        self._total_precipitated = 0
+
+        logger.info(
+            f"BeliefPrecipitation initialized: "
+            f"threshold={threshold}, radius={cluster_radius}"
+        )
+
+    def scan_and_precipitate(self) -> list[dict]:
+        """Scan the manifold for dense trail regions and precipitate beliefs."""
+        if not self.space or not self.belief_graph:
+            return []
+
+        new_beliefs = []
+        particles = self.space.get_trail_particles(max_age_seconds=None)
+
+        now = time.time()
+        mature_particles = [
+            p for p in particles
+            if now - p.get("created_at", 0) > MIN_AGE_SECONDS
+        ]
+
+        if len(mature_particles) < self.threshold:
+            return []
+
+        positions = np.array([p["position"] for p in mature_particles])
+        contents = [p.get("content", "") for p in mature_particles]
+        ids = [p["id"] for p in mature_particles]
+
+        clusters_found = []
+        used = set()
+
+        for i in range(len(positions)):
+            if ids[i] in used:
+                continue
+
+            dists = np.linalg.norm(positions - positions[i], axis=1)
+            nearby_mask = dists < self.cluster_radius
+            nearby_indices = np.where(nearby_mask)[0]
+
+            if len(nearby_indices) >= self.threshold:
+                centroid = positions[nearby_indices].mean(axis=0)
+                if self._already_precipitated_nearby(centroid):
+                    continue
+
+                cluster_contents = [contents[j] for j in nearby_indices]
+                cluster_ids = [ids[j] for j in nearby_indices]
+
+                clusters_found.append({
+                    "centroid": centroid,
+                    "contents": cluster_contents,
+                    "particle_ids": cluster_ids,
+                    "size": len(nearby_indices),
+                })
+
+                for j in nearby_indices:
+                    used.add(ids[j])
+
+        for cluster in clusters_found:
+            belief = self._precipitate_cluster(cluster)
+            if belief:
+                new_beliefs.append(belief)
+
+        if new_beliefs:
+            logger.info(
+                f"Precipitated {len(new_beliefs)} new beliefs from "
+                f"{len(clusters_found)} dense trail clusters"
+            )
+
+        return new_beliefs
+
+    def _precipitate_cluster(self, cluster: dict) -> Optional[dict]:
+        """Convert a dense trail cluster into a belief."""
+        contents = cluster["contents"]
+        centroid = cluster["centroid"]
+
+        theme = extract_common_theme(contents)
+
+        if not theme or len(theme) < 10:
+            if self.gemini:
+                try:
+                    prompt = (
+                        "These are fragments from a stream of consciousness. "
+                        "What is the single underlying belief being expressed? "
+                        "Reply with ONE short, clear statement (under 100 chars):\n\n"
+                        + "\n".join(f"- {c}" for c in contents[:20])
+                    )
+                    result = self.gemini.ask(prompt, model="lite")
+                    if result and len(result) > 5:
+                        theme = result.strip()
+                except Exception as e:
+                    logger.debug(f"Gemini fallback failed: {e}")
+
+        if not theme or len(theme) < 5:
+            return None
+
+        self._total_precipitated += 1
+        belief_id = f"b_precipitated_{self._total_precipitated}"
+
+        belief = self.belief_graph.add_belief(
+            belief_id=belief_id,
+            content=theme,
+            weight="surface",
+            confidence=0.30,
+            belief_type="propositional",
+        )
+
+        if belief:
+            self.belief_graph.update_belief(
+                belief_id, position_8d=centroid.tolist()
+            )
+            self._precipitated_regions.append(centroid)
+
+            for pid in cluster["particle_ids"]:
+                pt = self.space.get_point(pid)
+                if pt:
+                    pt["importance"] *= 0.1
+
+            logger.info(
+                f"Precipitated: '{theme[:60]}' from {cluster['size']} "
+                f"trail particles (confidence=0.30)"
+            )
+
+        return belief
+
+    def _already_precipitated_nearby(
+        self, position: np.ndarray, min_dist: float = 0.3
+    ) -> bool:
+        """Check if we've already precipitated a belief near this position."""
+        for prev_pos in self._precipitated_regions:
+            dist = float(np.linalg.norm(position - prev_pos))
+            if dist < min_dist:
+                return True
+        return False
+
+    def get_stats(self) -> dict:
+        """Get precipitation stats."""
+        return {
+            "total_precipitated": self._total_precipitated,
+            "tracked_regions": len(self._precipitated_regions),
+            "threshold": self.threshold,
+            "cluster_radius": self.cluster_radius,
+        }
+

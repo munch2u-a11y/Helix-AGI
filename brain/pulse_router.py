@@ -1,5 +1,5 @@
 """
-Helix V5 — Pulse Router
+Helix V4 — Pulse Router
 
 Simplified nervous system for Gemini consciousness. No Will Detector,
 no speech center — the conscious model (Gemini 3.0 Pro) handles

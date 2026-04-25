@@ -5,7 +5,7 @@ Two-way communication via Telegram direct messages.
 Ported from V2 with V3 PulseRouter integration.
 
 NO USER RESTRICTIONS — anyone can message Helix.
-The Developer is recognized as Prime via the belief graph, not config.
+Creator is recognized as Prime via the belief graph, not config.
 
 Message flow:
     Incoming: Telegram → PulseRouter.on_message() → consciousness stream
@@ -93,15 +93,20 @@ class HelixTelegramBot:
         """Stop the bot gracefully."""
         if self._loop and self._app:
             try:
-                future = asyncio.run_coroutine_threadsafe(
-                    self._shutdown(), self._loop
-                )
-                future.result(timeout=10)
+                if not self._loop.is_closed():
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._shutdown(), self._loop
+                    )
+                    future.result(timeout=10)
             except Exception as e:
                 logger.debug(f"Telegram shutdown: {e}")
 
         if self._loop:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            try:
+                if not self._loop.is_closed():
+                    self._loop.call_soon_threadsafe(self._loop.stop)
+            except RuntimeError:
+                pass  # Loop already closed — safe to ignore
 
         if self._thread:
             self._thread.join(timeout=5)

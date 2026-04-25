@@ -435,6 +435,33 @@ class Memory:
                 memories.append(mem)
         return memories
 
+    def get_all_with_positions(self) -> list[dict]:
+        """Fetch all memories with their 8D spatial coordinates for the cognitive manifold."""
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute('''
+                SELECT id, content, memory_type, importance, created_at,
+                       pos_0, pos_1, pos_2, pos_3, pos_4, pos_5, pos_6, pos_7
+                FROM memories
+            ''')
+            rows = cur.fetchall()
+            
+            results = []
+            for row in rows:
+                data = dict(row)
+                pos = [data.pop(f"pos_{i}", None) for i in range(8)]
+                if all(p is not None for p in pos):
+                    data["position_8d"] = pos
+                results.append(data)
+            return results
+        except Exception as e:
+            self.logger.error(f"Failed to fetch memories with positions: {e}")
+            return []
+        finally:
+            conn.close()
+
     def _touch_memory(self, memory_id: int):
         """Update access count and last_accessed for a memory."""
         try:

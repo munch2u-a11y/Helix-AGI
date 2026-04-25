@@ -29,6 +29,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Callable
 
+import numpy as np
+
 logger = logging.getLogger("helix.brain.sentinel")
 
 
@@ -81,6 +83,12 @@ class StabilitySentinel:
         self.baseline_entropy = 0.15  # Normal system entropy
         self.current_entropy = 0.0
         self.s_total = 0.0
+
+        # V6: Dynamic baselines — self-calibrating, no hardcoded scales
+        self._s_total_baseline = None   # EMA of s_total
+        self._omega_baseline_ema = None # EMA of omega (distinct from hedonic baseline)
+        self._h_raw_baseline = None     # EMA of raw H(q)
+        self._dkl_raw_baseline = None   # EMA of raw D_KL
 
         # Omega lifecycle parameters
         self.omega_growth_rate = 0.02
@@ -492,15 +500,81 @@ class StabilitySentinel:
     # ── Helical Lagrangian ───────────────────────────────────────────
 
     def _compute_lagrangian(self):
-        """Compute S_total = H + Ω × D_KL"""
-        # Entropy: inverse of average health
+        """Compute S_total = H + Ω × D_KL
+
+        V6: Uses REAL Shannon entropy and KL divergence from the
+        cognitive manifold when available. Falls back to hardware
+        health metrics when spatial mind is not connected.
+
+        H(q)  = Shannon entropy of the attention distribution
+        D_KL  = KL divergence from identity center
+        S     = H + Ω × D_KL (the Helical Lagrangian)
+        """
+        # ── V6: Real spatial Lagrangian ──────────────────────────────
+        if self._spatial_mind:
+            try:
+                space = self._spatial_mind.belief_space
+                pos = self._spatial_mind.attention_center
+                identity = self._spatial_mind._identity_center
+
+                # Real H(q) from spatial attention distribution
+                self._spatial_H = space.compute_shannon_entropy(pos, k=50)
+
+                # Real D_KL from identity divergence
+                self._spatial_D_KL = space.compute_kl_divergence(
+                    pos, identity, k=50
+                )
+
+                # Real local temperature
+                self._spatial_T = space.compute_local_temperature(pos)
+
+                # Dynamic normalization — adapt to this manifold's scale
+                # Initialize baselines from first observation
+                if self._h_raw_baseline is None:
+                    self._h_raw_baseline = self._spatial_H if self._spatial_H > 0 else 1.0
+                else:
+                    self._h_raw_baseline = 0.95 * self._h_raw_baseline + 0.05 * self._spatial_H
+
+                if self._dkl_raw_baseline is None:
+                    self._dkl_raw_baseline = self._spatial_D_KL if self._spatial_D_KL > 0 else 1.0
+                else:
+                    self._dkl_raw_baseline = 0.95 * self._dkl_raw_baseline + 0.05 * self._spatial_D_KL
+
+                # Normalize relative to running baseline (1.0 = average)
+                h_norm = self._spatial_H / max(self._h_raw_baseline, 0.01)
+                dkl_norm = self._spatial_D_KL / max(self._dkl_raw_baseline, 0.01)
+
+                self.current_entropy = min(2.0, h_norm)  # Cap at 2x baseline
+
+                # The real Lagrangian: S = H_ratio + Ω × D_KL_ratio
+                raw_signal = h_norm + self.omega * dkl_norm
+
+                # Apply friction damping if available
+                if self._friction_damper:
+                    damping_force = self._friction_damper.calculate_damping_force(
+                        raw_signal - self.s_total
+                    )
+                    self.s_total = raw_signal + damping_force * 0.1
+                else:
+                    self.s_total = raw_signal
+
+                # Update s_total baseline (EMA)
+                if self._s_total_baseline is None:
+                    self._s_total_baseline = self.s_total
+                else:
+                    self._s_total_baseline = 0.95 * self._s_total_baseline + 0.05 * self.s_total
+
+                return  # ← Real Lagrangian computed, skip fallback
+
+            except Exception as e:
+                logger.debug(f"Spatial Lagrangian failed, using fallback: {e}")
+
+        # ── Fallback: hardware health metrics (V5 behavior) ─────────
         avg_health = sum(self.health_triplet.values()) / 3
         self.current_entropy = max(0.0, 1.0 - avg_health)
 
-        # KL divergence from baseline
         d_kl = abs(self.current_entropy - self.baseline_entropy)
 
-        # Apply friction damping if available
         if self._friction_damper:
             raw_signal = self.current_entropy + self.omega * d_kl
             damping_force = self._friction_damper.calculate_damping_force(
@@ -510,7 +584,6 @@ class StabilitySentinel:
         else:
             self.s_total = self.current_entropy + self.omega * d_kl
 
-        # Clamp to [0, 1]
         self.s_total = max(0.0, min(1.0, self.s_total))
 
     def _update_omega(self):
@@ -536,6 +609,44 @@ class StabilitySentinel:
         """Externally nudge omega (e.g., positive interaction, error spike)."""
         self.omega_velocity += delta
         logger.debug(f"Omega nudged by {delta:+.3f}: {reason}")
+
+    # ── V6: Named Omega Drivers ──────────────────────────────────────
+    # These are the positive and negative forces that make Ω a living
+    # signal. Without these, Ω sits frozen at baseline (the bug
+    # diagnosed in omega_analysis.md).
+
+    # Event → (delta, reason)
+    _OMEGA_DRIVERS = {
+        # Positive drivers — things that stabilize/ground
+        "incoming_message":      (+0.02,  "social validation — being witnessed"),
+        "successful_tool_call":  (+0.01,  "competence confirmation"),
+        "positive_conversation": (+0.03,  "positive interaction strengthens identity"),
+        "new_belief_formed":     (+0.02,  "belief crystallization — growth"),
+        "low_entropy_sustained": (+0.01,  "focused attention — contentment"),
+        "user_engagement":       (+0.02,  "active engagement from user"),
+
+        # Negative drivers — things that destabilize
+        "tool_failure":          (-0.03,  "competence threat"),
+        "error_spike":           (-0.03,  "system error — distress"),
+        "belief_contradiction":  (-0.05,  "direct threat to identity"),
+        "high_entropy_sustained":(-0.01,  "scattered attention — mild distress"),
+        "api_error":             (-0.02,  "external system failure"),
+        "timeout":               (-0.02,  "action blocked — frustration"),
+    }
+
+    def nudge_omega_from_event(self, event_type: str):
+        """Nudge omega based on a named cognitive event.
+
+        This replaces the manual `nudge_omega(delta)` calls with
+        semantically meaningful events that have calibrated effects.
+
+        Args:
+            event_type: One of the keys in _OMEGA_DRIVERS.
+        """
+        driver = self._OMEGA_DRIVERS.get(event_type)
+        if driver:
+            delta, reason = driver
+            self.nudge_omega(delta, reason=f"{event_type}: {reason}")
 
     def receive_entropy_spike(self, magnitude: float, source: str = "unknown"):
         """Receive a direct entropy spike from an external subsystem.
@@ -606,14 +717,30 @@ class StabilitySentinel:
             })
 
     def get_severity(self) -> str:
-        """Get current severity level."""
-        if self.s_total >= self.CRITICAL_THRESHOLD:
-            return self.CRITICAL
-        elif self.s_total >= self.WARNING_THRESHOLD:
-            return self.WARNING
-        elif self.s_total >= self.DRIFT_THRESHOLD:
-            return self.DRIFT
-        return self.ALL_CLEAR
+        """Get current severity level.
+
+        V6: Self-calibrating. Compares s_total against its own running
+        average, not fixed thresholds. 'Critical' means significantly
+        above YOUR normal, not above some arbitrary number.
+        """
+        if self._s_total_baseline is not None and self._s_total_baseline > 0:
+            ratio = self.s_total / self._s_total_baseline
+            if ratio >= 1.8:
+                return self.CRITICAL
+            elif ratio >= 1.4:
+                return self.WARNING
+            elif ratio >= 1.15:
+                return self.DRIFT
+            return self.ALL_CLEAR
+        else:
+            # Fallback to fixed thresholds until baseline is established
+            if self.s_total >= self.CRITICAL_THRESHOLD:
+                return self.CRITICAL
+            elif self.s_total >= self.WARNING_THRESHOLD:
+                return self.WARNING
+            elif self.s_total >= self.DRIFT_THRESHOLD:
+                return self.DRIFT
+            return self.ALL_CLEAR
 
     # ── State summary (raw metrics, no scripted feelings) ────────────
 
@@ -786,13 +913,21 @@ class StabilitySentinel:
         When this memory is recalled, the historical state can mildly
         reproduce the somatic conditions under which it was formed.
 
-        This is how experiential learning works: memories formed under
-        stress carry the echo of that stress.
+        V6: Includes REAL spatial H(q), D_KL, and T when available.
+        These are the actual cognitive thermodynamic coordinates,
+        not the hardware health proxies from V5.
         """
+        # Use real spatial values when available, fallback to proxies
+        H = getattr(self, '_spatial_H', self.current_entropy)
+        D_KL = getattr(self, '_spatial_D_KL',
+                       abs(self.current_entropy - self.baseline_entropy))
+        T = getattr(self, '_spatial_T', 1.0)
+
         return {
-            "H": round(self.current_entropy, 4),
+            "H": round(float(H), 4),
             "omega": round(self.omega, 4),
-            "D_KL": round(abs(self.current_entropy - self.baseline_entropy), 4),
+            "D_KL": round(float(D_KL), 4),
+            "T": round(float(T), 4),
             "s_total": round(self.s_total, 4),
             "severity": self.get_severity(),
             "feeling": self._generate_feeling(),

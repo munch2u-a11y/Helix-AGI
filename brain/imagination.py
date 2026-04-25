@@ -21,6 +21,8 @@ Usage:
 import numpy as np
 import time
 import logging
+import re
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -65,6 +67,9 @@ class Projection:
     verified: bool = False          # Flips to True if reality confirms
     contradicted: bool = False      # Flips to True if reality contradicts
     confidence: float = 0.3         # Low by default — it's imagined
+    
+    # Optional trace for overnight dream logging
+    trace: Optional[dict] = field(default_factory=lambda: None)
 
 
 class ImaginationEngine:
@@ -87,6 +92,48 @@ class ImaginationEngine:
         self._projections: dict[str, Projection] = {}
         self._projection_counter = 0
 
+    # ── 8D Navigation ─────────────────────────────────────────────────
+
+    def _navigate(self, target_text: str, action: str) -> Optional[dict]:
+        """Navigate the spatial mind to a target and return the path trace.
+        
+        This physically moves the 8D attention center to execute projections,
+        leaving emergent 'dream' paths in its wake.
+        """
+        if not self.spatial_mind:
+            return None
+            
+        try:
+            from_pos = self.spatial_mind.attention_center.copy().tolist()
+            # Pulse toward the target
+            context = self.spatial_mind.pulse_from_text(target_text)
+            to_pos = self.spatial_mind.attention_center.copy().tolist()
+            
+            flashes = []
+            nearby = []
+            for line in context.split("\n"):
+                if "⟪" in line:
+                    flashes.extend(re.findall(r"⟪([^⟫]+)⟫", line))
+                elif line.startswith("• "):
+                    text = re.sub(r"\s*\[\d+\.\d+\]$", "", line[2:]).strip()
+                    if text:
+                        nearby.append(text)
+                elif line.strip() and not line.startswith("•"):
+                    nearby.append(line.strip())
+                    
+            return {
+                "from_pos": from_pos,
+                "to_pos": to_pos,
+                "flashes": flashes[:5],
+                "action": action,
+                "agent": "imagination",
+                "nearby": nearby[:5],
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            logger.debug(f"Spatial navigation for {action} failed: {e}")
+            return None
+
     # ── Core: Imagine a scenario ──────────────────────────────────────
 
     def imagine(self, scenario_text: str, k_nearby: int = 15) -> Projection:
@@ -104,7 +151,9 @@ class ImaginationEngine:
         Returns:
             Projection with estimated felt state and supporting evidence.
         """
-        # 1. Project scenario into 8D
+        # 1. Project scenario into 8D & Navigate
+        trace = self._navigate(target_text=scenario_text, action=f"imagine: {scenario_text[:30]}")
+        
         embedder = self.spatial_mind._get_embedder()
         embedding = embedder.encode(scenario_text)
         embedding = np.array(embedding, dtype=np.float32)
@@ -195,6 +244,7 @@ class ImaginationEngine:
             nearby_experiences=nearby_experiences[:5],
             nearby_beliefs=nearby_beliefs[:5],
             created_at=time.time(),
+            trace=trace,
         )
 
         self._projections[proj_id] = projection

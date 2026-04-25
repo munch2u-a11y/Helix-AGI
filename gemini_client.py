@@ -23,8 +23,10 @@ logger = logging.getLogger("helix.gemini")
 # Approximate pricing per 1M tokens (USD)
 PRICING = {
     "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
+    "gemma-3-27b-it": {"input": 0.15, "output": 0.60},
     "gemini-3.0-flash": {"input": 0.10, "output": 0.40},
     "gemini-3-flash-preview": {"input": 0.10, "output": 0.40},
+    "gemini-3.1-flash-lite-preview": {"input": 0.04, "output": 0.15},
     "gemini-2.5-pro-preview-05-06": {"input": 1.25, "output": 10.00},
     "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
     "gemini-3-pro-preview": {"input": 1.25, "output": 10.00},
@@ -43,7 +45,6 @@ class GeminiClient:
     """
 
     def __init__(self, config: dict, base_dir: Path):
-        self.full_config = config
         self.config = config.get("gemini", {})
         self.base_dir = base_dir
         self.cost_file = base_dir / "logs" / "cost_tracker.json"
@@ -67,12 +68,10 @@ class GeminiClient:
             },
         }
 
-        api_key = os.environ.get("GEMINI_API_KEY", "")
-        if not api_key:
-            api_key = self.full_config.get("gemini_api_key", "")
+        api_key = os.environ.get("GEMINI_API_KEY", "") or self.config.get("api_key", "")
         if not api_key:
             raise ValueError(
-                "GEMINI_API_KEY environment variable or config key not set. "
+                "GEMINI_API_KEY environment variable not set and no api_key in config. "
                 "Set it with: export GEMINI_API_KEY='your-key-here'"
             )
         self.client = genai.Client(api_key=api_key)
@@ -94,17 +93,17 @@ class GeminiClient:
 
         original_model = kwargs.get("model")
         fallback_sequence = []
-        default_flash = getattr(self, "default_model", "gemini-2.5-flash")
+        default_flash = getattr(self, "default_model", "gemini-3.1-flash-lite-preview")
         
         if original_model == "gemini-3-flash-preview":
             if pro_fallback:
-                fallback_sequence = ["gemini-2.5-pro", default_flash]
+                fallback_sequence = ["gemma-3-27b-it", default_flash, "gemini-2.5-flash"]
             else:
-                fallback_sequence = [default_flash]
-        elif original_model and "pro" in original_model.lower():
-            fallback_sequence = [default_flash]
+                fallback_sequence = [default_flash, "gemini-2.5-flash"]
+        elif original_model == "gemini-3.1-flash-lite-preview":
+            fallback_sequence = ["gemini-2.5-flash"]
         elif original_model and original_model != default_flash:
-            fallback_sequence = [default_flash]
+            fallback_sequence = [default_flash, "gemini-2.5-flash"]
 
         for attempt in range(max_retries):
             try:
@@ -484,13 +483,30 @@ class GeminiClient:
     # -- Private --
 
     def _resolve_model(self, model: str) -> str:
+        """Resolve a model alias to a concrete model name.
+        
+        Reads from model_routes.json on every call so the routing
+        can be hot-swapped without restarting the daemon.
+        """
+        routes = self._load_model_routes()
         if model in ("auto", "default"):
-            return self.default_model
+            return routes.get("default", self.default_model)
         elif model == "conscious":
-            return self.conscious_model
+            return routes.get("conscious", self.conscious_model)
         elif model == "heavy":
-            return self.heavy_model
+            return routes.get("heavy", self.heavy_model)
+        elif model == "sensory":
+            return routes.get("sensory", self.default_model)
         return model
+
+    def _load_model_routes(self) -> dict:
+        """Load model routing from model_routes.json (hot-swappable)."""
+        routes_file = self.base_dir / "model_routes.json"
+        try:
+            with open(routes_file, "r") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
 
     def _compute_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
         pricing = PRICING.get(model, DEFAULT_PRICING)

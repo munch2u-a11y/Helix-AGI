@@ -373,7 +373,7 @@ following the format specified in your instructions."""
             result = self.gemini.ask(
                 prompt=prompt,
                 system_prompt=_DEEP_THOUGHT_PROMPT,
-                model="heavy",  # Use Pro for deeper reasoning
+                model="heavy",  # Uses heavy tier (currently lite for budget)
                 temperature=0.5,
             )
             return result.strip() if result else ""

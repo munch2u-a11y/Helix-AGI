@@ -1,13 +1,25 @@
-google-genai>=1.0.0
-anthropic>=0.90.0\nopenai>=1.0.0
-fastapi>=0.115.0
-uvicorn>=0.34.0
-schedule>=1.2.0
+# LLM Providers (install at least one)
+google-genai>=1.0.0        # Gemini (default)
+anthropic>=0.90.0          # Claude
+openai>=1.0.0              # GPT (optional)
+
+# Core dependencies
+numpy>=1.24.0
+scipy>=1.10.0              # KDTree for cognitive space
 pyyaml>=6.0
 chromadb>=0.4.0
 psutil>=5.9.0
 requests>=2.31.0
+schedule>=1.2.0
+
+# Communication
 python-telegram-bot>=21.0
+
+# Web tools
 duckduckgo_search>=8.0.0
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
+
+# API (optional — for status endpoints)
+fastapi>=0.115.0
+uvicorn>=0.34.0

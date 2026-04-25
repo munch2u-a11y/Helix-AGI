@@ -624,8 +624,10 @@ class Librarian:
         except Exception:
             pass
 
-        # Dynamic: names are discovered from profile files above.
-        # No hardcoded fallback names in the public scaffold.
+        # Common name patterns
+        for name in []:  # User-defined familiar names loaded from profiles
+            if name.lower() in query_lower:
+                return name
 
         return None
 
@@ -678,6 +680,173 @@ class Librarian:
                 lines.append(f"  {entry[:200]}")
 
         return "\n".join(lines)
+
+    # ════════════════════════════════════════════════════════════════════
+    # V6 RECALL — zero-LLM deep memory retrieval with context
+    # ════════════════════════════════════════════════════════════════════
+
+    def remember_v6(
+        self,
+        topic: str,
+        sentinel=None,
+    ) -> str:
+        """V6 deep recall — pure computation, no LLM calls.
+
+        Flow:
+        1. Semantic search for the seed memory (ChromaDB)
+        2. Expand context around the seed:
+           - Conversation: pull surrounding messages (±10 min window)
+           - Journal: pull the full journal entry for that day
+           - Thought/reflection: pull the full content
+        3. Attach Lagrangian snapshot (how he felt at the time)
+        4. Apply somatic echo (mild omega nudge from recalled state)
+
+        Args:
+            topic: What Helix is trying to remember (from the tool call).
+            sentinel: StabilitySentinel for somatic echo injection.
+
+        Returns:
+            Full memory content with context, formatted naturally.
+        """
+        if not topic:
+            return "(nothing to recall)"
+
+        # 1. Navigate attention toward the recalled content
+        self._navigate(target_text=topic, action=f"remember: {topic[:40]}")
+
+        # 2. Find seed memories via semantic search
+        seeds = self.memory.recall(
+            search=topic,
+            limit=3,
+            min_importance=0.0,
+        )
+
+        if not seeds:
+            return f"(I try to remember '{topic}' but nothing comes to mind.)"
+
+        parts = []
+
+        for i, seed in enumerate(seeds):
+            content = seed.get("content", "")
+            memory_type = seed.get("memory_type", "unknown")
+            created_at = seed.get("created_at", "")
+            importance = seed.get("importance", 0)
+            mem_id = seed.get("id")
+
+            # 3. Get full Lagrangian snapshot from SQLite
+            snap = {}
+            if mem_id:
+                full_mem = self.memory.get_by_id(mem_id)
+                if full_mem:
+                    snap = full_mem.get("lagrangian_snapshot", {})
+                    content = full_mem.get("content", content)  # Full, untruncated
+
+            # 4. Expand context based on memory type
+            context_lines = []
+
+            if memory_type == "conversation":
+                # Pull surrounding messages within ±10 minute window
+                surrounding = self._get_conversation_window(created_at, minutes=10)
+                if surrounding:
+                    context_lines.append("--- conversation ---")
+                    for msg in surrounding:
+                        ts = msg.get("created_at", "")[:19]
+                        c = msg.get("content", "")
+                        marker = "→" if msg.get("id") == mem_id else " "
+                        context_lines.append(f"  {marker} [{ts}] {c}")
+                    context_lines.append("--- end ---")
+
+            elif memory_type == "journal":
+                # Pull the full journal for that day
+                if created_at:
+                    date_str = created_at[:10]  # YYYY-MM-DD
+                    journal_text = self.memory.read_journal(date_str)
+                    if journal_text and "No journal entry" not in journal_text:
+                        context_lines.append(f"Journal from {date_str}:")
+                        context_lines.append(journal_text[:800])
+
+            # 5. Format the recalled memory
+            ts_display = created_at[:19] if created_at else "unknown time"
+            imp_star = "★" if importance >= 0.7 else "·"
+
+            if i == 0:
+                parts.append(f"Memory ({ts_display}):")
+            else:
+                parts.append(f"\nAlso ({ts_display}):")
+
+            parts.append(f"  {imp_star} {content}")
+
+            # Add conversation context
+            if context_lines:
+                parts.extend(context_lines)
+
+            # 6. Attach Lagrangian state (how I felt when this formed)
+            if snap:
+                omega = snap.get("omega", None)
+                severity = snap.get("severity", None)
+                H = snap.get("H", None)
+                T = snap.get("T", None)
+                state_parts = []
+                if omega is not None:
+                    state_parts.append(f"Ω={omega:.3f}")
+                if severity and severity != "all_clear":
+                    state_parts.append(f"severity={severity}")
+                if H is not None:
+                    state_parts.append(f"H={H:.2f}")
+                if T is not None:
+                    state_parts.append(f"T={T:.2f}")
+                if state_parts:
+                    parts.append(f"  (state when formed: {', '.join(state_parts)})")
+
+            # 7. Somatic echo — re-feel the remembered state
+            if sentinel and snap:
+                historical_omega = snap.get("omega", 0.5)
+                historical_severity = snap.get("severity", "all_clear")
+
+                if historical_severity in ("warning", "critical"):
+                    echo = -0.02 if historical_severity == "warning" else -0.05
+                    sentinel.nudge_omega(
+                        echo,
+                        f"somatic echo: memory from {ts_display} "
+                        f"(encoded at {historical_severity})"
+                    )
+                elif historical_severity == "all_clear" and historical_omega > 0.7:
+                    sentinel.nudge_omega(
+                        +0.01,
+                        f"positive echo: memory from {ts_display} "
+                        f"(encoded at Ω={historical_omega:.2f})"
+                    )
+
+        return "\n".join(parts)
+
+    def _get_conversation_window(
+        self,
+        center_time: str,
+        minutes: int = 10,
+    ) -> list[dict]:
+        """Pull conversation messages within ±N minutes of a timestamp.
+
+        Returns chronologically sorted memories from the time window.
+        """
+        if not center_time:
+            return []
+
+        try:
+            from datetime import timedelta
+            center = datetime.fromisoformat(center_time.replace("Z", "+00:00").split("+")[0])
+            start = center - timedelta(minutes=minutes)
+            end = center + timedelta(minutes=minutes)
+
+            return self.memory.recall_temporal(
+                start_time=start,
+                end_time=end,
+                min_importance=0.0,
+                memory_types=["conversation", "consciousness"],
+                limit=20,
+            )
+        except Exception as e:
+            logger.debug(f"Conversation window query failed: {e}")
+            return []
 
     # ════════════════════════════════════════════════════════════════════
     # LAYER 3: DEEP RECALL — full agentic orchestration
@@ -1011,7 +1180,7 @@ class Librarian:
         """Get a single-line summary about a known person.
 
         Returns compact string like:
-        '(I know Joshua — as of Updated: 2026-04-12: he created me, he's trustworthy)'
+        '(I know the creator — they are trustworthy)'
         """
         # Try profile file first
         profile_path = self.profiles_dir / f"{person_name.lower()}.md"

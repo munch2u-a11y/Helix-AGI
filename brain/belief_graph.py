@@ -138,6 +138,8 @@ class BeliefGraph:
             "verifications": float(verifications),
             "stability_index": float(stability_index),
             "belief_type": belief_type,
+            "drive_type": None,         # V6: "subjective" (desire) or "objective" (capability), set by tagging
+            "tool_name": None,          # V6: tool associated with this capability (for objective beliefs)
             "position_8d": None,        # Set by CognitiveSpace on bootstrap/add
             "last_accessed_ts": time.time(),  # When last surfaced by the Keeper
             "encoding_lagrangian": encoding_lagrangian or {
@@ -319,7 +321,8 @@ class BeliefGraph:
                         if key in ("content", "weight", "relations",
                                    "memory_refs", "confidence",
                                    "verifications", "stability_index",
-                                   "position_8d", "last_accessed_ts"):
+                                   "position_8d", "last_accessed_ts",
+                                   "drive_type", "tool_name"):
                             b[key] = value
 
                     # Clamp confidence

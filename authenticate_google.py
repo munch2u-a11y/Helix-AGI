@@ -10,10 +10,8 @@ SCOPES = [
 ]
 
 def main():
-    config_dir = os.path.join(os.path.expanduser("~"), ".config", "helix")
-    os.makedirs(config_dir, exist_ok=True)
-    creds_path = os.path.join(config_dir, "google_credentials.json")
-    token_path = os.path.join(config_dir, "google_token.json")
+    creds_path = '~/.config/helix/google_credentials.json'
+    token_path = '~/.config/helix/google_token.json'
     
     if not os.path.exists(creds_path):
         print(f"Error: {creds_path} not found.")

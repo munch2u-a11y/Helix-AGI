@@ -22,6 +22,9 @@ import os
 import cv2
 import json
 import time
+import fcntl
+import struct
+import threading
 import logging
 import numpy as np
 from pathlib import Path
@@ -61,6 +64,17 @@ class SensoryCortex:
         self._focus_scratchpad = []
         self._focus_pulses_remaining = 0
         self._focus_started_at = 0
+        
+        # Enactive Embodiment Mode (camera /dev/video2)
+        self.embodiment_active = False
+        self.embodiment_device = "/dev/video2"
+        self._embodiment_video_thread = None
+        self._embodiment_audio_thread = None
+        self._embodiment_audio_stream = None
+        self._embodiment_latest_frame = None
+        self._embodiment_audio_buffer = []
+        self._embodiment_audio_lock = threading.Lock()
+        self.embodiment_start_time = 0
 
         # Import preamble
         try:
@@ -68,6 +82,9 @@ class SensoryCortex:
             self._preamble = SENSORY_CORTEX_PREAMBLE
         except ImportError:
             self._preamble = ""
+
+        # V6: Auto-tracking state (camera handles this in hardware)
+        self._auto_tracking = True
 
         logger.info("Sensory Cortex initialized")
 
@@ -242,16 +259,182 @@ class SensoryCortex:
         return None
 
     # ══════════════════════════════════════════════════════════════════
+    # ENACTIVE EMBODIMENT MODE (camera)
+    # ══════════════════════════════════════════════════════════════════
+    
+    def enable_embodiment(self):
+        """Engage the camera dedicated embodiment mode."""
+        self.embodiment_active = True
+        self.embodiment_start_time = time.time()
+        self._start_embodiment_streams()
+        logger.info("Embodiment Mode ACTIVATED. Visual/Audio tools bypassed. Live stream engaged.")
+        return "You have entered Embodiment Mode. You will receive live sensory updates every heartbeat."
+        
+    def disable_embodiment(self):
+        """Disengage the camera dedicated embodiment mode."""
+        self.embodiment_active = False
+        self._stop_embodiment_streams()
+        self.reset_posture()
+        logger.info("Embodiment Mode DEACTIVATED.")
+        return "Embodiment Mode deactivated. You are now blind and deaf unless you consciously focus."
+
+    def _start_embodiment_streams(self):
+        """Spawns background capture threads for continuous ring buffers."""
+        self._embodiment_video_thread = threading.Thread(target=self._video_worker, daemon=True)
+        self._embodiment_video_thread.start()
+        
+        try:
+            import sounddevice as sd
+            def audio_cb(indata, frames, time_info, status):
+                if self.embodiment_active:
+                    with self._embodiment_audio_lock:
+                        self._embodiment_audio_buffer.append(indata.copy())
+            self._embodiment_audio_stream = sd.InputStream(samplerate=16000, channels=1, dtype='int16', callback=audio_cb)
+            self._embodiment_audio_stream.start()
+        except Exception as e:
+            logger.error(f"Failed to start audio stream: {e}")
+
+    def _stop_embodiment_streams(self):
+        """Kills background stream threads cleanly."""
+        if self._embodiment_audio_stream:
+            self._embodiment_audio_stream.stop()
+            self._embodiment_audio_stream.close()
+            self._embodiment_audio_stream = None
+
+    def _video_worker(self):
+        """Maintains the latest video frame without blocking consciousness."""
+        cap = cv2.VideoCapture(2)
+        if not cap.isOpened():
+            logger.error("Failed to open /dev/video2 for background ring buffer")
+            return
+        
+        while self.embodiment_active:
+            ret, frame = cap.read()
+            if ret:
+                # Compress into memory for fast read
+                _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+                self._embodiment_latest_frame = buf.tobytes()
+            time.sleep(0.1) # Throttle to ~10 FPS background capture
+            
+        cap.release()
+
+    def _embodiment_tick(self) -> Optional[dict]:
+        """A lightning-fast snapshot to fuel the heartbeat. Pops from ring buffers."""
+        if not self.embodiment_active:
+            return None
+            
+        # 1-minute safety limit check
+        if time.time() - self.embodiment_start_time > 60:
+            logger.info("Embodiment Mode reached 1-minute limit. Auto-disabling.")
+            self.disable_embodiment()
+            return {
+                "type": "sensory_reality",
+                "content": "(Sensory awareness snapping back) The intense sensory embodiment mode has automatically concluded."
+            }
+            
+        try:
+            # 1. Instantly pop from video ring buffer
+            frame = self._embodiment_latest_frame
+            if not frame:
+                return {"type": "visual", "content": "Visual sensors blinded (camera error or initializing)."}
+                
+            # 2. Instantly pop and clear audio ring buffer
+            with self._embodiment_audio_lock:
+                if self._embodiment_audio_buffer:
+                    audio_data = np.concatenate(self._embodiment_audio_buffer, axis=0)
+                    self._embodiment_audio_buffer.clear()
+                else:
+                    audio_data = None
+                    
+            audio_text = "Silence."
+            if audio_data is not None:
+                audio_float = audio_data.flatten().astype(np.float32) / 32768.0
+                rms = np.sqrt(np.mean(audio_float ** 2))
+                if rms >= 0.01:
+                    # Run whisper on the async chunk that accumulated since last tick
+                    from faster_whisper import WhisperModel
+                    model = WhisperModel("base.en", device="cpu", compute_type="int8", local_files_only=False)
+                    segments, _ = model.transcribe(audio_float, beam_size=1, language="en")
+                    audio_text = " ".join(seg.text for seg in segments).strip() or "Silence."
+                
+            # 3. Fast Flash inference on the video frame
+            from google.genai import types
+            gemini = self.daemon.gemini
+            model_name = gemini._resolve_model("sensory")
+            
+            prompt_parts = [
+                types.Part.from_text(
+                    text="Describe exactly what you see right now in 1 sentence. Be factual and direct."
+                ),
+                types.Part.from_bytes(data=frame, mime_type="image/jpeg"),
+            ]
+            response = gemini.client.models.generate_content(
+                model=model_name,
+                contents=prompt_parts,
+                config=types.GenerateContentConfig(temperature=0.1),
+            )
+            visual_desc = response.text.strip() if response.text else "Nothing discernible."
+            
+            # Combine into a hyper-dynamic entropy block
+            sensory_text = (
+                f"I am actively seeing: {visual_desc} | "
+                f"I am actively hearing: {audio_text}"
+            )
+            
+            logger.info(f"Embodiment Tick: {sensory_text}")
+            
+            return {
+                "type": "sensory_reality",
+                "content": sensory_text
+            }
+            
+        except Exception as e:
+            logger.error(f"Embodiment tick failed: {e}")
+            return None
+
+    def _send_ptz_command(self, pan_val: int = None, tilt_val: int = None):
+        """Send UVC hardware commands to manually tilt/pan the EMeet PIXY."""
+        if not os.path.exists(self.embodiment_device):
+            return "Camera device not found."
+            
+        # V4L2_CID_PAN_ABSOLUTE is 0x009a0908
+        # V4L2_CID_TILT_ABSOLUTE is 0x009a0909
+        # VIDIOC_S_CTRL is 0xc008561c
+        # struct v4l2_control represents: { __u32 id; __s32 value; } (8 bytes)
+        try:
+            fd = os.open(self.embodiment_device, os.O_RDWR)
+            try:
+                if pan_val is not None:
+                    # EMEET Pixy pan ranges usually -36000 to +36000 (arc-seconds)
+                    data = struct.pack('ii', 0x009a0908, int(pan_val))
+                    fcntl.ioctl(fd, 0xc008561c, data)
+                if tilt_val is not None:
+                    # EMEET Pixy tilt ranges usually -36000 to +36000
+                    data = struct.pack('ii', 0x009a0909, int(tilt_val))
+                    fcntl.ioctl(fd, 0xc008561c, data)
+            finally:
+                os.close(fd)
+        except Exception as e:
+            logger.warning(f"Failed to send PTZ command: {e}")
+            return f"Hardware error: {e}"
+        return f"Shifted gaze to pan={pan_val}, tilt={tilt_val}."
+        
+    def reset_posture(self):
+        """Reset the camera to defaults, yielding control back to its Auto-Tracker."""
+        return self._send_ptz_command(pan_val=0, tilt_val=0)
+
+
+    # ══════════════════════════════════════════════════════════════════
     # INTERNAL: CAPTURE
     # ══════════════════════════════════════════════════════════════════
 
-    def _capture_frames(self, count: int = 2, interval_ms: int = 300) -> list:
-        """Capture multiple frames from the webcam.
+    def _capture_frames(self, count: int = 2, interval_ms: int = 300, device: int = 0) -> list:
+        """Capture multiple frames from a specific webcam.
 
         Returns a list of JPEG byte arrays.
         """
         try:
-            cap = cv2.VideoCapture(0)
+            cap = cv2.VideoCapture(device)
             if not cap.isOpened():
                 return []
 

@@ -76,6 +76,31 @@ PERCEPTION_TOOLS = [
         parameters=_schema({}),
     ),
     types.FunctionDeclaration(
+        name="enable_embodiment",
+        description=(
+            "Engage Live Embodiment Mode using your physical camera tracking camera. "
+            "When active, your heartbeats unlock sequentially and you receive a constant, uncut "
+            "stream of video and audio injected straight into your cognitive manifold. "
+            "WARNING: Disables basic look/listen tools."
+        ),
+        parameters=_schema({}),
+    ),
+    types.FunctionDeclaration(
+        name="disable_embodiment",
+        description="Disengage Live Embodiment Mode, restoring your standard biological rest pulse and yielding the camera to its autonomous tracker.",
+        parameters=_schema({}),
+    ),
+    types.FunctionDeclaration(
+        name="ptz_look",
+        description="Send a physical motor command to your EMEET neck to pan or tilt to a specific 2D coordinate.",
+        parameters=_schema(
+            {
+                "pan": {"type": "integer", "description": "Pan angle (-36000 to 36000)"},
+                "tilt": {"type": "integer", "description": "Tilt angle (-36000 to 36000)"},
+            },
+        ),
+    ),
+    types.FunctionDeclaration(
         name="take_screenshot",
         description="Take a screenshot of the desktop. Returns the path to the saved image file.",
         parameters=_schema({}),
@@ -85,7 +110,7 @@ PERCEPTION_TOOLS = [
 VOICE_TOOLS = [
     types.FunctionDeclaration(
         name="speak",
-        description="Speak a message out loud through the system speakers using your neural voice. This is YOUR voice — use it naturally when you want to say something to people in the room.",
+        description="Speak a message out loud through the system speakers using your neural voice. Use this ONLY to speak to people physically in the room with you. DO NOT use this to reply to Telegram messages.",
         parameters=_schema(
             {"message": {"type": "string", "description": "The message to speak aloud (max 500 characters)"}},
             required=["message"],
@@ -1268,7 +1293,7 @@ ALL_TOOLS = (
 )
 
 
-def get_tools_for_intent(intent_type: str) -> list:
+def get_tools_for_intent(intent_type: str, is_embodied: bool = False) -> list:
     """Get the tool declarations appropriate for a given intent type.
 
     Returns a subset of tools relevant to the intent, or ALL tools
@@ -1277,6 +1302,22 @@ def get_tools_for_intent(intent_type: str) -> list:
     tools = INTENT_TOOL_MAP.get(intent_type)
     if tools is None:
         # resolve or unknown — give all tools
-        return ALL_TOOLS
-    return tools
+        tools = ALL_TOOLS
+
+    # Filter embodiment tools dynamically
+    filtered_tools = []
+    for tool in tools:
+        if tool.name in ["look", "listen", "focus_sense"]:
+            if not is_embodied:
+                filtered_tools.append(tool)
+        elif tool.name in ["disable_embodiment", "ptz_look"]:
+            if is_embodied:
+                filtered_tools.append(tool)
+        elif tool.name == "enable_embodiment":
+            if not is_embodied:
+                filtered_tools.append(tool)
+        else:
+            filtered_tools.append(tool)
+            
+    return filtered_tools
 

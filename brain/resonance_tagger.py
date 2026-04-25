@@ -27,13 +27,12 @@ class ResonanceTagger:
             return clean_text
 
         try:
-            # 3. Strict recall: high importance, very strict resonance
             # We want memories with high relevance. memory.recall gives results.
-            results = self.memory.recall(search=clean_text, limit=3, min_importance=0.6)
+            results = self.memory.recall(search=clean_text, limit=4, min_importance=0.30)
             
             # In Helix, `relevance` = 1.0 - ChromaDB distance.
-            # We want distance < 0.35, meaning relevance >= 0.65
-            highly_resonant = [m for m in results if m.get("relevance", 0.0) >= 0.65]
+            # We want distance < 0.55, meaning relevance >= 0.45
+            highly_resonant = [m for m in results if m.get("relevance", 0.0) >= 0.45]
             
             if not highly_resonant:
                 return clean_text
@@ -59,7 +58,7 @@ class ResonanceTagger:
                 f"MESSAGE:\n{clean_text}\n"
             )
             
-            raw_output = self.gemini.ask(prompt=prompt, model="conscious", temperature=0.0)
+            raw_output = self.gemini.ask(prompt=prompt, model="default", temperature=0.0)
             
             # Parse JSON safely
             match = re.search(r"\{.*\}", raw_output, re.DOTALL)

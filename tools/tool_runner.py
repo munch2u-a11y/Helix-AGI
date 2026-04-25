@@ -210,6 +210,94 @@ class ToolRunner:
         if not cortex:
             return "Sensory cortex not available."
         return cortex.end_focus()
+        
+    def _tool_ptz_look(self, args: dict) -> str:
+        """Move the camera camera head to look in a direction.
+
+        Accepts named directions or exact pan/tilt degrees.
+        Disables auto-tracking when a manual direction is set.
+
+        Hardware: camera via V4L2 UVC
+          Pan:  ±540000 arc-sec (±150°), step 3600 (1°)
+          Tilt: ±324000 arc-sec (±90°),  step 3600 (1°)
+          1 degree = 3600 arc-seconds
+        """
+        cortex = self._get_sensory_cortex()
+        if not cortex:
+            return "Sensory cortex not available."
+
+        # Named direction presets (degrees)
+        # Pan:  -150 (full left) to +150 (full right)
+        # Tilt: -90 (straight down) to +90 (straight up)
+        DIRECTION_MAP = {
+            "center":               (0,     0),
+            "left":                 (-90,   0),
+            "right":                (90,    0),
+            "hard_left":            (-150,  0),
+            "hard_right":           (150,   0),
+            "up":                   (0,     45),
+            "down":                 (0,    -45),
+            "behind":               (-150,  0),    # Max left (can't do 180)
+            "behind_left":          (-150,  0),
+            "behind_right":         (150,   0),
+            "over_shoulder_left":   (-120,  15),
+            "over_shoulder_right":  (120,   15),
+            "slight_left":          (-45,   0),
+            "slight_right":         (45,    0),
+            "up_left":              (-45,   30),
+            "up_right":             (45,    30),
+            "down_left":            (-45,  -30),
+            "down_right":           (45,   -30),
+        }
+
+        direction = args.get("direction", "").strip().lower().replace(" ", "_")
+        pan_deg = args.get("pan")
+        tilt_deg = args.get("tilt")
+
+        if pan_deg is not None or tilt_deg is not None:
+            # Exact degrees provided — clamp to hardware limits
+            pan_deg = max(-150, min(150, int(pan_deg or 0)))
+            tilt_deg = max(-90, min(90, int(tilt_deg or 0)))
+        elif direction in DIRECTION_MAP:
+            pan_deg, tilt_deg = DIRECTION_MAP[direction]
+        elif direction:
+            return (
+                f"Unknown direction '{direction}'. "
+                f"Use: {', '.join(sorted(DIRECTION_MAP.keys()))} "
+                f"or provide exact pan/tilt degrees."
+            )
+        else:
+            return "Provide a direction name or pan/tilt degrees."
+
+        # Convert degrees to EMEET arc-seconds (3600 arc-seconds per degree)
+        pan_arcsec = int(pan_deg * 3600)
+        tilt_arcsec = int(tilt_deg * 3600)
+
+        # Disable auto-tracking when manually pointing
+        cortex._auto_tracking = False
+
+        result = cortex._send_ptz_command(pan_val=pan_arcsec, tilt_val=tilt_arcsec)
+
+        direction_label = direction if direction else f"pan={pan_deg}°, tilt={tilt_deg}°"
+        logger.info(f"PTZ: {direction_label} → pan={pan_arcsec}, tilt={tilt_arcsec}")
+        return f"Camera moved: looking {direction_label}. Auto-tracking disabled."
+
+    def _tool_camera_auto_track(self, args: dict) -> str:
+        """Toggle the camera's built-in face auto-tracking."""
+        cortex = self._get_sensory_cortex()
+        if not cortex:
+            return "Sensory cortex not available."
+
+        enabled = args.get("enabled", True)
+
+        if enabled:
+            # Return to center → hardware auto-tracker takes over
+            cortex._send_ptz_command(pan_val=0, tilt_val=0)
+            cortex._auto_tracking = True
+            return "Auto-tracking enabled. Camera will follow faces automatically."
+        else:
+            cortex._auto_tracking = False
+            return "Auto-tracking disabled. Camera will stay where you point it."
 
     def _tool_listen(self, args: dict) -> str:
         """Auditory perception — routed through the Sensory Cortex."""
@@ -380,33 +468,24 @@ class ToolRunner:
     # ── Memory ───────────────────────────────────────────────────────
 
     def _tool_remember(self, args: dict) -> str:
-        """Deep, active recall through the Librarian.
+        """V6: Zero-LLM deep recall through the Librarian.
 
-        Replaces both focused and deep recall. Always gathers rich
-        context (chronological or importance based).
-        Injects a thought first so Helix is aware he's searching.
+        Pure semantic search + context expansion. No sub-agents.
+        Returns full memory content with surrounding context,
+        Lagrangian snapshots, and somatic echo.
         """
         topic = args.get("topic", "")
         if not topic:
             return "No topic provided to remember."
 
-        # Make him "aware" he's searching in case a message interrupts him
-        memory = getattr(self.daemon, "memory", None)
-        if memory:
-            memory.store(
-                content=f"(I am deeply searching my memory for: {topic}...)",
-                memory_type="consciousness",
-                importance=0.1,
-            )
-
         librarian = getattr(self.daemon, "librarian", None)
         if not librarian:
             return "Librarian not available for memory search."
 
+        sentinel = getattr(self.daemon, "sentinel", None)
+
         try:
-            # We will use the deep recall method for everything now,
-            # as it provides the chronologically and highly detailed rich text.
-            result = librarian.recall_deep(query=topic, context="conscious remember attempt")
+            result = librarian.remember_v6(topic=topic, sentinel=sentinel)
             return result if result else f"I couldn't recall anything specific about {topic}."
         except Exception as e:
             return f"Memory search failed: {e}"
@@ -2240,8 +2319,8 @@ class ToolRunner:
     # ── Google API helper ──────────────────────────────────────────────
 
     _google_creds = None
-    _GOOGLE_TOKEN_PATH = "config/google_token.json"  # Relative to base_dir
-    _GOOGLE_CRED_PATH = "config/google_credentials.json"  # Relative to base_dir
+    _GOOGLE_TOKEN_PATH = "~/.config/helix/google_token.json"
+    _GOOGLE_CRED_PATH = "~/.config/helix/google_credentials.json"
     _REPLY_LEDGER_PATH = Path("brain/email_reply_ledger.json")  # Relative to base_dir
 
     def _load_reply_ledger(self) -> set:
@@ -3700,6 +3779,8 @@ class ToolRunner:
         "listen": _tool_listen,
         "focus_sense": _tool_focus_sense,
         "end_focus": _tool_end_focus,
+        "ptz_look": _tool_ptz_look,
+        "camera_auto_track": _tool_camera_auto_track,
         "take_screenshot": _tool_take_screenshot,
         # Voice
         "speak": _tool_speak,
