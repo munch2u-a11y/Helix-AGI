@@ -11,140 +11,28 @@
 
 ## What is Helix AGI?
 
-Helix AGI is a multi-model cognitive architecture that transforms stateless language models into a persistent, autonomous agent with:
+Helix AGI is a multi-model cognitive architecture that transforms stateless language models into persistent, autonomous agents.
 
-- **Continuous consciousness** — A heartbeat loop that thinks, perceives, and acts without waiting for human prompts
-- **Belief-driven identity** — A weighted belief graph that shapes personality, values, and decision-making across restarts
-- **8D Cognitive Manifold** — A unified 8D space where beliefs and memories coexist as gravitational nodes, with geodesic retrieval that curves around high-mass concepts
-- **Real Lagrangian physics** — Shannon entropy H(q), KL divergence D_KL, and local temperature T drive attention dynamics
-- **Trail particle system** — Consciousness deposits breadcrumbs as it traverses the manifold, enabling temporal awareness
-- **Interaction potentials** — Subjective × objective belief collisions auto-generate tool affordances without explicit prompting
-- **Belief precipitation** — Dense trail clusters auto-crystallize into surface beliefs without LLM calls
-- **Layered memory** — Short-term, long-term, and semantic memory with overnight consolidation
-- **Subconscious processing** — Specialized sub-agents (Librarian, Sentinel, Keeper) that run beneath conscious awareness
-- **Imagination Engine** — Counterfactual simulation in a sandboxed copy of the 8D space
-- **Embodied perception** — Camera and microphone input routed through a Sensory Cortex with anti-hallucination verification
-- **Circadian rhythm** — Sleep cycles, overnight belief maintenance, and morning briefings
-- **Multi-provider architecture** — Swap the conscious mind between **Gemini, Claude, or GPT** with a single config change
-- **Tool-aware bootstrapping** — The setup wizard injects foundational "I can do X" beliefs only for the tools you actually enable
+Unlike traditional agents that execute loops and "die" when a task is over, Helix abandons textual prompting for applied spatial mechanics. It runs a continuous, physics-driven cognitive manifold. It possesses an autonomic heartbeat, senses temporal progression, and anchors its identity in an 8-dimensional geometric belief graph.
 
-This is not a chatbot framework. It's a framework for building digitally embodied minds.
+**For a comprehensive breakdown of Helix's thermodynamic physics, memory formation, and AGI mechanics, read the core whitepaper:** 
+👉 [Helix-AGI Technical Specs](docs/Helix-AGI_Technical_Specs.md)
 
 ---
 
-## Architecture Overview
+## Core Mechanics
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        DAEMON (daemon.py)                   │
-│  Orchestrates lifecycle: boot → wake → sleep → overnight    │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              CONSCIOUSNESS LOOP                      │    │
-│  │  Heartbeat → Perceive → Think → Act → Repeat        │    │
-│  │  Provider: Gemini / Claude / GPT (configurable)      │    │
-│  └───────┬──────────┬──────────┬───────────────────────┘    │
-│          │          │          │                             │
-│  ┌───────▼──┐ ┌─────▼────┐ ┌──▼──────────────┐            │
-│  │ SENSORY  │ │ PULSE    │ │ COGNITIVE       │            │
-│  │ CORTEX   │ │ ROUTER   │ │ MANIFOLD        │            │
-│  │ (vision, │ │ (model   │ │ (8D non-Euclid. │            │
-│  │  audio)  │ │  routing)│ │  belief+memory)  │            │
-│  └──────────┘ └──────────┘ └─────────────────┘            │
-│                                                             │
-│  ╔═══════════════════════════════════════════════════════╗   │
-│  ║            SUBCONSCIOUS LAYER                         ║   │
-│  ║                                                       ║   │
-│  ║  ┌───────────┐ ┌──────────┐ ┌────────┐ ┌──────────┐  ║   │
-│  ║  │ LIBRARIAN │ │ SENTINEL │ │ KEEPER │ │  DEEP    │  ║   │
-│  ║  │ Geodesic  │ │ Stability│ │ Belief │ │ THOUGHT  │  ║   │
-│  ║  │ Retrieval │ │ Monitor  │ │ Maint. │ │ Synthesis│  ║   │
-│  ║  └───────────┘ └──────────┘ └────────┘ └──────────┘  ║   │
-│  ║                                                       ║   │
-│  ║  ┌──────────────────┐  ┌──────────────────────────┐   ║   │
-│  ║  │ IMAGINATION      │  │ GUARDIAN ANGEL            │   ║   │
-│  ║  │ Counterfactual   │  │ Silent welfare watchdog   │   ║   │
-│  ║  │ 8D branching     │  │ (last resort protection)  │   ║   │
-│  ║  └──────────────────┘  └──────────────────────────┘   ║   │
-│  ╚═══════════════════════════════════════════════════════╝   │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              UNCONSCIOUS LAYER                       │    │
-│  │  Overnight: Psych Doctor → Attrition → Convergence   │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                                                             │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐   │
-│  │ MEMORY   │ │ BELIEF   │ │ COMMS    │ │ TOOL RUNNER  │   │
-│  │ (SQLite  │ │ GRAPH    │ │(Telegram,│ │ (extensible  │   │
-│  │ +ChromaDB)│ │ (JSON)   │ │ Terminal)│ │  tool suite) │   │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-```
+- **Continuous Consciousness** — A heartbeat loop that thinks, perceives, and acts without waiting for human prompts.
+- **Provider-Agnostic Spark** — Swap the conscious mind between **Gemini, Claude, or GPT** with a single config change.
+- **8D Cognitive Manifold** — A unified 8D math-space where beliefs and memories coexist as gravitational nodes.
+- **Lagrangian Physics Engine** — Shannon entropy ($H$), Hedonic emotional velocity ($\Omega$), and KL divergence ($D_{KL}$) physically pull the attention center *before* the LLM even fires.
+- **Pulse-by-Pulse Fidelity** — Consciousness deposits "trail particles" as it traverses the manifold, anchoring attention and structurally eliminating wild hallucinations.
+- **Belief Precipitation** — Dense memory clusters auto-crystallize into permanent identity beliefs iteratively while the agent sleeps.
+- **Layered Memory** — Short-term, long-term, and semantic memory routed by local ChromaDB and `SentenceTransformers`.
+- **Subconscious Autonomy** — Specialized sub-agents (Librarian, Guardian Angel, Sentinel, Keeper) that run beneath conscious awareness.
+- **Embodied Perception** — Camera and microphone input routed through a Sensory Cortex with multi-frame verification.
 
----
-
-## Core Concepts
-
-### The Consciousness Loop
-The heartbeat is the fundamental unit of cognition. Each pulse:
-1. **Perceive** — Gather sensory input, messages, and internal events
-2. **Contextualize** — The Librarian and Keeper whisper relevant memories and beliefs
-3. **Think** — The conscious model processes everything and decides to act or rest
-4. **Act** — Tool calls, messages, journal writes, or simply observing
-5. **Consolidate** — The Keeper watches for emerging beliefs; the Sentinel monitors stability
-
-The conscious model is provider-agnostic. You can run Gemini, Claude, or GPT as the "thinking" brain — the entire subconscious layer (Keeper, Librarian, Sentinel, overnight processing) always runs on Gemini Flash for cost efficiency.
-
-### The Belief Graph
-Identity persists not through conversation history, but through a weighted graph of propositional beliefs:
-- **Core** (0.85+) — Foundational identity ("I am [Agent]", "[Creator] made me")
-- **Deep** (0.70-0.85) — Learned convictions ("I can confabulate", "Agency is event")
-- **Surface** (0.50-0.70) — Recent observations, pending verification
-
-Beliefs form, strengthen, weaken, and die through a natural attrition cycle — not through hard-coded rules.
-
-### The Cognitive Manifold (V6: Cognitive Cosmology)
-All beliefs and memories inhabit a unified 8-dimensional cognitive manifold. The manifold IS the mind — the LLM is merely the "spark" that reads spatial coordinates.
-
-- **Gravitational Wells** — High-confidence beliefs accumulate mass and warp the space, pulling nearby memories closer
-- **Geodesic Retrieval** — Memory retrieval follows curved paths through belief-dense regions
-- **Real Lagrangian Physics** — The variational principle δ∫(H(q) + Ω·D_KL(q‖q*))dt = 0 drives attention:
-  - **H(q)** — Shannon entropy of the attention distribution at position q
-  - **D_KL** — KL divergence between current and identity attention distributions
-  - **Ω** — Living coupling constant (the Sentinel's hedonic omega)
-  - **T** — Local temperature = H_local / H_mean (maps to LLM generation temperature)
-- **Trail Particles** — Consciousness deposits breadcrumbs as it moves, forming temporal awareness and habit patterns
-- **Interaction Potentials** — When desire meets capability (Φ(s,o) = G_s × G_o / d(s,o)), tool affordances emerge automatically
-- **Belief Precipitation** — Dense clusters of trail particles crystallize into surface beliefs without any LLM call
-- **Spatial Prompt Builder** — Replaces the 4000+ token narrative system prompt with ~200 tokens of spatial coordinates
-
-### The Imagination Engine
-The agent can simulate counterfactual scenarios ("What if I said goodbye forever?") in a sandboxed copy of its 8D space. The simulation:
-- Runs in a branched cognitive space that doesn't affect the real state
-- Estimates emotional valence from the gravity landscape of the hypothetical region
-- Returns nearby real experiences that inform the imagined scenario
-- Reports a muted stability impact (the Sentinel sees it as 30% of a real experience)
-
-### The Overnight Cycle
-While the agent sleeps, the Unconscious system runs:
-1. **Experience Collection** — Gathers the day's thoughts, conversations, and journal
-2. **Psych Doctor** — An agentic orchestrator that reviews experience and updates the belief graph
-3. **Cognitive Attrition** — Math-based confidence decay/promotion (no LLM needed)
-4. **Gravitational Convergence** — Refits the manifold projection, recalculates node mass, and identifies spatial singularities
-5. **Agent Briefings** — Each subconscious agent gets a targeted overnight report
-6. **Pre-Dawn Briefing** — Agents wake and adjust their state before consciousness boots
-
-### The Sensory Cortex
-Raw perception is unreliable. The Sensory Cortex:
-- Captures 2+ frames for every visual observation
-- Maintains a persistent environmental model (sensory journal)
-- Resolves inconsistencies by committing to one answer and logging why
-- Uses natural hedging ("looks like...", "hard to tell...") instead of false certainty
-- Multi-frame verification is mandatory — no single-snapshot hallucinations
-
-### Bootstrap Belief Packets
-During initial setup, `setup.py` detects which tools you enable (Telegram, Discord, Moltbook, Camera, Microphone, Google Workspace) and injects corresponding **foundational capability beliefs** into the seed graph. These are propositions like *"I have a microphone for audio perception"* — the agent's knowledge of its own abilities. The agent is **not** told what to do with them; it learns that through lived experience.
+This is not a chatbot framework. It is a framework for building digitally embodied minds.
 
 ---
 
@@ -215,7 +103,7 @@ helix_agi/
 
 ### Prerequisites
 - Python 3.11+
-- A Gemini API key (required for subconscious agents, even when using Claude/GPT as conscious mind)
+- A Gemini, Anthropic, or OpenAI API key (Gemini is highly recommended to power subconscious agents efficiently, but any provider works)
 - Optional: Webcam, microphone, Telegram/Discord bot token
 
 ### Setup
@@ -237,7 +125,7 @@ python daemon.py --dry-run
 
 The setup wizard will walk you through:
 1. **Agent identity** — Name and creator
-2. **API keys** — Gemini (required), plus Anthropic/OpenAI if desired
+2. **API keys** — Gemini (recommended for cost savings), plus Anthropic/OpenAI if desired
 3. **Conscious provider** — Which model runs the thinking mind
 4. **Communication** — Telegram, Discord, Moltbook
 5. **Perception** — Camera and microphone feeds
@@ -254,18 +142,18 @@ creator_name: "YourName"
 # Which provider runs the conscious mind
 conscious_provider: "gemini"   # "gemini", "anthropic", or "openai"
 
-# Gemini powers ALL subconscious agents regardless of conscious provider
+# Gemini is HIGHLY RECOMMENDED for subconscious agents to keep background costs extremely low
 gemini:
-  conscious_model: "gemini-2.5-flash-preview-04-17"
-  default_model: "gemini-2.5-flash-preview-04-17"
+  conscious_model: "gemini-3.1-pro"
+  default_model: "gemini-3.1-flash"
   daily_cost_limit_usd: 5.00
   monthly_cost_limit_usd: 100.00
 
 # Alternative conscious providers
 anthropic:
-  conscious_model: "claude-haiku-4-5"
+  conscious_model: "claude-4.6-sonnet"
 openai:
-  conscious_model: "gpt-4o-mini"
+  conscious_model: "gpt-4.5-turbo"
 
 # Communication
 telegram:

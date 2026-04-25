@@ -17,19 +17,19 @@ conscious_provider: "gemini"
 
 # Gemini (default provider — used for subconscious agents too)
 gemini:
-  conscious_model: "gemini-2.5-flash-preview-04-17"
-  default_model: "gemini-2.5-flash-preview-04-17"
-  heavy_model: "gemini-2.5-flash-preview-04-17"
+  conscious_model: "gemini-3.1-pro"
+  default_model: "gemini-3.1-flash"
+  heavy_model: "gemini-3.1-pro"
   daily_cost_limit_usd: 5.00
   monthly_cost_limit_usd: 100.00
 
 # Anthropic Claude (alternative conscious provider)
 anthropic:
-  conscious_model: "claude-haiku-4-5"
+  conscious_model: "claude-4.6-sonnet"
 
 # OpenAI GPT (alternative conscious provider)
 openai:
-  conscious_model: "gpt-4o-mini"
+  conscious_model: "gpt-4.5-turbo"
 
 # API Keys — Set via environment variables (recommended) or here
 # Environment variables take priority:
