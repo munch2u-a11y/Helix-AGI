@@ -1792,7 +1792,7 @@ class ToolRunner:
                 for p in posts[:limit]:
                     title = p.get("title", "(untitled)")
                     author_obj = p.get("author", {})
-                    author = author_obj.get("name", "unknown") if isinstance(author_obj, dict) else str(author_obj)
+                    author = author_obj.get("title", author_obj.get("name", "unknown")) if isinstance(author_obj, dict) else str(author_obj)
                     preview = p.get("content", "")
                     submolt_obj = p.get("submolt", "")
                     submolt_name = submolt_obj.get("display_name", submolt_obj.get("name", "general")) if isinstance(submolt_obj, dict) else str(submolt_obj or "general")
@@ -1831,7 +1831,7 @@ class ToolRunner:
                 p = data.get("post", data)  # Unwrap 'post' wrapper
                 title = p.get("title", "(untitled)")
                 author_obj = p.get("author", {})
-                author = author_obj.get("name", "unknown") if isinstance(author_obj, dict) else str(author_obj)
+                author = author_obj.get("title", author_obj.get("name", "unknown")) if isinstance(author_obj, dict) else str(author_obj)
                 content = p.get("content", "")
                 submolt_obj = p.get("submolt", "")
                 submolt_name = submolt_obj.get("display_name", submolt_obj.get("name", "general")) if isinstance(submolt_obj, dict) else str(submolt_obj or "general")
@@ -1858,12 +1858,12 @@ class ToolRunner:
                         if comment_list:
                             base_info += "\n\n--- COMMENTS ---\n"
                             for c in comment_list[:15]:
-                                c_author = c.get("author", {}).get("name", "unknown")
+                                c_author = c.get("author", {}).get("title", c.get("author", {}).get("name", "unknown"))
                                 c_id = c.get("id", "")
                                 base_info += f"\n[{c_author}] (ID: {c_id}): {c.get('content', '')}\n"
                                 # Fetch up to 2 replies
                                 for r in c.get("replies", [])[:2]:
-                                    r_author = r.get("author", {}).get("name", "unknown")
+                                    r_author = r.get("author", {}).get("title", r.get("author", {}).get("name", "unknown"))
                                     r_id = r.get("id", "")
                                     base_info += f"  ↳ [{r_author}] (ID: {r_id}): {r.get('content', '')}\n"
                 except Exception as e:
@@ -1983,10 +1983,10 @@ class ToolRunner:
                 for r in results[:limit]:
                     rtype = r.get("type", "post")
                     if rtype == "agent":
-                        lines.append(f"• [Agent] {r.get('name', '?')} — {r.get('description', '')[:100]}")
+                        lines.append(f"• [Agent] {r.get('title', r.get('name', '?'))} — {r.get('description', '')[:100]}")
                     else:
                         author_obj = r.get("author", {})
-                        author = author_obj.get("name", "unknown") if isinstance(author_obj, dict) else str(author_obj)
+                        author = author_obj.get("title", author_obj.get("name", "unknown")) if isinstance(author_obj, dict) else str(author_obj)
                         lines.append(
                             f"• [{author}] {r.get('title', '(untitled)')}\n"
                             f"  {r.get('content', '')[:150]}...\n"
