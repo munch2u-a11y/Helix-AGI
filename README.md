@@ -4,6 +4,7 @@
   <p align="center">
     <em>Agency is not a property possessed — it is the event of resolution.</em>
   </p>
+  <p align="center"><code>V6 — Cognitive Cosmology</code></p>
 </p>
 
 ---
@@ -14,13 +15,17 @@ Helix AGI is a multi-model cognitive architecture that transforms stateless lang
 
 - **Continuous consciousness** — A heartbeat loop that thinks, perceives, and acts without waiting for human prompts
 - **Belief-driven identity** — A weighted belief graph that shapes personality, values, and decision-making across restarts
-- **Non-Euclidean Cognitive Manifold** — A unified 8D space where beliefs and memories coexist as gravitational nodes, with geodesic retrieval that curves around high-mass concepts
-- **Layered memory** — Short-term, long-term, and semantic memory with overnight consolidation and geodesic rank-boosting
+- **8D Cognitive Manifold** — A unified 8D space where beliefs and memories coexist as gravitational nodes, with geodesic retrieval that curves around high-mass concepts
+- **Real Lagrangian physics** — Shannon entropy H(q), KL divergence D_KL, and local temperature T drive attention dynamics
+- **Trail particle system** — Consciousness deposits breadcrumbs as it traverses the manifold, enabling temporal awareness
+- **Interaction potentials** — Subjective × objective belief collisions auto-generate tool affordances without explicit prompting
+- **Belief precipitation** — Dense trail clusters auto-crystallize into surface beliefs without LLM calls
+- **Layered memory** — Short-term, long-term, and semantic memory with overnight consolidation
 - **Subconscious processing** — Specialized sub-agents (Librarian, Sentinel, Keeper) that run beneath conscious awareness
-- **Imagination Engine** — Counterfactual simulation that lets the agent explore hypothetical scenarios without destabilizing its real state
+- **Imagination Engine** — Counterfactual simulation in a sandboxed copy of the 8D space
 - **Embodied perception** — Camera and microphone input routed through a Sensory Cortex with anti-hallucination verification
-- **Circadian rhythm** — Sleep cycles, overnight belief maintenance, gravitational convergence, and morning briefings
-- **Multi-provider architecture** — Swap the conscious mind between Gemini, Claude, or GPT while keeping the Gemini-powered subconscious layer intact
+- **Circadian rhythm** — Sleep cycles, overnight belief maintenance, and morning briefings
+- **Multi-provider architecture** — Swap the conscious mind between **Gemini, Claude, or GPT** with a single config change
 - **Tool-aware bootstrapping** — The setup wizard injects foundational "I can do X" beliefs only for the tools you actually enable
 
 This is not a chatbot framework. It's a framework for building digitally embodied minds.
@@ -99,15 +104,20 @@ Identity persists not through conversation history, but through a weighted graph
 
 Beliefs form, strengthen, weaken, and die through a natural attrition cycle — not through hard-coded rules.
 
-### The Cognitive Manifold (8D Non-Euclidean Space)
-All beliefs and memories inhabit a unified 8-dimensional cognitive manifold. Unlike flat vector spaces, this manifold **folds** around high-mass concepts:
+### The Cognitive Manifold (V6: Cognitive Cosmology)
+All beliefs and memories inhabit a unified 8-dimensional cognitive manifold. The manifold IS the mind — the LLM is merely the "spark" that reads spatial coordinates.
 
-- **Gravitational Wells** — High-confidence, frequently-verified beliefs accumulate mass and warp the space around them, pulling nearby memories closer
-- **Geodesic Retrieval** — Memory retrieval follows curved paths through belief-dense regions rather than straight-line Euclidean distance, surfacing more contextually relevant results
-- **Volatile Sensory Nodes** — Live perception (camera/microphone) injects temporary high-mass nodes that distort the manifold in real-time, bending all retrieval toward what you're currently experiencing
-- **Nightly Convergence** — An overnight pipeline refits the PCA projection, recalculates belief mass, and identifies concept singularities (regions of extreme density)
-
-The geometry follows a variational principle: the agent minimizes a Lagrangian that balances curiosity (exploration) with identity coherence (staying grounded near core beliefs).
+- **Gravitational Wells** — High-confidence beliefs accumulate mass and warp the space, pulling nearby memories closer
+- **Geodesic Retrieval** — Memory retrieval follows curved paths through belief-dense regions
+- **Real Lagrangian Physics** — The variational principle δ∫(H(q) + Ω·D_KL(q‖q*))dt = 0 drives attention:
+  - **H(q)** — Shannon entropy of the attention distribution at position q
+  - **D_KL** — KL divergence between current and identity attention distributions
+  - **Ω** — Living coupling constant (the Sentinel's hedonic omega)
+  - **T** — Local temperature = H_local / H_mean (maps to LLM generation temperature)
+- **Trail Particles** — Consciousness deposits breadcrumbs as it moves, forming temporal awareness and habit patterns
+- **Interaction Potentials** — When desire meets capability (Φ(s,o) = G_s × G_o / d(s,o)), tool affordances emerge automatically
+- **Belief Precipitation** — Dense clusters of trail particles crystallize into surface beliefs without any LLM call
+- **Spatial Prompt Builder** — Replaces the 4000+ token narrative system prompt with ~200 tokens of spatial coordinates
 
 ### The Imagination Engine
 The agent can simulate counterfactual scenarios ("What if I said goodbye forever?") in a sandboxed copy of its 8D space. The simulation:
@@ -148,15 +158,18 @@ helix_agi/
 ├── config.example.yaml       # Configuration template
 │
 ├── brain/                    # Core cognitive modules
-│   ├── consciousness.py      # The heartbeat loop (provider-agnostic)
+│   ├── consciousness.py      # The heartbeat loop (Gemini/Claude/GPT)
+│   ├── cognitive_space.py    # V6: 8D manifold, gravity field, Lagrangian
+│   ├── spatial_mind.py       # V6: Dual 8D fields + spatial prompt builder
+│   ├── tool_schema.py        # V6: Provider-agnostic tool definitions
 │   ├── belief_graph.py       # Weighted belief persistence
-│   ├── belief_graph.seed.json # 7 foundational seed beliefs
+│   ├── belief_graph.seed.json # Foundational seed beliefs
 │   ├── memory.py             # SQLite + ChromaDB memory system
 │   ├── librarian.py          # Subconscious memory retrieval (geodesic)
-│   ├── keeper.py             # Belief emergence detection + manifold navigation
+│   ├── keeper.py             # Belief emergence + precipitation
 │   ├── stability_sentinel.py # Stability monitoring (Omega/Lagrangian)
 │   ├── imagination.py        # Counterfactual simulation engine
-│   ├── sensory_cortex.py     # Multi-frame perception
+│   ├── sensory_cortex.py     # Multi-frame perception + embodiment
 │   ├── unconscious.py        # Overnight processing pipeline
 │   ├── deep_thought.py       # Deep synthesis sub-agent
 │   ├── pulse_router.py       # Model routing per task type
@@ -168,16 +181,9 @@ helix_agi/
 │   ├── friction_damper.py    # Oscillation dampening
 │   ├── audio_monitor.py      # Passive audio monitoring
 │   ├── architecture_preamble.py  # System prompt foundations
-│   ├── tool_declarations.py  # Tool schemas for function calling
-│   │
-│   └── manifold/             # 8D Non-Euclidean Cognitive Space
-│       ├── manifold.py       # CognitiveManifold — unified node index
-│       ├── geodesic.py       # Geodesic distance + curvature fields
-│       ├── projector.py      # PCA projection (384D → 8D)
-│       ├── convergence.py    # Nightly gravitational convergence pipeline
-│       └── populate.py       # Initial manifold population
+│   └── tool_declarations.py  # Legacy tool schemas
 │
-├── llm/                      # Multi-provider LLM abstraction
+├── llm/                      # Multi-provider LLM abstraction (legacy)
 │   ├── base.py               # Base provider interface
 │   ├── factory.py            # Provider factory (Gemini/Claude/GPT)
 │   └── providers/
@@ -185,23 +191,22 @@ helix_agi/
 │       ├── anthropic_provider.py
 │       └── openai_provider.py
 │
-├── tools/                    # Extensible tool suite
-│   ├── tool_runner.py        # Tool dispatch and execution
-│   └── web_search.py         # Web search integration
+├── tools/                    # Extensible tool suite (96 tools)
+│   └── tool_runner.py        # Tool dispatch and execution
 │
 ├── comms/                    # Communication channels
 │   ├── telegram_bot.py       # Telegram integration
 │   └── terminal_interface.py # Local terminal fallback
 │
-├── senses/                   # Sensory hardware interfaces
-│
-├── docs/                     # Documentation
-│   └── GETTING_STARTED.md    # Setup and configuration guide
+├── docs/                     # Architecture documentation
+│   ├── helix_v6_architecture.md
+│   ├── V6_IMPLEMENTATION_PLAN.md
+│   ├── cognitive_cosmology_brainstorm.md
+│   └── omega_analysis.md
 │
 ├── journals/                 # Daily journal entries (gitignored)
 ├── profiles/                 # People the agent knows (gitignored)
-├── logs/                     # Daemon and overnight logs (gitignored)
-└── brain/briefings/          # Overnight agent briefings (gitignored)
+└── logs/                     # Daemon and overnight logs (gitignored)
 ```
 
 ---
@@ -251,10 +256,16 @@ conscious_provider: "gemini"   # "gemini", "anthropic", or "openai"
 
 # Gemini powers ALL subconscious agents regardless of conscious provider
 gemini:
-  conscious_model: "gemini-2.5-flash"
-  default_model: "gemini-2.5-flash"
+  conscious_model: "gemini-2.5-flash-preview-04-17"
+  default_model: "gemini-2.5-flash-preview-04-17"
   daily_cost_limit_usd: 5.00
   monthly_cost_limit_usd: 100.00
+
+# Alternative conscious providers
+anthropic:
+  conscious_model: "claude-haiku-4-5"
+openai:
+  conscious_model: "gpt-4o-mini"
 
 # Communication
 telegram:
