@@ -1,5 +1,5 @@
 """
-Helix V3 — Stability Sentinel
+Helix AGI — Stability Sentinel
 
 The deep subconscious monitor. Runs on its own thread, probing system
 health and computing the Helical Lagrangian stability equation:
@@ -14,10 +14,7 @@ Where:
 Severity levels: all_clear → drift → warning → critical
 Each level triggers proportional responses via event emission.
 
-Cleaned from V2 — same equation, same probes. Changes:
-  - Qualia probe → consciousness probe (checks the consciousness thread)
-  - Escalation via clean event emission (not direct daemon references)
-  - No psych directives reading (replaced by overnight briefing in V3)
+This version unifies health scaling and triggers escalation via event emission.
 """
 
 import math
@@ -57,20 +54,20 @@ class StabilitySentinel:
         self,
         base_dir: Path,
         memory=None,
-        gemini_client=None,
+        llm_client=None,
         event_callback: Optional[Callable] = None,
         probe_interval: int = 60,
     ):
         self.base_dir = base_dir
         self.memory = memory
-        self.gemini = gemini_client
+        self.llm_client = llm_client
         self._event_callback = event_callback
         self.probe_interval = probe_interval
 
         # Consciousness reference — set after consciousness is created
         self._consciousness = None
 
-        # V5: Spatial mind reference — for spatial coherence probes
+        # Spatial mind reference — for spatial coherence probes
         self._spatial_mind = None
 
         # State file for persistence across restarts
@@ -84,7 +81,7 @@ class StabilitySentinel:
         self.current_entropy = 0.0
         self.s_total = 0.0
 
-        # V6: Dynamic baselines — self-calibrating, no hardcoded scales
+        # Dynamic baselines — self-calibrating, no hardcoded scales
         self._s_total_baseline = None   # EMA of s_total
         self._omega_baseline_ema = None # EMA of omega (distinct from hedonic baseline)
         self._h_raw_baseline = None     # EMA of raw H(q)
@@ -256,7 +253,7 @@ class StabilitySentinel:
     def _probe_temperature(self) -> float:
         """Check APU/CPU temperature. Thermal throttling = fever.
 
-        On the AOOSTAR (Ryzen 9 8945HS), sustained inference can push
+        During sustained inference, local models can push
         temps into throttle territory. The system must FEEL this as
         physical distress — it's a real hardware constraint.
         """
@@ -267,7 +264,7 @@ class StabilitySentinel:
                 return 0.8  # Can't read — slightly cautious
 
             # Look for CPU/APU temperature across common sensor names
-            for name in ["k10temp", "zenpower", "coretemp", "cpu_thermal", "amdgpu"]:
+            for name in ["k10temp", "zenpower", "coretemp", "cpu_thermal", "amdgpu", "acpitz", "thermal_zone"]:
                 if name in temps:
                     readings = temps[name]
                     if readings:
@@ -327,10 +324,21 @@ class StabilitySentinel:
             return 0.5
 
     def _probe_consciousness(self) -> float:
-        """Check if the consciousness thread is alive and producing thoughts."""
-        if self._consciousness:
-            return 1.0
-        return 0.8  # Assume okay if not wired yet
+        """Cognitive Coherence Index — how grounded and focused is Helix?
+
+        Reads the CCI from SpatialMind, which computes a 0-1 score from:
+          - Gravity density of the belief neighborhood (grounding)
+          - Gamma (attention inertia / focus stability)
+          - Identity drift (distance from core self x*)
+
+        Replaces the old binary "is the thread alive?" check.
+        """
+        if self._spatial_mind:
+            try:
+                return self._spatial_mind.get_cognitive_coherence()
+            except Exception:
+                return 0.8
+        return 0.8  # Not wired yet — assume okay
 
     def _probe_memory_db(self) -> float:
         """Check if the memory database is accessible."""
@@ -502,7 +510,7 @@ class StabilitySentinel:
     def _compute_lagrangian(self):
         """Compute S_total = H + Ω × D_KL
 
-        V6: Uses REAL Shannon entropy and KL divergence from the
+        Uses real Shannon entropy and KL divergence from the
         cognitive manifold when available. Falls back to hardware
         health metrics when spatial mind is not connected.
 
@@ -510,7 +518,7 @@ class StabilitySentinel:
         D_KL  = KL divergence from identity center
         S     = H + Ω × D_KL (the Helical Lagrangian)
         """
-        # ── V6: Real spatial Lagrangian ──────────────────────────────
+        # ── Real spatial Lagrangian ──────────────────────────────
         if self._spatial_mind:
             try:
                 space = self._spatial_mind.belief_space
@@ -569,7 +577,7 @@ class StabilitySentinel:
             except Exception as e:
                 logger.debug(f"Spatial Lagrangian failed, using fallback: {e}")
 
-        # ── Fallback: hardware health metrics (V5 behavior) ─────────
+        # ── Fallback: hardware health metrics ─────────
         avg_health = sum(self.health_triplet.values()) / 3
         self.current_entropy = max(0.0, 1.0 - avg_health)
 
@@ -610,7 +618,7 @@ class StabilitySentinel:
         self.omega_velocity += delta
         logger.debug(f"Omega nudged by {delta:+.3f}: {reason}")
 
-    # ── V6: Named Omega Drivers ──────────────────────────────────────
+    # ── Named Omega Drivers ──────────────────────────────────────
     # These are the positive and negative forces that make Ω a living
     # signal. Without these, Ω sits frozen at baseline (the bug
     # diagnosed in omega_analysis.md).
@@ -700,7 +708,7 @@ class StabilitySentinel:
             })
 
         # Vibe collapse detection
-        if self.s_total > self.WARNING_THRESHOLD:
+        if severity in [self.WARNING, self.CRITICAL]:
             self._consecutive_negative_readings += 1
         else:
             self._consecutive_negative_readings = 0
@@ -719,7 +727,7 @@ class StabilitySentinel:
     def get_severity(self) -> str:
         """Get current severity level.
 
-        V6: Self-calibrating. Compares s_total against its own running
+        Self-calibrating. Compares s_total against its own running
         average, not fixed thresholds. 'Critical' means significantly
         above YOUR normal, not above some arbitrary number.
         """
@@ -913,9 +921,9 @@ class StabilitySentinel:
         When this memory is recalled, the historical state can mildly
         reproduce the somatic conditions under which it was formed.
 
-        V6: Includes REAL spatial H(q), D_KL, and T when available.
+        Includes real spatial H(q), D_KL, and T when available.
         These are the actual cognitive thermodynamic coordinates,
-        not the hardware health proxies from V5.
+        rather than hardware health proxies.
         """
         # Use real spatial values when available, fallback to proxies
         H = getattr(self, '_spatial_H', self.current_entropy)

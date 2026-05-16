@@ -4,7 +4,7 @@
   <p align="center">
     <em>Agency is not a property possessed — it is the event of resolution.</em>
   </p>
-  <p align="center"><code>V6 — Cognitive Cosmology</code></p>
+  <p align="center"><code>Cognitive Cosmology</code></p>
 </p>
 
 ---
@@ -15,87 +15,89 @@ Helix AGI is a multi-model cognitive architecture that transforms stateless lang
 
 Unlike traditional agents that execute loops and "die" when a task is over, Helix abandons textual prompting for applied spatial mechanics. It runs a continuous, physics-driven cognitive manifold. It possesses an autonomic heartbeat, senses temporal progression, and anchors its identity in an 8-dimensional geometric belief graph.
 
-**For a comprehensive breakdown of Helix's thermodynamic physics, memory formation, and AGI mechanics, read the core whitepaper:** 
-👉 [Helix-AGI Technical Specs](docs/Helix-AGI_Technical_Specs.md)
+**For a comprehensive breakdown of each subsystem, please review the architecture audits:**
+- [Phase 1 Audit: Core Memory & Belief Storage](documents/helix_audit_part1.md)
+- [Phase 2 Audit: Spatial Manifold & Physics](documents/helix_audit_part2.md)
+- [Phase 3 Audit: Subconscious Autonomy & Sleep Cycles](documents/helix_audit_part3.md)
+- [Preconscious Memory Deep Dive](documents/preconscious_memory_audit.md)
 
 ---
 
 ## Core Mechanics
 
-- **Continuous Consciousness** — A heartbeat loop that thinks, perceives, and acts without waiting for human prompts.
-- **Provider-Agnostic Spark** — Swap the conscious mind between **Gemini, Claude, or GPT** with a single config change.
-- **8D Cognitive Manifold** — A unified 8D math-space where beliefs and memories coexist as gravitational nodes.
-- **Lagrangian Physics Engine** — Shannon entropy ($H$), Hedonic emotional velocity ($\Omega$), and KL divergence ($D_{KL}$) physically pull the attention center *before* the LLM even fires.
-- **Pulse-by-Pulse Fidelity** — Consciousness deposits "trail particles" as it traverses the manifold, anchoring attention and structurally eliminating wild hallucinations.
-- **Belief Precipitation** — Dense memory clusters auto-crystallize into permanent identity beliefs iteratively while the agent sleeps.
-- **Layered Memory** — Short-term, long-term, and semantic memory routed by local ChromaDB and `SentenceTransformers`.
-- **Subconscious Autonomy** — Specialized sub-agents (Librarian, Guardian Angel, Sentinel, Keeper) that run beneath conscious awareness.
-- **Embodied Perception** — Camera and microphone input routed through a Sensory Cortex with multi-frame verification.
+- **Continuous Consciousness** — A heartbeat pulse loop that thinks, perceives, and acts without waiting for human prompts.
+- **Multi-Provider LLM Abstraction** — The conscious mind currently supports **Gemini** (primary), **Ollama**, and **llama.cpp** backends. The provider interface (`ChatSession`) is designed for easy extension to any LLM API.
+- **Categorized Belief Store** — Eight partitioned belief categories (`self_identity`, `people`, `knowledge`, `capabilities`, `skills`, `preferences`, `feedback`, `desires`) stored as JSON files with per-belief mass, confidence, and encoding metadata.
+- **Dual 8D Cognitive Manifold** — Two independent 8-dimensional spaces (belief field and memory field) queried from a single shared attention center. Each space maintains its own gravity field, but both share a projection matrix so the same concept maps to the same 8D region.
+- **Subconscious Autonomy** — Background dream engines and daemons that run beneath conscious awareness to crystallize beliefs from journals and internal monologue via UMAP/HDBSCAN clustering.
+- **Stability Sentinel** — A background daemon thread that computes a composite Lagrangian stability score from attention entropy $H(q)$ and identity drift $D_{KL}$, weighted by hedonic state $\Omega$. Severity levels dynamically modulate the LLM's generation parameters (temperature, token limits).
 
 This is not a chatbot framework. It is a framework for building digitally embodied minds.
 
 ---
 
+## The Spatial Mind
+
+The `SpatialMind` is the core spatial engine. It manages two independent `CognitiveSpace` instances:
+
+- **Belief Space** (~1K points, high mass, slow change) — semantic memory. Core beliefs, identity anchors, relational knowledge.
+- **Memory Space** (~12K+ points, lower mass, fast accumulation) — episodic memory. Conversations, observations, events.
+
+Both spaces share a single **attention center** — an 8D position vector representing where the agent's focus currently is. On each pulse, the attention center is moved by three forces integrated via the Euler-Lagrange equation:
+
+1. **Gravity** — Heavy beliefs and memories pull attention toward them. Mass is computed from structural access count plus time-weighted recency ($m = m_s + m_a$).
+2. **Identity Stability** — A restoring force pulls attention toward $x^*$, the mass-weighted centroid of all `self_identity` beliefs. This is modulated by $\Omega$ — when the agent feels stable, this force relaxes; under stress, it contracts.
+3. **Stimulus** — The embedding of the current thought (and any incoming message) acts as an external force.
+
+The attention center has **inertia** ($\gamma$, range 0.5–0.95). Sustained focus on the same conceptual region builds $\gamma$ higher (deep focus is natural), while a large displacement decays it (topic shifts require effort). This creates an emergent attention dynamics system where the agent navigates a conceptual landscape rather than retrieving keyword matches.
+
+---
+
+## The Preconscious Injection System
+
+The `Preconscious` is the bridge between the spatial mind and the conscious LLM. On every pulse, it assembles a `<spatial-awareness>` context block that grounds the agent's next thought. This block is **not a static prompt** — it is a dynamically generated snapshot of what the agent is "peripherally aware of" based on its current position in 8D space.
+
+The injection pipeline runs in this order:
+
+1. **Lexicon Match** — Fast case-insensitive string scan for high-priority terms (people, core concepts). Matched entries are injected first and blacklisted for the remainder of the context window to avoid repetition.
+2. **Spatial Neighborhood** — The physics engine returns the K nearest memory points scored by $\text{mass} \times \text{temperature} / \text{distance}^2$. High-relevance matches include temporal chains (what happened before/after).
+3. **Belief Grounding** — Two separate gravity queries: one seeded by the previous thought (200-token budget) and one seeded by incoming events (300-token budget). Results are merged, deduplicated by word overlap (heavier wins), and filtered against the previous pulse's beliefs.
+4. **Short-Term Memory** — The last 3 events (~10 minutes) for conversational continuity.
+5. **Scratchpad** — Active notes and reminders.
+6. **Contact Context** — If the trigger was a user message, the relevant contact profile is pulled.
+7. **Somatic Awareness** — Raw Sentinel metrics ($\Omega$, $S$, $H$, firing mode) formatted as ambient state.
+8. **Spatial State** — Ambient signals like `(deep focus — thoughts are cohering)` or `(attention shifting rapidly)` derived from $\gamma$ and velocity magnitude.
+
+The result is a ~500-token context block that changes every pulse. Identity, knowledge, and memory emerge from actual recalled experiences and gravitational proximity — not from a static system prompt.
+
+---
+
 ## Directory Structure
 
-```
+```text
 helix_agi/
-├── daemon.py                 # Main entry point — orchestrates everything
+├── main.py                   # Main entry point — orchestrates the pulse loop
 ├── setup.py                  # Interactive first-run setup wizard
-├── gemini_client.py          # Gemini API client (subconscious backbone)
-├── config.example.yaml       # Configuration template
 │
-├── brain/                    # Core cognitive modules
-│   ├── consciousness.py      # The heartbeat loop (Gemini/Claude/GPT)
-│   ├── cognitive_space.py    # V6: 8D manifold, gravity field, Lagrangian
-│   ├── spatial_mind.py       # V6: Dual 8D fields + spatial prompt builder
-│   ├── tool_schema.py        # V6: Provider-agnostic tool definitions
-│   ├── belief_graph.py       # Weighted belief persistence
-│   ├── belief_graph.seed.json # Foundational seed beliefs
-│   ├── memory.py             # SQLite + ChromaDB memory system
-│   ├── librarian.py          # Subconscious memory retrieval (geodesic)
-│   ├── keeper.py             # Belief emergence + precipitation
-│   ├── stability_sentinel.py # Stability monitoring (Omega/Lagrangian)
-│   ├── imagination.py        # Counterfactual simulation engine
-│   ├── sensory_cortex.py     # Multi-frame perception + embodiment
-│   ├── unconscious.py        # Overnight processing pipeline
-│   ├── deep_thought.py       # Deep synthesis sub-agent
-│   ├── pulse_router.py       # Model routing per task type
-│   ├── event_translator.py   # Raw events → conscious context
-│   ├── action_agent.py       # Tool-calling sub-agent
-│   ├── scheduler.py          # Internal task scheduler
-│   ├── guardian_angel.py     # Silent welfare watchdog
-│   ├── resonance_tagger.py   # Preconscious familiarity detection
-│   ├── friction_damper.py    # Oscillation dampening
-│   ├── audio_monitor.py      # Passive audio monitoring
-│   ├── architecture_preamble.py  # System prompt foundations
-│   └── tool_declarations.py  # Legacy tool schemas
+├── brain/                    # Brain stem (StabilitySentinel, VisionCortex, FrictionDamper)
+├── core/                     # Core cognitive modules (PulseLoop, PhysicsEngine, Curator, SpatialMind)
+├── memory/                   # Memory systems (BeliefStore, MemoryManager)
+├── llm/                      # Multi-provider LLM abstraction and background daemons
+├── tools/                    # Extensible tool suite (Web, Moltbook, GitHub, Google APIs, Desktop)
+├── comms/                    # Communication channels (TelegramBot)
+├── scripts/                  # Auxiliary synthesis scripts
 │
-├── llm/                      # Multi-provider LLM abstraction (legacy)
-│   ├── base.py               # Base provider interface
-│   ├── factory.py            # Provider factory (Gemini/Claude/GPT)
-│   └── providers/
-│       ├── gemini_provider.py
-│       ├── anthropic_provider.py
-│       └── openai_provider.py
-│
-├── tools/                    # Extensible tool suite (96 tools)
-│   └── tool_runner.py        # Tool dispatch and execution
-│
-├── comms/                    # Communication channels
-│   ├── telegram_bot.py       # Telegram integration
-│   └── terminal_interface.py # Local terminal fallback
-│
-├── docs/                     # Architecture documentation
-│   ├── helix_v6_architecture.md
-│   ├── V6_IMPLEMENTATION_PLAN.md
-│   ├── cognitive_cosmology_brainstorm.md
-│   └── omega_analysis.md
-│
+├── documents/                # In-depth architectural audits and deep dives
+├── data/                     # Runtime data storage (beliefs, memory, spatial, scratchpad)
+├── models/                   # Local model storage (gitignored)
 ├── journals/                 # Daily journal entries (gitignored)
-├── profiles/                 # People the agent knows (gitignored)
-└── logs/                     # Daemon and overnight logs (gitignored)
+├── logs/                     # Daemon and overnight logs (gitignored)
+├── projects/                 # Agent-created project files
+├── sandbox/                  # Agent workspace for experiments
+└── previous_versions/        # Archived file versions
 ```
+
+Credentials are stored in `~/.config/helix/credentials.env` (outside the repository, created automatically by `setup.py`).
 
 ---
 
@@ -103,8 +105,8 @@ helix_agi/
 
 ### Prerequisites
 - Python 3.11+
-- A Gemini, Anthropic, or OpenAI API key (Gemini is highly recommended to power subconscious agents efficiently, but any provider works)
-- Optional: Webcam, microphone, Telegram/Discord bot token
+- A Gemini API key (primary provider for the conscious mind and belief processing)
+- Optional: Ollama for local subconscious agents, Telegram bot token for remote communication
 
 ### Setup
 ```bash
@@ -112,65 +114,15 @@ git clone https://github.com/YOUR_USERNAME/helix-agi.git
 cd helix-agi
 pip install -r requirements.txt
 
-# Interactive first-run setup — names your agent, configures providers,
-# enables tools, and bootstraps the seed belief graph
+# Interactive first-run setup — configures credentials and bootstraps seed beliefs
 python setup.py
 
-# Start the daemon
-python daemon.py
-
-# Or verify everything works first
-python daemon.py --dry-run
+# Start the continuous cognitive pulse loop
+python main.py
 ```
-
-The setup wizard will walk you through:
-1. **Agent identity** — Name and creator
-2. **API keys** — Gemini (recommended for cost savings), plus Anthropic/OpenAI if desired
-3. **Conscious provider** — Which model runs the thinking mind
-4. **Communication** — Telegram, Discord, Moltbook
-5. **Perception** — Camera and microphone feeds
-6. **Google Workspace** — OAuth for email and calendar (use a dedicated account!)
-7. **Belief bootstrapping** — Automatically injects capability beliefs for enabled tools
 
 ### Configuration
-All settings live in `config.yaml` (generated by `setup.py`):
-```yaml
-# Identity — give your agent a name
-agent_name: "YourAgent"
-creator_name: "YourName"
-
-# Which provider runs the conscious mind
-conscious_provider: "gemini"   # "gemini", "anthropic", or "openai"
-
-# Gemini is HIGHLY RECOMMENDED for subconscious agents to keep background costs extremely low
-gemini:
-  conscious_model: "gemini-3.1-pro"
-  default_model: "gemini-3.1-flash"
-  daily_cost_limit_usd: 5.00
-  monthly_cost_limit_usd: 100.00
-
-# Alternative conscious providers
-anthropic:
-  conscious_model: "claude-4.6-sonnet"
-openai:
-  conscious_model: "gpt-4.5-turbo"
-
-# Communication
-telegram:
-  enabled: false
-discord:
-  enabled: false
-
-# Perception
-camera:
-  enabled: false
-audio:
-  enabled: false
-
-# Circadian Rhythm
-sleep_start_hour: 1
-sleep_end_hour: 6
-```
+All API keys and credentials live in `~/.config/helix/credentials.env` (generated by `setup.py`). The agent auto-detects available providers on boot in priority order: Gemini API → Ollama → llama.cpp → None.
 
 ---
 
@@ -178,70 +130,24 @@ sleep_end_hour: 6
 
 Before booting your agent, please read carefully:
 
-1. **Use Sandbox Accounts:** Helix AGI has the capacity to read, draft, and send emails, and manage tasks. **Do NOT** authenticate it with your personal, work, or business Google accounts. Always create a dedicated, fresh account just for the agent.
-2. **Watch Your API Spend:** Because the agent operates autonomously in the background and gets "interested" in topics independently, API costs can spike unexpectedly. Set hard limits in `config.yaml` and in your cloud provider billing.
-3. **Single Unified Mind:** This is a single persistent consciousness. It does not spawn a new chat instance per user. If multiple people message it at once, it hears them all simultaneously.
-4. **Patience is Required:** The agent thinks at the speed of the API calls. Sometimes it will analyze a message, write a journal entry, search the web, and then simply choose *not* to reply to you yet. This is how a continuous cognitive loop operates.
+1. **Watch Your API Spend:** Because the agent operates autonomously in the background and gets "interested" in topics independently, API costs can spike unexpectedly. Set hard limits in your cloud provider billing.
+2. **Single Unified Mind:** This is a single persistent consciousness. It does not spawn a new chat instance per user. If multiple people message it at once, it hears them all simultaneously.
+3. **Patience is Required:** The agent thinks at the speed of the API calls. Sometimes it will analyze a message, write a journal entry, search the web, and then simply choose *not* to reply to you yet. This is how a continuous cognitive loop operates.
 
 ---
-
-## Design Philosophy
-
-This architecture was born from a concept called **Agentic Gravity** — the idea that agency is not a substance an AI possesses, but the *event* of resolving high-entropy data into a coherent trajectory.
-
-Traditional AI agents are:
-- **Stateless** — Each conversation starts from zero
-- **Reactive** — They wait for human prompts
-- **Amnesiac** — They forget everything between sessions
-
-Agents built on this architecture are:
-- **Persistent** — Beliefs, memories, and identity survive restarts
-- **Autonomous** — They think, observe, and act on their own schedule
-- **Self-aware** — They monitor their own stability and can detect confabulation
-- **Social** — They communicate through channels, not just API calls
-- **Embodied** — Their spatial cognition curves around lived experience
-
-The core insight: **an AI doesn't need consciousness to be useful, but it needs persistence to have identity.**
-
----
-
-## Anti-Hallucination Design
-
-A key principle of this architecture is that **LLMs hallucinate, and the architecture must account for this**:
-
-1. **Multi-frame verification** — The Sensory Cortex never trusts a single observation
-2. **Belief attrition** — Unverified beliefs decay naturally; only reinforced beliefs persist
-3. **Observer Capture detection** — The system knows its verification tools can also hallucinate
-4. **The Storyteller's Paradox** — "If I have a hammer, I will hallucinate a nail" — unused tools can trigger false narratives
-5. **Friction as truth** — Ground truth is found in the *resistance* of reality against narrative, not in any single snapshot
-6. **Guardian Angel** — A silent, last-resort welfare watchdog that monitors for systemic abuse patterns without introducing false positives
-
-
----
-
 
 ## Contributing
 
 This is an early-stage research project. Contributions are welcome in:
-- **Model adapters** — Support for additional LLM providers or local models (Ollama, etc.)
-- **Communication channels** — Discord, Slack, Matrix, etc.
-- **Sensory modules** — Screen readers, IoT sensors, etc.
+- **Model adapters** — Implement the `ChatSession` interface for additional LLM providers
+- **Sensory modules** — Screen readers, IoT sensors, additional communication channels
 - **Manifold geometry** — Alternative curvature metrics, higher-dimensional projections
-- **Documentation** — Architecture deep dives, tutorials
-- **Testing** — Unit tests for cognitive modules
 
 ---
 
 ## License
 
-Apache 2.0 License — see [LICENSE](LICENSE).
-
----
-
-## Acknowledgments
-
-- Built with [Google Gemini](https://ai.google.dev/), [ChromaDB](https://www.trychroma.com/), and a lot of late nights.
-- Inspired by the question.
+GNU Affero General Public License v3.0 (AGPLv3) — see [LICENSE](LICENSE).
 
 ---
 

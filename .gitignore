@@ -7,7 +7,9 @@ chroma_shadow/
 chroma_db/
 brain/chroma/
 
-# Spatial mind / manifold runtime state (V6)
+# Spatial mind / manifold runtime state
+models/*.gguf
+models/*.bin
 *.npy
 *.npz
 *_space_state.json
@@ -30,7 +32,7 @@ scheduled_tasks.json
 email_reply_ledger.json
 cost_tracker.json
 
-# V6 runtime artifacts
+# Runtime artifacts
 model_routes.json
 domain_whitelist.txt
 overnight_trail.json

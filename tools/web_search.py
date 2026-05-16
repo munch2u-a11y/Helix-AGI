@@ -1,5 +1,5 @@
 """
-Helix V3 — Web Search
+Helix — Web Search
 
 Web search and URL reading for the Action Agent. Provides:
     search_web(query, max_results) → list of {title, snippet, url}
@@ -28,16 +28,21 @@ class WebSearch:
         self._ddg_available = False
         self._bs4_available = False
 
-        # Check for duckduckgo_search (or its newer name 'ddgs')
+        # Check for ddgs (renamed from duckduckgo_search)
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
             self._ddg_available = True
-            logger.info("Web search: DuckDuckGo backend available")
+            logger.info("Web search: DuckDuckGo backend available (ddgs)")
         except ImportError:
-            logger.warning(
-                "duckduckgo_search not installed. "
-                "Install with: pip install ddgs"
-            )
+            try:
+                from duckduckgo_search import DDGS
+                self._ddg_available = True
+                logger.info("Web search: DuckDuckGo backend available")
+            except ImportError:
+                logger.warning(
+                    "ddgs not installed. "
+                    "Install with: pip install ddgs"
+                )
 
         # Check for beautifulsoup4
         try:
@@ -96,7 +101,7 @@ class WebSearch:
             headers = {
                 "User-Agent": (
                     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/120.0 Helix/3.0"
+                    "(KHTML, like Gecko) Chrome/120.0"
                 ),
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             }
@@ -122,8 +127,11 @@ class WebSearch:
     # ── DuckDuckGo search via package ────────────────────────────────
 
     def _search_ddg(self, query: str, max_results: int) -> list[dict]:
-        """Search via duckduckgo_search package."""
-        from duckduckgo_search import DDGS
+        """Search via ddgs package."""
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
 
         results = []
         with DDGS() as ddgs:
@@ -146,7 +154,7 @@ class WebSearch:
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0 Helix/3.0"
+                "(KHTML, like Gecko) Chrome/120.0"
             ),
         }
 

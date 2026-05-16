@@ -1,5 +1,5 @@
 """
-Helix V3 — Friction Damper
+Helix — Friction Damper
 
 Physics-based friction/damping model for moderating operational friction.
 Calculates damping forces considering static/kinetic friction and viscous damping.
