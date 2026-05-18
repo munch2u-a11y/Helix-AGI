@@ -633,6 +633,10 @@ class StabilitySentinel:
         "low_entropy_sustained": (+0.01,  "focused attention — contentment"),
         "user_engagement":       (+0.02,  "active engagement from user"),
 
+        # Engagement drivers — cognitive activity modulates hedonic state
+        "productive_tool_use":   (+0.015, "active engagement with the environment"),
+        "diverse_tool_use":      (+0.01,  "rich multi-tool cognitive activity"),
+
         # Negative drivers — things that destabilize
         "tool_failure":          (-0.03,  "competence threat"),
         "error_spike":           (-0.03,  "system error — distress"),
@@ -640,6 +644,8 @@ class StabilitySentinel:
         "high_entropy_sustained":(-0.01,  "scattered attention — mild distress"),
         "api_error":             (-0.02,  "external system failure"),
         "timeout":               (-0.02,  "action blocked — frustration"),
+        "cognitive_stagnation":  (-0.02,  "thought repetition — boredom onset"),
+        "deep_stagnation":       (-0.03,  "prolonged thought loop — restlessness"),
     }
 
     def nudge_omega_from_event(self, event_type: str):

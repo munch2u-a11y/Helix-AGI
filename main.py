@@ -263,7 +263,15 @@ def setup_helix(data_dir: str = "data"):
     set_belief_deps(belief_store, physics, sentinel=sentinel)
     register_hook(belief_detector_hook, name="belief_detector")
 
-    print("  Post-pulse hooks: registered (workflow_detector, belief_detector)")
+    # Engagement hook: tracks thought stagnation and tool activity → Ω
+    from core.engagement_hook import (
+        engagement_hook,
+        set_dependencies as set_engagement_deps,
+    )
+    set_engagement_deps(sentinel, physics_engine=physics)
+    register_hook(engagement_hook, name="engagement_monitor")
+
+    print("  Post-pulse hooks: registered (workflow_detector, belief_detector, engagement_monitor)")
 
     return pulse_loop, orchestrator, daemon, memory_manager, belief_store, scratchpad, telegram_bot, sentinel
 
