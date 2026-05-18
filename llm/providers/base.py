@@ -127,10 +127,11 @@ def detect_available_provider() -> Optional[ProviderConfig]:
     # 1. Gemini API — primary conscious mind
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     if gemini_key:
-        logger.info("Auto-detected Gemini API key — using gemini-3-flash-preview")
+        model_name = os.environ.get("HELIX_PRIMARY_MODEL", "gemini-1.5-flash")
+        logger.info(f"Auto-detected Gemini API key — using {model_name}")
         return ProviderConfig(
             provider_type="gemini",
-            model="gemini-3-flash-preview",
+            model=model_name,
             context_window=1_000_000,
             temperature=0.8,
             max_output_tokens=8192,

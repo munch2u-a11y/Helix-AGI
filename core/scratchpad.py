@@ -190,7 +190,7 @@ class Scratchpad:
     def get_summary(self) -> str:
         """Get a compact summary for preconscious injection.
 
-        Returns natural language — just the urgent and active counts.
+        Returns natural language — urgent reminders and brief excerpts of active notes.
         """
         active = self.get_active_notes()
         due = self.get_due_notes()
@@ -202,9 +202,13 @@ class Scratchpad:
         for note in due:
             parts.append(f"(REMINDER DUE: {note['content'][:80]})")
 
-        # Other active notes
+        # Other active notes – include up to three excerpts
         non_due = [n for n in active if n not in due]
         if non_due:
-            parts.append(f"(scratchpad: {len(non_due)} active note(s))")
+            excerpts = []
+            for note in non_due[:3]:
+                excerpts.append(note['content'][:80])
+            excerpt_str = "; ".join(excerpts)
+            parts.append(f"(scratchpad: {len(non_due)} active note(s): {excerpt_str})")
 
         return "\n".join(parts)

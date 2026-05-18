@@ -137,6 +137,7 @@ class ToolExecutor:
             "read_url": self._fc_read_url,
             "read_file": self._fc_read_file,
             "write_file": self._fc_write_file,
+            "append_file": self._fc_append_file,
             "verbalize": self._fc_verbalize,
             "memory_recall": self._fc_memory_recall,
             "note": self._fc_note,
@@ -147,6 +148,7 @@ class ToolExecutor:
             "journal": self._fc_journal,
             "listen": self._fc_listen,
             "look": self._fc_look,
+            "record_video": self._fc_record_video,
             "ptz_look": self._fc_ptz_look,
             "camera_auto_track": self._fc_camera_auto_track,
             "reset_context": self._fc_reset_context,
@@ -483,6 +485,27 @@ class ToolExecutor:
         except Exception as e:
             return f"Write failed: {e}"
 
+    def _fc_append_file(self, args: dict) -> str:
+        path = args.get("path", "")
+        content = args.get("content", "")
+        if not path:
+            return "No path provided."
+        if not content:
+            return "No content to append."
+        basename = os.path.basename(path)
+        if basename in BLOCKED_WRITE_FILES:
+            return f"Cannot write protected file: {basename}"
+        if len(content) > MAX_FILE_WRITE:
+            return f"Content too large ({len(content)} bytes, max {MAX_FILE_WRITE})."
+        try:
+            p = os.path.expanduser(path)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, 'a') as f:
+                f.write(content)
+            return f"Appended {len(content)} bytes to {path}"
+        except Exception as e:
+            return f"Append failed: {e}"
+
     def _fc_memory_recall(self, args: dict) -> str:
         query = args.get("query", "")
         if not query:
@@ -623,6 +646,15 @@ class ToolExecutor:
     def _fc_look(self, args: dict) -> str:
         tag = ActionTag(tag="LOOK", param="", content=args.get("focus", ""))
         return self._exec_look(tag)
+
+    def _fc_record_video(self, args: dict) -> str:
+        duration = args.get("duration", 5)
+        focus = args.get("focus", "")
+        try:
+            cortex = self._get_vision_cortex()
+            return cortex.record_video(duration=duration, focus=focus)
+        except Exception as e:
+            return f"Video recording failed: {e}"
 
     def _fc_ptz_look(self, args: dict) -> str:
         tag = ActionTag(tag="PTZ_LOOK", param="", content=args.get("direction", ""))

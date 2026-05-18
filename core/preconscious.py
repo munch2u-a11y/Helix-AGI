@@ -85,7 +85,7 @@ class Preconscious:
 
         # Previous pulse belief tracking — filter these out next pulse
         # to avoid repeating the same beliefs in consecutive pulses.
-        self._prev_pulse_beliefs = set()  # content strings from last pulse
+        self._prev_pulse_beliefs = []  # list of sets, each containing content strings from previous pulses
 
         # Lexicon — priority term-matched dictionary loaded once.
         # Scanned every pulse BEFORE the 8D gravity query.
@@ -319,6 +319,16 @@ class Preconscious:
         self._lexicon_blacklist.clear()
         if count:
             logger.debug(f"Lexicon blacklist reset ({count} entries cleared)")
+
+    def reset_belief_history(self):
+        """Clear the rolling belief history window.
+
+        Called when the context window is reset or compressed so that
+        belief injection starts fresh, preventing stale beliefs from
+        being excluded after a reset.
+        """
+        self._prev_pulse_beliefs.clear()
+        logger.debug("Preconscious belief history reset (rolling window cleared)")
 
     # ── Somatic Awareness (Stability Sentinel) ────────────────────────
 
@@ -744,7 +754,7 @@ class Preconscious:
             return "", []
 
         # Exclude beliefs from the previous pulse + lexicon summaries
-        exclude = set(self._prev_pulse_beliefs)
+        exclude = set().union(*self._prev_pulse_beliefs) if self._prev_pulse_beliefs else set()
         if lexicon_exclude:
             exclude |= lexicon_exclude
 
@@ -802,7 +812,10 @@ class Preconscious:
             this_pulse_beliefs.add(content)
 
         # Track for next pulse's filter
-        self._prev_pulse_beliefs = this_pulse_beliefs
+        self._prev_pulse_beliefs.append(this_pulse_beliefs)
+        # Keep only the last 3 pulses
+        if len(self._prev_pulse_beliefs) > 3:
+            self._prev_pulse_beliefs.pop(0)
 
         logger.debug(
             f"Gravity-ranked beliefs: {len(merged)} selected "

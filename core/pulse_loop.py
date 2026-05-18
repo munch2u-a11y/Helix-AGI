@@ -182,6 +182,11 @@ class PulseLoop:
         # Pending belief processing — runs once per sleep window
         self._pending_beliefs_ran_tonight = False
 
+        # 429 rate-limit flag — when set, forces fallback model usage
+        # and blocks the success-path restore. Cleared on morning wake-up.
+        self._rate_limited = False
+
+
     def set_dream_engine(self, daemon):
         """Wire the background daemon for rollover snapshots."""
         self._dream_engine = daemon
@@ -381,7 +386,40 @@ class PulseLoop:
                 self._state = "RESTING"
                 self._last_event_time = time.time()
                 self._pending_beliefs_ran_tonight = False  # Reset for next night
+                self._rate_limited = False  # Clear 429 flag for new day
+                
+                # Restore primary model on morning wake-up if we were rate limited
+                if hasattr(self, '_chat') and self._chat and hasattr(self._chat, 'switch_model'):
+                    _PRIMARY = os.environ.get("HELIX_PRIMARY_MODEL", "gemini-1.5-flash")
+                    current = getattr(self._chat, '_model', '')
+                    if current != _PRIMARY:
+                        try:
+                            self._chat.switch_model(_PRIMARY)
+                        except Exception as e:
+                            logger.error(f"Morning model restore failed: {e}")
+                            
                 logger.info("DORMANT → RESTING (sleep ended, good morning)")
+
+            # ── Rate-Limit Gate ───────────────────────────────────
+            #    When rate-limited, force fallback model but keep pulsing.
+            if self._rate_limited:
+                _FALLBACK = os.environ.get("HELIX_FALLBACK_MODEL", "gemini-1.5-flash-8b")
+                if self._chat is not None and hasattr(self._chat, 'switch_model'):
+                    current = getattr(self._chat, '_model', '')
+                    if current != _FALLBACK:
+                        try:
+                            self._chat.switch_model(_FALLBACK)
+                        except Exception as e:
+                            logger.error(f"Rate-limit model switch failed: {e}")
+                elif self._provider_config:
+                    # No session yet — override provider config so session
+                    # is created with fallback model instead of primary
+                    if self._provider_config.model != _FALLBACK:
+                        logger.info(
+                            f"Rate-limited — overriding boot model: "
+                            f"{self._provider_config.model} → {_FALLBACK}"
+                        )
+                        self._provider_config.model = _FALLBACK
 
             # ── Pulse Execution ──────────────────────────────────
             self._pulse()
@@ -559,8 +597,8 @@ class PulseLoop:
         thought = self._send_pulse(pulse_message)
 
         # 4b. If we got a 429, back off and optionally fallback model
-        _FALLBACK_MODEL = "gemini-3.1-flash-lite-preview"
-        _PRIMARY_MODEL = "gemini-3-flash-preview"
+        _FALLBACK_MODEL = os.environ.get("HELIX_FALLBACK_MODEL", "gemini-1.5-flash-8b")
+        _PRIMARY_MODEL = self._provider_config.model if self._provider_config else os.environ.get("HELIX_PRIMARY_MODEL", "gemini-1.5-flash")
         # How many consecutive successes on fallback before trying primary again.
         # Prevents the oscillation bug where one success triggers an immediate
         # switch back to a still-rate-limited primary model.
@@ -569,10 +607,13 @@ class PulseLoop:
         if thought and "429 RESOURCE_EXHAUSTED" in thought:
             self._consecutive_429s = getattr(self, '_consecutive_429s', 0) + 1
             self._fallback_successes = 0  # Reset cooldown on any 429
-            backoff = min(244, 61 * self._consecutive_429s)
 
-            # On 2nd consecutive 429, switch to fallback model
-            if self._consecutive_429s >= 2 and hasattr(self._chat, 'switch_model'):
+            if self._consecutive_429s >= 2:
+                # 2nd consecutive 429 — set rate limit flag, park auto-restore
+                self._rate_limited = True
+                
+            # Switch to fallback model
+            if hasattr(self._chat, 'switch_model'):
                 current = getattr(self._chat, '_model', '')
                 if current != _FALLBACK_MODEL:
                     logger.warning(
@@ -586,18 +627,17 @@ class PulseLoop:
                 else:
                     logger.warning(
                         f"429 #{self._consecutive_429s} — already on "
-                        f"fallback, backing off {backoff}s"
+                        f"fallback model."
                     )
-            else:
-                logger.warning(
-                    f"429 #{self._consecutive_429s} — backing off {backoff}s"
-                )
-
-            time.sleep(backoff)
             return  # Skip parsing/storing this error pulse
         else:
             # Success — count consecutive successes on fallback before restoring primary
-            if getattr(self, '_consecutive_429s', 0) > 0:
+            # BUT: if _rate_limited is set, don't try to restore — wait for morning.
+            if self._rate_limited:
+                # Running on fallback by design — don't attempt restore
+                self._consecutive_429s = 0
+                self._fallback_successes = 0
+            elif getattr(self, '_consecutive_429s', 0) > 0:
                 if hasattr(self._chat, '_model'):
                     current = getattr(self._chat, '_model', '')
                     if current == _FALLBACK_MODEL:
@@ -626,16 +666,14 @@ class PulseLoop:
         # 5. Parse output for action tags
         self._parse_output(thought)
 
-        # 5b. Tool execution now happens inside the Gemini provider's
-        #     native function call loop — no regex parsing needed here.
-        #     Log which tools were used (for display/metrics).
+        # 5b. Log tools used and reset activity timer for any tool call
         if hasattr(self._chat, 'get_last_tool_calls'):
             tool_calls = self._chat.get_last_tool_calls()
             if tool_calls:
                 tool_names = [tc['name'] for tc in tool_calls]
                 logger.info(f"FC tools used: {tool_names}")
-                self._last_event_time = time.time()  # Stay ACTIVE while using tools
-                
+                # Reset event timer for any tool usage
+                self._last_event_time = time.time()
         # 5c. Track tokens for context window lifecycle
         if hasattr(self._chat, 'get_last_token_count'):
             self._session_token_count = self._chat.get_last_token_count()

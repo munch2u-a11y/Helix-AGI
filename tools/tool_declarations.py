@@ -109,7 +109,7 @@ CORE_TOOLS = [
     },
     {
         "name": "write_file",
-        "description": "Write or create a file with the given content.",
+        "description": "Write or create a file with the given content. WARNING: This OVERWRITES the entire file. To add to an existing file, use append_file instead.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -120,6 +120,24 @@ CORE_TOOLS = [
                 "content": {
                     "type": "string",
                     "description": "The content to write to the file",
+                },
+            },
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "append_file",
+        "description": "Append content to the end of an existing file. Creates the file if it doesn't exist. Use this instead of write_file when you want to ADD to a document without replacing what's already there — e.g. adding a new section to an essay or appending log entries.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or home-relative path to the file",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The content to append to the end of the file",
                 },
             },
             "required": ["path", "content"],

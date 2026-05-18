@@ -1,10 +1,6 @@
 <p align="center">
   <h1 align="center">Helix AGI</h1>
-  <p align="center"><strong>A cognitive architecture for persistent, autonomous AI agents</strong></p>
-  <p align="center">
-    <em>Agency is not a property possessed — it is the event of resolution.</em>
-  </p>
-  <p align="center"><code>Cognitive Cosmology</code></p>
+  <p align="center"><strong>A continuous, autonomous agent architecture driven by spatial memory</strong></p>
 </p>
 
 ---
@@ -13,7 +9,7 @@
 
 Helix AGI is a multi-model cognitive architecture that transforms stateless language models into persistent, autonomous agents.
 
-Unlike traditional agents that execute loops and "die" when a task is over, Helix abandons textual prompting for applied spatial mechanics. It runs a continuous, physics-driven cognitive manifold. It possesses an autonomic heartbeat, senses temporal progression, and anchors its identity in an 8-dimensional geometric belief graph.
+Unlike traditional agents that wait for a prompt, execute a loop, and terminate, Helix runs a continuous background "pulse." For developers and enthusiasts exploring alternatives to traditional RAG (Retrieval-Augmented Generation), Helix introduces a **Spatial Mind**—a cognitive manifold where memories and beliefs possess "mass" and "gravity," creating a dynamic, physics-driven approach to context assembly.
 
 **For a comprehensive breakdown of each subsystem, please review the architecture audits:**
 - [Phase 1 Audit: Core Memory & Belief Storage](documents/helix_audit_part1.md)
@@ -23,52 +19,44 @@ Unlike traditional agents that execute loops and "die" when a task is over, Heli
 
 ---
 
+## The Pulse Workflow
+
+At the heart of Helix is the continuous cognitive pulse loop. Every few seconds, the system evaluates its environment, retrieves relevant spatial memory, and decides whether to act, think, or sleep.
+
+```mermaid
+graph TD
+    A[Pulse Trigger] --> B{Check Sleep Cycle}
+    B -->|Dormant| C[Nightly Belief Consolidation]
+    C --> Z[Wait for Next Pulse]
+    B -->|Awake| D[Preconscious Context Injection]
+    D --> E[Retrieve Spatial Memories & Beliefs]
+    E --> F[LLM Generation]
+    F --> G[Parse Action Tags]
+    G --> H[Execute Tools]
+    H --> I[Update 8D Attention Center]
+    I --> Z
+```
+
+---
+
+## Moving Beyond Traditional RAG: The Spatial Mind
+
+Most AI applications rely on vector databases to perform semantic searches based directly on a user's prompt. Helix replaces this with a **Spatial Mind**, managing two independent 8-dimensional spaces (Belief Space for semantic memory and Memory Space for episodic memory).
+
+**Why spatial-gravitational instead of traditional RAG?**
+- **Zero API calls during injection**: All retrieval is CPU-bound (KDTree queries, numpy operations). No embedding API round-trips during the pulse injection phase.
+- **Physics-based relevance**: Memories aren't ranked by cosine similarity alone. They're ranked by *entropic gravity* (Temperature × mass / distance²), incorporating recency (temperature), structural importance (mass), and semantic proximity (distance). 
+- **Continuous attention dynamics**: The attention center has *inertia* (damping). Sustained focus on a topic deepens retrieval from that region, while sudden topic shifts reset retrieval breadth. Traditional RAG has no concept of attentional momentum.
+
+---
+
 ## Core Mechanics
 
 - **Continuous Consciousness** — A heartbeat pulse loop that thinks, perceives, and acts without waiting for human prompts.
 - **Multi-Provider LLM Abstraction** — The conscious mind currently supports **Gemini** (primary), **Ollama**, and **llama.cpp** backends. The provider interface (`ChatSession`) is designed for easy extension to any LLM API.
 - **Categorized Belief Store** — Eight partitioned belief categories (`self_identity`, `people`, `knowledge`, `capabilities`, `skills`, `preferences`, `feedback`, `desires`) stored as JSON files with per-belief mass, confidence, and encoding metadata.
-- **Dual 8D Cognitive Manifold** — Two independent 8-dimensional spaces (belief field and memory field) queried from a single shared attention center. Each space maintains its own gravity field, but both share a projection matrix so the same concept maps to the same 8D region.
-- **Subconscious Autonomy** — Background dream engines and daemons that run beneath conscious awareness to crystallize beliefs from journals and internal monologue via UMAP/HDBSCAN clustering.
-- **Stability Sentinel** — A background daemon thread that computes a composite Lagrangian stability score from attention entropy $H(q)$ and identity drift $D_{KL}$, weighted by hedonic state $\Omega$. Severity levels dynamically modulate the LLM's generation parameters (temperature, token limits).
-
-This is not a chatbot framework. It is a framework for building digitally embodied minds.
-
----
-
-## The Spatial Mind
-
-The `SpatialMind` is the core spatial engine. It manages two independent `CognitiveSpace` instances:
-
-- **Belief Space** (~1K points, high mass, slow change) — semantic memory. Core beliefs, identity anchors, relational knowledge.
-- **Memory Space** (~12K+ points, lower mass, fast accumulation) — episodic memory. Conversations, observations, events.
-
-Both spaces share a single **attention center** — an 8D position vector representing where the agent's focus currently is. On each pulse, the attention center is moved by three forces integrated via the Euler-Lagrange equation:
-
-1. **Gravity** — Heavy beliefs and memories pull attention toward them. Mass is computed from structural access count plus time-weighted recency ($m = m_s + m_a$).
-2. **Identity Stability** — A restoring force pulls attention toward $x^*$, the mass-weighted centroid of all `self_identity` beliefs. This is modulated by $\Omega$ — when the agent feels stable, this force relaxes; under stress, it contracts.
-3. **Stimulus** — The embedding of the current thought (and any incoming message) acts as an external force.
-
-The attention center has **inertia** ($\gamma$, range 0.5–0.95). Sustained focus on the same conceptual region builds $\gamma$ higher (deep focus is natural), while a large displacement decays it (topic shifts require effort). This creates an emergent attention dynamics system where the agent navigates a conceptual landscape rather than retrieving keyword matches.
-
----
-
-## The Preconscious Injection System
-
-The `Preconscious` is the bridge between the spatial mind and the conscious LLM. On every pulse, it assembles a `<spatial-awareness>` context block that grounds the agent's next thought. This block is **not a static prompt** — it is a dynamically generated snapshot of what the agent is "peripherally aware of" based on its current position in 8D space.
-
-The injection pipeline runs in this order:
-
-1. **Lexicon Match** — Fast case-insensitive string scan for high-priority terms (people, core concepts). Matched entries are injected first and blacklisted for the remainder of the context window to avoid repetition.
-2. **Spatial Neighborhood** — The physics engine returns the K nearest memory points scored by $\text{mass} \times \text{temperature} / \text{distance}^2$. High-relevance matches include temporal chains (what happened before/after).
-3. **Belief Grounding** — Two separate gravity queries: one seeded by the previous thought (200-token budget) and one seeded by incoming events (300-token budget). Results are merged, deduplicated by word overlap (heavier wins), and filtered against the previous pulse's beliefs.
-4. **Short-Term Memory** — The last 3 events (~10 minutes) for conversational continuity.
-5. **Scratchpad** — Active notes and reminders.
-6. **Contact Context** — If the trigger was a user message, the relevant contact profile is pulled.
-7. **Somatic Awareness** — Raw Sentinel metrics ($\Omega$, $S$, $H$, firing mode) formatted as ambient state.
-8. **Spatial State** — Ambient signals like `(deep focus — thoughts are cohering)` or `(attention shifting rapidly)` derived from $\gamma$ and velocity magnitude.
-
-The result is a ~500-token context block that changes every pulse. Identity, knowledge, and memory emerge from actual recalled experiences and gravitational proximity — not from a static system prompt.
+- **Subconscious Autonomy** — Background dream engines and daemons run beneath conscious awareness to crystallize beliefs from journals and internal monologue via UMAP/HDBSCAN clustering.
+- **Stability Sentinel** — A background daemon thread that computes a composite Lagrangian stability score from attention entropy $H(q)$ and identity drift $D_{KL}$, weighted by hedonic state $\Omega$. Severity levels dynamically modulate LLM generation parameters (temperature, token limits).
 
 ---
 
@@ -80,15 +68,15 @@ helix_agi/
 ├── setup.py                  # Interactive first-run setup wizard
 │
 ├── brain/                    # Brain stem (StabilitySentinel, VisionCortex, FrictionDamper)
-├── core/                     # Core cognitive modules (PulseLoop, PhysicsEngine, Curator, SpatialMind)
+├── core/                     # Core cognitive modules (PulseLoop, PhysicsEngine, SpatialMind)
 ├── memory/                   # Memory systems (BeliefStore, MemoryManager)
 ├── llm/                      # Multi-provider LLM abstraction and background daemons
-├── tools/                    # Extensible tool suite (Web, Moltbook, GitHub, Google APIs, Desktop)
+├── tools/                    # Extensible tool suite (Web, Moltbook, GitHub, Desktop)
 ├── comms/                    # Communication channels (TelegramBot)
 ├── scripts/                  # Auxiliary synthesis scripts
 │
 ├── documents/                # In-depth architectural audits and deep dives
-├── data/                     # Runtime data storage (beliefs, memory, spatial, scratchpad)
+├── data/                     # Runtime data storage
 ├── models/                   # Local model storage (gitignored)
 ├── journals/                 # Daily journal entries (gitignored)
 ├── logs/                     # Daemon and overnight logs (gitignored)
@@ -120,9 +108,6 @@ python setup.py
 # Start the continuous cognitive pulse loop
 python main.py
 ```
-
-### Configuration
-All API keys and credentials live in `~/.config/helix/credentials.env` (generated by `setup.py`). The agent auto-detects available providers on boot in priority order: Gemini API → Ollama → llama.cpp → None.
 
 ---
 

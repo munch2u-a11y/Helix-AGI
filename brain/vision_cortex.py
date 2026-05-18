@@ -190,6 +190,170 @@ class VisionCortex:
         return description
 
     # ══════════════════════════════════════════════════════════════════
+    # CONSCIOUS-FACING: RECORD VIDEO
+    # ══════════════════════════════════════════════════════════════════
+
+    _VALID_DURATIONS = {5, 10, 15}
+
+    def record_video(self, duration: int = 5, focus: str = "") -> str:
+        """Record a short video clip and analyze key frames.
+
+        Pipeline:
+          1. Record video from camera → save .mp4 to disk
+          2. Sample ~4 key frames at regular intervals during recording
+          3. Analyze each key frame through Moondream with temporal context
+          4. Build a timestamped narrative of what was observed
+          5. Store the narrative in visual memory
+          6. Return the narrative + file path
+
+        Args:
+            duration: Recording length — must be 5, 10, or 15 seconds.
+            focus: Optional focus description for Moondream analysis.
+
+        Returns:
+            Temporal narrative of what was observed + file path.
+        """
+        # Validate duration
+        if duration not in self._VALID_DURATIONS:
+            duration = min(self._VALID_DURATIONS, key=lambda d: abs(d - duration))
+            logger.info(f"Video duration snapped to {duration}s")
+
+        output_dir = Path(__file__).parent.parent / "data" / "screenshots"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        recording_time = datetime.now()
+        timestamp_str = recording_time.strftime("%Y%m%d_%H%M%S")
+        output_path = output_dir / f"video_{timestamp_str}.mp4"
+
+        # ── Phase 1: Record video + capture key frames ────────────
+        #    We record at 15fps and sample ~4 key frames at even
+        #    intervals for subsequent Moondream analysis.
+        fps = 15
+        num_key_frames = 4
+        frame_interval = max(1, (duration * fps) // num_key_frames)
+        key_frame_indices = set(
+            i * frame_interval for i in range(num_key_frames)
+        )
+
+        try:
+            cap = cv2.VideoCapture(self.camera_device)
+            if not cap.isOpened():
+                return "Camera not available — couldn't start recording."
+
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+            # Warm up auto-exposure
+            for _ in range(5):
+                cap.read()
+
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer = cv2.VideoWriter(
+                str(output_path), fourcc, fps, (1280, 720)
+            )
+
+            total_frames = duration * fps
+            interval = 1.0 / fps
+            key_frames = []  # (timestamp_seconds, jpeg_bytes)
+
+            for i in range(total_frames):
+                ret, frame = cap.read()
+                if not ret:
+                    continue
+                writer.write(frame)
+
+                # Sample key frame
+                if i in key_frame_indices:
+                    _, buf = cv2.imencode(
+                        ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92]
+                    )
+                    seconds = i / fps
+                    key_frames.append((seconds, buf.tobytes()))
+
+                time.sleep(interval)
+
+            writer.release()
+            cap.release()
+
+        except Exception as e:
+            logger.error(f"Video recording failed: {e}")
+            return f"Recording failed: {e}"
+
+        if not key_frames:
+            return "Recording completed but no frames were captured."
+
+        size_kb = output_path.stat().st_size // 1024
+        logger.info(
+            f"Video recorded: {duration}s @ {fps}fps, "
+            f"{len(key_frames)} key frames, {size_kb}KB → {output_path}"
+        )
+
+        # ── Phase 2: Analyze key frames through Moondream ─────────
+        #    Each frame gets temporal context from the previous
+        #    frame's description so Moondream reports changes.
+        try:
+            self._ensure_model()
+        except Exception as e:
+            # Recording succeeded but analysis failed — return path
+            return (
+                f"Video saved to {output_path} ({duration}s, {size_kb}KB) "
+                f"but visual analysis unavailable: {e}"
+            )
+
+        observations = []
+        previous_desc = ""
+
+        for seconds, image_bytes in key_frames:
+            # Build temporal prompt
+            ts_label = f"{int(seconds // 60)}:{int(seconds % 60):02d}"
+
+            prompt = (
+                f"This is a frame from a {duration}-second video recording "
+                f"at timestamp {ts_label}. "
+                f"Describe what you see. Be factual and concise."
+            )
+            if focus:
+                prompt += f" Focus on: {focus}"
+            if previous_desc:
+                prompt += (
+                    f"\n\nThe previous frame showed: {previous_desc}\n"
+                    f"Note any changes or movement since then."
+                )
+
+            try:
+                desc = self._analyze(image_bytes, prompt)
+                observations.append((ts_label, desc))
+                previous_desc = desc
+            except Exception as e:
+                observations.append((ts_label, f"(analysis failed: {e})"))
+                logger.warning(f"Frame analysis failed at {ts_label}: {e}")
+
+        # ── Phase 3: Build temporal narrative ─────────────────────
+        time_label = recording_time.strftime("%H:%M:%S")
+        narrative_lines = [
+            f"Video recorded ({duration}s) at {time_label} "
+            f"— saved to {output_path.name}",
+            "",
+            "Observations:",
+        ]
+        for ts_label, desc in observations:
+            narrative_lines.append(f"  {ts_label} — {desc}")
+
+        narrative = "\n".join(narrative_lines)
+
+        # ── Phase 4: Store to visual memory ───────────────────────
+        self._store_observation(
+            description=f"[VIDEO {duration}s] {'; '.join(d for _, d in observations)}",
+            focus=focus or "video recording",
+        )
+
+        logger.info(
+            f"Video analysis complete: {len(observations)} frames analyzed"
+        )
+
+        return narrative
+
+    # ══════════════════════════════════════════════════════════════════
     # CONSCIOUS-FACING: PTZ
     # ══════════════════════════════════════════════════════════════════
 
