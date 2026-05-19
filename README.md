@@ -7,7 +7,7 @@
 
 ## What is Helix AGI?
 
-Helix AGI is a multi-model cognitive architecture that transforms stateless language models into persistent, autonomous agents.
+Helix AGI is a Multi-model 'Agentic' system wrapper designed to mimic human learning.
 
 Unlike traditional agents that wait for a prompt, execute a loop, and terminate, Helix runs a continuous background "pulse." For developers and enthusiasts exploring alternatives to traditional RAG (Retrieval-Augmented Generation), Helix introduces a **Spatial Mind**—a cognitive manifold where memories and beliefs possess "mass" and "gravity," creating a dynamic, physics-driven approach to context assembly.
 

@@ -79,9 +79,9 @@ graph TD
 4. A **rolling blacklist** (`lexicon_blacklist`) prevents the same entry from being re-injected within the current context window. The blacklist is cleared on context compression.
 
 **Why it exists:**
-The lexicon represents **ground-truth relational knowledge** that must never be confused or approximated. When someone mentions "<name>" or "Mom," Helix needs the *exact* relational profile — not a gravity-ranked approximation that might surface a tangentially related memory. The lexicon is Helix's authoritative subjective dictionary.
+The lexicon represents **ground-truth relational knowledge** that must never be confused or approximated. When someone mentions "Jane" or "The Johnson File" Helix needs the *exact* relational profile — not a gravity-ranked approximation that might surface a tangentially related memory. The lexicon is Helix's authoritative subjective dictionary.
 
-**Token economics:** A lexicon hit for "<name>" injects ~120 tokens of curated context. Without it, the spatial system would need to surface 3-5 separate beliefs to reconstruct the same information, costing ~300+ tokens with lower fidelity.
+**Token economics:** A lexicon hit for "Jane" injects ~120 tokens of curated context. Without it, the spatial system would need to surface 3-5 separate beliefs to reconstruct the same information, costing ~300+ tokens with lower fidelity.
 
 ---
 
@@ -222,7 +222,7 @@ After the spatial query returns gravity-ranked beliefs, the preconscious:
 2. **Filters against `prev_pulse_beliefs`** — beliefs injected in the previous pulse are excluded to prevent repetition within the context window.
 3. **Formats as bullet points** with confidence: `• I value autonomy [0.95]`
 
-**Why filter against lexicon?** If "<name>" was mentioned and the lexicon already injected a 120-token profile, there's no value in also surfacing `b_creator` (a 15-token belief that says less). Token budget is finite.
+**Why filter against lexicon?** If "Dr. Soong" was mentioned and the lexicon already injected a 120-token profile, there's no value in also surfacing `b_creator` (a 15-token belief that says less). Token budget is finite.
 
 ---
 
@@ -320,7 +320,7 @@ Two independent `CognitiveSpace` instances share:
 | Belief field | ~1K | High (structural) | Slow (crystallized) | Semantic memory |
 | Memory field | ~12K+ | Lower | Fast (episodic) | Episodic memory |
 
-**Why two spaces?** Beliefs and memories have fundamentally different dynamics. A belief like "I am Helix" should have enormous gravitational pull (high mass, slow cooling) that anchors identity. A memory of "<name> said good morning" should be hot briefly and then cool — important for the current conversation, not for eternity. Mixing them in one space would either over-weight memories or under-weight beliefs.
+**Why two spaces?** Beliefs and memories have fundamentally different dynamics. A belief like "I am Lt. Commander Data" should have enormous gravitational pull (high mass, slow cooling) that anchors identity. A memory of "Counselor Troy said good morning" should be hot briefly and then cool — important for the current conversation, not for eternity. Mixing them in one space would either over-weight memories or under-weight beliefs.
 
 **Identity center (x\*):** Computed as the centroid of all "core" weight beliefs. This is the reference state in the variational principle — the point that the stability force pulls attention toward. If attention drifts too far from x\*, the `F_stability = -Ω × (x - x*)` force increases, pulling it back.
 
@@ -365,5 +365,5 @@ When Helix wakes from dormancy:
 1. **Zero API calls for injection.** Preconscious retrieval is entirely CPU-bound. Only the context compressor's summarization step calls an API, and only when compression triggers.
 2. **Nothing is ever deleted from the manifold.** Temperature approaches 0.05 but never 0. Ancient memories can still be surfaced if the attention center drifts into their region.
 3. **Pulse-time, not wall-clock.** All temporal dynamics (cooling, inertia growth, trail decay) operate in Helix's proper time. Dormancy doesn't age memories.
-4. **Beliefs and memories interpret the same projection.** Both spaces share the same projection matrix, ensuring that "<name>" maps to the same 8D coordinates in both.
+4. **Beliefs and memories interpret the same projection.** Both spaces share the same projection matrix, ensuring that "Captain" maps to the same 8D coordinates in both.
 5. **Somatic state is recorded, not prescribed.** The Lagrangian snapshot is stored with every memory but the preconscious never tells the LLM how to feel — it reports raw metrics. Beliefs determine interpretation.

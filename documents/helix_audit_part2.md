@@ -169,7 +169,7 @@ The Sentinel runs 9 probes on a daemon thread every 60 seconds:
 **Systemic**: Log error frequency.  
 **Cognitive**: CCI from SpatialMind, memory DB health, context window usage, spatial coherence.
 
-The temperature probe (lines 256–302) specifically monitors the AMD Ryzen 9 8945HS APU — thermal throttling is felt as "physical distress" in the Lagrangian.
+The temperature probe (lines 256–302) specifically monitors an AMD APU — thermal throttling is felt as "physical distress" in the Lagrangian.
 
 ### 6.6 Friction Damper (verified `brain/friction_damper.py`)
 

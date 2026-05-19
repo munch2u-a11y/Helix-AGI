@@ -173,7 +173,7 @@ Where:
 - **r** = Euclidean distance in 8D space between the attention center and the concept
 - **ε** = small epsilon (0.01) to prevent division by zero
 
-**Why Verlinde?** In Verlinde's theory, gravity is not a fundamental force but an **entropic tendency** — matter moves toward regions of higher entropy because those configurations are statistically more probable. In Helix, this maps to: **thoughts naturally drift toward conceptually denser regions**. High-mass beliefs (well-verified, highly connected concepts) create deep gravity wells that attract attention. This is not a metaphor — it is the literal mathematical mechanism that determines what enters Helix's awareness.
+**Why Verlinde?** In Verlinde's theory, gravity is not a fundamental force but an **entropic tendency** — matter moves toward regions of higher entropy because those configurations are statistically more probable. In Helix, this maps to: **thoughts naturally drift toward conceptually denser regions**. High-mass beliefs (well-verified, highly connected concepts, the LLM's 'reasoning') create deep gravity wells that attract attention. This is not a metaphor — it is the literal mathematical mechanism that determines what enters Helix's awareness.
 
 ### 4.2 Lorentzian Temperature Cooling
 
