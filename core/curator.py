@@ -1,14 +1,15 @@
 """
 Helix — Curator Engine (Background Dreaming & Belief Crystallization)
 
-Replaces the synchronous DreamEngine.
+Replaces the legacy synchronous DreamEngine.
 Implements asynchronous background execution and offloads synthesis to a lightweight auxiliary model.
 
 Key Architectural Upgrades:
 1. Background Execution: Runs asynchronously to avoid blocking the main pulse loop.
 2. Auxiliary Model: Uses a faster, cheaper model (e.g., Gemini Flash) for synthesis.
 3. Strict Belief Spec: Validates output against the belief_format_spec (15-250 chars, specific categories).
-4. Clustering & Compounding: Uses UMAP + HDBSCAN to find higher-order insights from existing beliefs.
+4. Co-Occurrence Wiring: Real-time Hebbian wiring via post-pulse hooks replaces batch UMAP/HDBSCAN.
+   Nightly Phase 3 reads pre-built relation clusters for compound synthesis.
 """
 
 import json
@@ -16,19 +17,17 @@ import re
 import logging
 import sqlite3
 import os
-import numpy as np
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 import threading
 
-# Clustering
-import umap
-import hdbscan
+# Co-occurrence clustering is now handled in real-time by
+# core/co_occurrence_hook.py (Hebbian wiring). The nightly cycle
+# reads pre-built clusters instead of running UMAP/HDBSCAN here.
 
 logger = logging.getLogger("helix.core.curator")
 
-# Ensure UMAP/HDBSCAN warnings are suppressed
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -129,8 +128,8 @@ class Curator:
                 logger.error(f"Consolidation phase failed (continuing): {e}")
                 # On failure, all beliefs pass through unmerged
             
-            logger.info("Curator Phase 3: UMAP/HDBSCAN Compounding")
-            compound_beliefs = self._synthesize_compounds()
+            logger.info("Curator Phase 3: Relation-Graph Compound Synthesis")
+            compound_beliefs = self._synthesize_from_clusters()
             stats["compounded"] = len(compound_beliefs)
             
             logger.info("Curator Phase 4: Validating & Integrating")
@@ -197,10 +196,10 @@ class Curator:
                 covered_terms.add(alias.lower())
 
         # Load all beliefs
-        all_beliefs = self.beliefs.get_all_beliefs()
+        all_beliefs = self.beliefs.get_all_beliefs_flat()
 
         # ── Extract multi-word terms + filter noise ──────────────────
-        # 1. Strip possessive 's from words (<name>'s → <name>)
+        # 1. Strip possessive 's from words (Joshua's → Joshua)
         # 2. Detect multi-word terms (consecutive capitalized words)
         # 3. Track article usage: "the X" = named entity, "a/an X" = generic
         # 4. A term is noise if "a/an" precedes it more than "the" does
@@ -415,48 +414,59 @@ class Curator:
         """
         memories = []
         
-        # 1. Thought Output Logs (from memory_manager)
+        # 1. Thought Output Logs (from memory_manager's SQLite DB)
         if self.memory:
             try:
-                # Fetch thoughts from the last 24 hours
                 cutoff_time = (datetime.now() - timedelta(hours=24)).isoformat()
-                # Assuming memory_manager has a method to get thoughts
-                # If not, we'll use a direct SQLite query as fallback
-                if hasattr(self.memory, 'conn'):
-                    cursor = self.memory.conn.cursor()
-                    cursor.execute(
-                        "SELECT id, content, lagrangian_snapshot, belief_ids FROM long_term WHERE memory_type='thought' AND created_at >= ?", 
-                        (cutoff_time,)
-                    )
-                    rows = cursor.fetchall()
-                    for row in rows:
-                        mem_id, content, snap_json, bids_json = row
-                        
-                        try:
-                            snap = json.loads(snap_json) if snap_json else {}
-                        except:
-                            snap = {}
+                # MemoryManager uses per-call connections via sqlite3.connect(db_path),
+                # not a persistent self.conn. Create our own connection.
+                db_path = getattr(self.memory, 'db_path', None)
+                if db_path and os.path.exists(db_path):
+                    conn = sqlite3.connect(db_path)
+                    try:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "SELECT id, content, lagrangian_snapshot, belief_ids "
+                            "FROM long_term WHERE memory_type='thought' AND created_at >= ?", 
+                            (cutoff_time,)
+                        )
+                        rows = cursor.fetchall()
+                        for row in rows:
+                            mem_id, content, snap_json, bids_json = row
                             
-                        try:
-                            bids = json.loads(bids_json) if bids_json else []
-                        except:
-                            bids = []
-                            
-                        memories.append({
-                            "text": content,
-                            "memory_id": mem_id,
-                            "lagrangian_snapshot": snap,
-                            "belief_ids": bids
-                        })
+                            try:
+                                snap = json.loads(snap_json) if snap_json else {}
+                            except:
+                                snap = {}
+                                
+                            try:
+                                bids = json.loads(bids_json) if bids_json else []
+                            except:
+                                bids = []
+                                
+                            memories.append({
+                                "text": content,
+                                "memory_id": mem_id,
+                                "lagrangian_snapshot": snap,
+                                "belief_ids": bids
+                            })
+                        logger.info(f"Phase 1: extracted {len(rows)} thoughts from last 24h")
+                    finally:
+                        conn.close()
                 else:
-                    logger.warning("memory_manager lacks standard SQLite interface; skipping thought extraction.")
+                    logger.warning(f"memory_manager db_path not found: {db_path}")
             except Exception as e:
                 logger.error(f"Failed to fetch thought output logs: {e}")
                 
-        # 2. Journals (from journals directory)
+        # 2. Journals (from project root journals directory)
+        #    Journals live at ./journals/, not data/journals/
         try:
-            journal_path = self.data_dir / "journals"
+            journal_path = Path("journals")
+            if not journal_path.exists():
+                # Fallback: try relative to data_dir parent
+                journal_path = self.data_dir.parent / "journals"
             if journal_path.exists():
+                journal_count = 0
                 for jfile in journal_path.glob("*.md"):
                     # Only read journals modified in the last 24h
                     if jfile.stat().st_mtime > datetime.now().timestamp() - 86400:
@@ -467,10 +477,27 @@ class Curator:
                                 "lagrangian_snapshot": {},
                                 "belief_ids": []
                             })
+                            journal_count += 1
+                logger.info(f"Phase 1: collected {journal_count} recent journals")
+            else:
+                logger.warning(f"No journals directory found at {journal_path}")
         except Exception as e:
             logger.error(f"Failed to fetch journals: {e}")
             
+        logger.info(f"Phase 1 total: {len(memories)} raw memories collected")
         return memories
+
+    @staticmethod
+    def _strip_code_fences(text: str) -> str:
+        """Strip markdown code fences (```json ... ```) from LLM output."""
+        text = text.strip()
+        if text.startswith("```"):
+            # Remove opening fence line
+            first_nl = text.index("\n") if "\n" in text else len(text)
+            text = text[first_nl + 1:]
+        if text.endswith("```"):
+            text = text[:-3].rstrip()
+        return text
 
     def _extract_beliefs(self, memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Uses the auxiliary LLM to extract beliefs from raw memories."""
@@ -492,75 +519,104 @@ class Curator:
            - preferences: (I want/prefer/value...)
            - feedback: [Lesson]. [Why]. [How to apply]
            
-        Output JSON list of objects: [{"category": "...", "content": "..."}]
+        Output ONLY a raw JSON list: [{"category": "...", "content": "..."}]
+        No markdown, no code fences, no explanation. Just the JSON array.
         """
         
         for mem_obj in memories:
             try:
-                # Assuming llm_client has a generate or chat method
-                # This is a placeholder for the actual Gemini SDK call
                 response = self.llm_client.generate(prompt=mem_obj["text"], system_instruction=system_prompt)
-                parsed = json.loads(response.text)
+                raw_text = self._strip_code_fences(response.text)
+                parsed = json.loads(raw_text)
                 
                 # Attach metadata to each extracted belief
                 for p in parsed:
+                    if not isinstance(p, dict):
+                        continue
                     p["memory_refs"] = [mem_obj["memory_id"]] if mem_obj["memory_id"] != -1 else []
                     p["encoding_lagrangian"] = mem_obj.get("lagrangian_snapshot", {})
                     p["injected_belief_ids"] = mem_obj.get("belief_ids", [])
                     
-                extracted.extend(parsed)
+                extracted.extend([p for p in parsed if isinstance(p, dict)])
             except Exception as e:
                 logger.error(f"Extraction failed for memory: {e}")
                 
         return extracted
 
-    def _synthesize_compounds(self) -> List[Dict[str, Any]]:
-        """Clusters existing beliefs using UMAP+HDBSCAN and synthesizes higher-order insights."""
-        existing = self.beliefs.get_all_beliefs()
-        if len(existing) < 10:
-            return []
-            
-        # 1. Extract embeddings (Assuming beliefs have 'position_8d' or we generate them)
-        embeddings = np.array([b.get('position_8d', np.zeros(8)) for b in existing])
-        
-        if embeddings.shape[1] == 0:
-            return []
+    def _synthesize_from_clusters(self) -> List[Dict[str, Any]]:
+        """Synthesizes higher-order insights from pre-built co-occurrence clusters.
 
-        # 2. Reduce & Cluster
+        Reads clusters built by the real-time co_occurrence_hook (Hebbian wiring)
+        and sends each cluster to the LLM for compound belief synthesis.
+        Falls back to direct relation-graph traversal if no co-occurrence
+        tracker is available.
+        """
+        # Try to get pre-built clusters from the co-occurrence hook
+        clusters = []
         try:
-            reducer = umap.UMAP(n_neighbors=5, min_dist=0.1, n_components=2)
-            reduced = reducer.fit_transform(embeddings)
-            
-            clusterer = hdbscan.HDBSCAN(min_cluster_size=3)
-            labels = clusterer.fit_predict(reduced)
+            from core.co_occurrence_hook import get_tracker
+            tracker = get_tracker()
+            if tracker:
+                clusters = tracker.get_current_clusters()
+                logger.info("Phase 3: Found %d pre-built co-occurrence clusters", len(clusters))
+        except ImportError:
+            logger.warning("Co-occurrence hook not available — skipping compound synthesis")
         except Exception as e:
-            logger.error(f"Clustering failed: {e}")
+            logger.error("Failed to read co-occurrence clusters: %s", e)
+
+        if not clusters:
+            # Fallback: find beliefs with 3+ existing relations (already wired)
+            existing = self.beliefs.get_all_beliefs_flat()
+            well_connected = [
+                b for b in existing
+                if len(b.get("relations", [])) >= 3
+            ]
+            if well_connected:
+                # Group by shared relations (simple connected-component approach)
+                logger.info(
+                    "Phase 3 fallback: %d well-connected beliefs for synthesis",
+                    len(well_connected),
+                )
+                # Each well-connected belief + its relations = a mini-cluster
+                for b in well_connected[:5]:  # Cap at 5 to avoid API spam
+                    cluster = [b["id"]] + b.get("relations", [])[:6]
+                    clusters.append(cluster)
+
+        if not clusters:
+            logger.info("Phase 3: No clusters found — skipping compound synthesis")
             return []
 
-        # 3. Synthesize per cluster
+        # Synthesize per cluster (same LLM logic as before)
         compounds = []
-        unique_labels = set(labels)
-        for label in unique_labels:
-            if label == -1: continue # Noise
-            
-            cluster_beliefs = [existing[i]['content'] for i, l in enumerate(labels) if l == label]
-            
+        for cluster_ids in clusters:
+            # Fetch belief contents for the cluster
+            cluster_beliefs = []
+            for bid in cluster_ids:
+                belief = self.beliefs.get_belief(bid)
+                if belief and belief.get("content"):
+                    cluster_beliefs.append(belief["content"])
+
+            if len(cluster_beliefs) < 2:
+                continue
+
             prompt = "Synthesize these related beliefs into ONE single higher-order realization.\n"
             prompt += "Do not restate the premises. Extract the novel realization.\n"
             prompt += "Follow strict format rules: 15-250 chars, plain text, no markdown.\n"
             prompt += "\n".join(cluster_beliefs)
-            
+
             try:
-                # LLM synthesis call
                 response = self.llm_client.generate(prompt=prompt)
-                # Parse and assume category is feedback or knowledge
-                compounds.append({
-                    "category": "feedback", 
-                    "content": response.text.strip().replace("**", "")
-                })
+                raw_text = self._strip_code_fences(response.text)
+                content = raw_text.strip().replace("**", "")
+                if content and 15 <= len(content) <= 300:
+                    compounds.append({
+                        "category": "feedback",
+                        "content": content,
+                        "source": "co_occurrence_synthesis",
+                    })
             except Exception as e:
-                logger.error(f"Compound synthesis failed: {e}")
-                
+                logger.error("Compound synthesis failed for cluster: %s", e)
+
         return compounds
 
     def _validate_and_format(self, beliefs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

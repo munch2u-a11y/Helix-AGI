@@ -1,5 +1,5 @@
 """
-Helix AGI — Spatial Mind
+Helix_main — Spatial Mind
 
 The dual 8D cognitive field — Helix's conceptual dimension.
 
@@ -198,6 +198,15 @@ class SpatialMind:
         self.memory_space.update_gravity_field(agent_age_seconds)
 
         # 4. Step attention via force integration (belief space drives movement)
+        #    Affect force: emotional steering from Plutchik field (Layer 3)
+        affect_force = None
+        if hasattr(self, '_affect_steering') and self._affect_steering is not None:
+            import numpy as _np
+            # Scale the 8D Plutchik vector as a directional bias (0.5 strength)
+            sv = self._affect_steering
+            if isinstance(sv, list) and len(sv) == PROJECTION_DIM:
+                affect_force = _np.array(sv, dtype=_np.float32) * 0.5
+
         new_center, new_velocity = self.belief_space.step_attention(
             position=self.attention_center,
             velocity=self._velocity,
@@ -206,6 +215,7 @@ class SpatialMind:
             omega=omega,
             gamma=self._gamma,
             stimulus_strength=stimulus_strength,
+            affect_force=affect_force,
         )
 
         # 5. Update γ (inertia) — builds with sustained focus
@@ -349,25 +359,50 @@ class SpatialMind:
     # ── Bootstrap ─────────────────────────────────────────────────────
 
     def bootstrap(self, belief_graph=None, memory=None):
-        """Bootstrap both spaces from existing data.
+        """Bootstrap both spaces from the unified JSONL journal.
 
-        Called once on first startup. Reads embeddings from ChromaDB
-        and projects them into both 8D spaces. Then computes x*
-        (identity center) from core beliefs.
+        This replaces the previous ChromaDB‑based bootstrap. It reads all
+        entries from the `cognitive_journal.jsonl` file (managed by
+        `MemoryManager`) and populates the belief and memory KD‑trees.
         """
-        b_count, _ = self.belief_space.bootstrap_from_chroma(
-            belief_graph=belief_graph
-        )
-        _, m_count = self.memory_space.bootstrap_from_chroma(
-            memory=memory
-        )
+        if self.base_dir is None:
+            logger.warning("SpatialMind.bootstrap called without a base_dir – cannot locate journal.")
+            return 0, 0
 
-        # Compute identity center x* from core beliefs
+        from memory.cognitive_journal import CognitiveJournal
+        journal = CognitiveJournal(self.base_dir)
+        entries = journal.load_all()
+
+        b_count = 0
+        m_count = 0
+        for entry in entries:
+            entry_type = entry.get("type")
+            point_id = str(entry.get("id"))
+            position = entry.get("position_8d", [])
+            metadata = entry.get("metadata", {})
+            if not position or len(position) != 8:
+                continue
+            embedding = np.array(position, dtype=np.float32)
+            if entry_type == "belief":
+                self.belief_space.add_point(
+                    point_id=point_id,
+                    embedding=embedding,
+                    point_type="belief",
+                    **metadata,
+                )
+                b_count += 1
+            elif entry_type == "memory":
+                self.memory_space.add_point(
+                    point_id=point_id,
+                    embedding=embedding,
+                    point_type="memory",
+                    **metadata,
+                )
+                m_count += 1
+        # Compute identity center from core beliefs (unchanged behavior)
         self._compute_identity_center(belief_graph)
-
         logger.info(
-            f"SpatialMind bootstrapped: {b_count} beliefs, "
-            f"{m_count} memories, x*={np.linalg.norm(self._identity_center):.3f}"
+            f"SpatialMind bootstrapped from journal: {b_count} beliefs, {m_count} memories, x*={np.linalg.norm(self._identity_center):.3f}"
         )
         return b_count, m_count
 

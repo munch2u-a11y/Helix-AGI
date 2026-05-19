@@ -113,7 +113,7 @@ def _load_lexicon_terms(lexicon_path: Path) -> Dict[str, str]:
     Returns dict mapping each matchable term (lowercased) to
     the lexicon entry's primary term (for logging/identification).
 
-    Example: {"<alias>": "<name>", "nemo": "<name>", "n3m0": "<name>"}
+    Example: {"joshua": "Joshua", "nemo": "Joshua", "n3m0": "Joshua"}
     """
     terms = {}
     try:

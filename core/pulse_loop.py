@@ -58,13 +58,15 @@ class PulseLoop:
     External communication via FC tools: reply(), send_message().
     """
 
-    # Pulse intervals (seconds)
-    ACTIVE_INTERVAL = 30       # 30s between pulses during conversation
-    RESTING_INTERVAL = 900     # 15 min between background pulses
+    # Pulse intervals (seconds) — 3-tier gradient
+    ACTIVE_INTERVAL = 10       # 10s — fast response during conversation
+    REGULAR_INTERVAL = 30      # 30s — autonomous task work
+    RESTING_INTERVAL = 900     # 15 min — idle background presence
     DORMANT_CHECK = 60         # How often to check for wake during sleep
 
-    # Active timeout — drop to RESTING after 2 min of no I/O
-    ACTIVE_TIMEOUT = 120
+    # Timeout durations for state transitions
+    ACTIVE_TIMEOUT = 120       # 2 min no incoming → ACTIVE → REGULAR
+    REGULAR_TIMEOUT = 600      # 10 min no activity → REGULAR → RESTING
 
     # Context window lifecycle thresholds
     FOCUS_DRIFT_THRESHOLD = 1.5
@@ -129,6 +131,10 @@ class PulseLoop:
         self._previous_thoughts = ""
         self._last_event_time = 0
 
+        # 3-tier activity tracking
+        self._last_incoming_time = 0   # Last Telegram/audio message
+        self._last_activity_time = 0   # Last outbound tool use or incoming
+
         # Context window lifecycle tracking
         self._session_focus_origin = None
         self._session_token_count = 0
@@ -185,7 +191,6 @@ class PulseLoop:
         # 429 rate-limit flag — when set, forces fallback model usage
         # and blocks the success-path restore. Cleared on morning wake-up.
         self._rate_limited = False
-
 
     def set_dream_engine(self, daemon):
         """Wire the background daemon for rollover snapshots."""
@@ -257,9 +262,12 @@ class PulseLoop:
                 self._event_queue.append(text)
             self._last_event_time = time.time()
 
-            # Only message events should wake/promote state
-            if event_type == "user_message" and self._state != "ACTIVE":
-                self.wake(trigger=f"event: {event_type}")
+            # Main comms channels → immediate ACTIVE for fast response
+            if event_type == "user_message":
+                self._last_incoming_time = time.time()
+                self._last_activity_time = time.time()
+                if self._state != "ACTIVE":
+                    self.wake(trigger=f"event: {event_type}")
             # Nudge sentinel omega on relevant events
             if self.sentinel:
                 if event_type == "user_message":
@@ -386,31 +394,41 @@ class PulseLoop:
                 self._state = "RESTING"
                 self._last_event_time = time.time()
                 self._pending_beliefs_ran_tonight = False  # Reset for next night
-                self._rate_limited = False  # Clear 429 flag for new day
-                
-                # Restore primary model on morning wake-up if we were rate limited
-                if hasattr(self, '_chat') and self._chat and hasattr(self._chat, 'switch_model'):
-                    _PRIMARY = os.environ.get("HELIX_PRIMARY_MODEL", "gemini-1.5-flash")
-                    current = getattr(self._chat, '_model', '')
-                    if current != _PRIMARY:
-                        try:
-                            self._chat.switch_model(_PRIMARY)
-                        except Exception as e:
-                            logger.error(f"Morning model restore failed: {e}")
-                            
-                logger.info("DORMANT → RESTING (sleep ended, good morning)")
+
+                # Clear 429 rate-limit parking
+                if self._rate_limited:
+                    self._rate_limited = False
+                    self._consecutive_429s = 0
+                    self._fallback_successes = 0
+                    self._restore_failures = 0
+                    # Restore primary model
+                    _PRIMARY_MODEL = "gemini-2.5-flash"
+                    if hasattr(self._chat, 'switch_model'):
+                        current = getattr(self._chat, '_model', '')
+                        if current != _PRIMARY_MODEL:
+                            try:
+                                self._chat.switch_model(_PRIMARY_MODEL)
+                                logger.info(f"429 cleared — restored primary model: {_PRIMARY_MODEL}")
+                            except Exception as e:
+                                logger.error(f"Model restore on wake failed: {e}")
+                    logger.info("DORMANT → RESTING (sleep ended, 429 parking cleared, good morning)")
+                else:
+                    logger.info("DORMANT → RESTING (sleep ended, good morning)")
 
             # ── Rate-Limit Gate ───────────────────────────────────
             #    When rate-limited, force fallback model but keep pulsing.
             if self._rate_limited:
-                _FALLBACK = os.environ.get("HELIX_FALLBACK_MODEL", "gemini-1.5-flash-8b")
-                if self._chat is not None and hasattr(self._chat, 'switch_model'):
-                    current = getattr(self._chat, '_model', '')
-                    if current != _FALLBACK:
-                        try:
-                            self._chat.switch_model(_FALLBACK)
-                        except Exception as e:
-                            logger.error(f"Rate-limit model switch failed: {e}")
+                _FALLBACK = "gemini-3.1-flash-lite-preview"
+                if self._chat is not None:
+                    # Session exists — switch model if needed
+                    if hasattr(self._chat, 'switch_model'):
+                        current = getattr(self._chat, '_model', '')
+                        if current != _FALLBACK:
+                            try:
+                                self._chat.switch_model(_FALLBACK)
+                                logger.info(f"Rate-limited — forced fallback model: {_FALLBACK}")
+                            except Exception as e:
+                                logger.error(f"Rate-limit model switch failed: {e}")
                 elif self._provider_config:
                     # No session yet — override provider config so session
                     # is created with fallback model instead of primary
@@ -425,13 +443,17 @@ class PulseLoop:
             self._pulse()
             self._check_context_lifecycle()
 
-            # ── ACTIVE Timeout Check ─────────────────────────────
+            # ── 3-Tier State Transitions ──────────────────────────
             if self._state == "ACTIVE":
-                elapsed_since_event = time.time() - self._last_event_time
-                if elapsed_since_event > self.ACTIVE_TIMEOUT:
+                if time.time() - self._last_incoming_time > self.ACTIVE_TIMEOUT:
+                    self._state = "REGULAR"
+                    self._last_activity_time = time.time()  # Start REGULAR timer
+                    logger.info("ACTIVE → REGULAR (2 min no incoming)")
+
+            elif self._state == "REGULAR":
+                if time.time() - self._last_activity_time > self.REGULAR_TIMEOUT:
                     self._state = "RESTING"
-                    logger.info("ACTIVE → RESTING (2 min timeout)")
-                    self._check_context_lifecycle(force_drift_check=True)
+                    logger.info("REGULAR → RESTING (10 min no activity)")
 
             # ── Idle Consolidation (Curator-Style) ───────────────
             #    When idle for 2+ hours, run lightweight belief
@@ -452,7 +474,11 @@ class PulseLoop:
 
 
             # ── Wait for next interval ───────────────────────────
-            interval = self.ACTIVE_INTERVAL if self._state == "ACTIVE" else self.RESTING_INTERVAL
+            interval = {
+                "ACTIVE": self.ACTIVE_INTERVAL,
+                "REGULAR": self.REGULAR_INTERVAL,
+                "RESTING": self.RESTING_INTERVAL,
+            }.get(self._state, self.RESTING_INTERVAL)
             self._wake_event.wait(timeout=interval)
             if self._wake_event.is_set():
                 self._wake_event.clear()
@@ -468,19 +494,15 @@ class PulseLoop:
             self._token_warning = ""
             return
 
-        # 1. Focus drift check — only trigger when RESTING or forced
-        if (self._state == "RESTING" or force_drift_check) and self._session_focus_origin is not None and self.physics.attention_center is not None:
+        # 1. Focus drift — log only, no compression trigger.
+        #    Previously this wiped context on every RESTING pulse,
+        #    destroying cognitive continuity. Token-based compression
+        #    handles context window management instead.
+        if self._session_focus_origin is not None and self.physics.attention_center is not None:
             current = self.physics.attention_center
             drift = float(np.linalg.norm(current - self._session_focus_origin))
             if drift > self.FOCUS_DRIFT_THRESHOLD:
-                logger.info(
-                    f"Focus drift {drift:.2f} > {self.FOCUS_DRIFT_THRESHOLD} "
-                    f"— triggering context compression"
-                )
-                self._compress_context("focus_drift")
-                # Reset focus origin to current position after compression
-                self._session_focus_origin = self.physics.attention_center.copy()
-                return
+                logger.debug(f"Focus drift {drift:.2f} (logged, no compression)")
 
         # 2. Token count — check if compression is needed
         if (self._session_token_count > 0
@@ -543,6 +565,10 @@ class PulseLoop:
             # Reset lexicon blacklist — new context window means lexicon
             # entries should re-inject if their terms appear again.
             self.preconscious.reset_lexicon_blacklist()
+            # Invalidate entropy baseline — manifold may have drifted
+            # significantly since last baseline was sampled.
+            self.physics.spatial_mind.belief_space.invalidate_entropy_baseline()
+            self.physics.spatial_mind.memory_space.invalidate_entropy_baseline()
             logger.info(
                 f"Context compressed ({reason}): {len(history)} → "
                 f"{len(compressed)} messages"
@@ -597,38 +623,48 @@ class PulseLoop:
         thought = self._send_pulse(pulse_message)
 
         # 4b. If we got a 429, back off and optionally fallback model
-        _FALLBACK_MODEL = os.environ.get("HELIX_FALLBACK_MODEL", "gemini-1.5-flash-8b")
-        _PRIMARY_MODEL = self._provider_config.model if self._provider_config else os.environ.get("HELIX_PRIMARY_MODEL", "gemini-1.5-flash")
+        _FALLBACK_MODEL = "gemini-3.1-flash-lite-preview"
+        _PRIMARY_MODEL = "gemini-2.5-flash"
         # How many consecutive successes on fallback before trying primary again.
-        # Prevents the oscillation bug where one success triggers an immediate
-        # switch back to a still-rate-limited primary model.
         _FALLBACK_COOLDOWN_PULSES = 10
+        # How many failed restore attempts before hard-locking to fallback
+        # until the morning wake-up clears it.
+        _MAX_RESTORE_FAILURES = 2
 
         if thought and "429 RESOURCE_EXHAUSTED" in thought:
             self._consecutive_429s = getattr(self, '_consecutive_429s', 0) + 1
             self._fallback_successes = 0  # Reset cooldown on any 429
+            restore_failures = getattr(self, '_restore_failures', 0)
 
-            if self._consecutive_429s >= 2:
-                # 2nd consecutive 429 — set rate limit flag, park auto-restore
+            if restore_failures >= _MAX_RESTORE_FAILURES:
+                # Already exhausted restore attempts — hard lock
                 self._rate_limited = True
-                
-            # Switch to fallback model
-            if hasattr(self._chat, 'switch_model'):
-                current = getattr(self._chat, '_model', '')
-                if current != _FALLBACK_MODEL:
-                    logger.warning(
-                        f"429 #{self._consecutive_429s} — switching to "
-                        f"fallback model: {_FALLBACK_MODEL}"
-                    )
-                    try:
-                        self._chat.switch_model(_FALLBACK_MODEL)
-                    except Exception as e:
-                        logger.error(f"Model switch failed: {e}")
-                else:
-                    logger.warning(
-                        f"429 #{self._consecutive_429s} — already on "
-                        f"fallback model."
-                    )
+                logger.warning(
+                    f"429 #{self._consecutive_429s} — {restore_failures} "
+                    f"restore attempts already failed. Hard-locked to "
+                    f"fallback until morning."
+                )
+            elif self._consecutive_429s >= 2:
+                # 2nd consecutive 429 without any fallback success — park
+                self._rate_limited = True
+                logger.warning(
+                    f"429 #{self._consecutive_429s} — rate limit confirmed. "
+                    f"Parking until morning wake-up."
+                )
+            else:
+                # 1st 429 — switch to fallback model and keep going
+                logger.warning(
+                    f"429 #{self._consecutive_429s} — switching to "
+                    f"fallback model: {_FALLBACK_MODEL}"
+                )
+                if hasattr(self._chat, 'switch_model'):
+                    current = getattr(self._chat, '_model', '')
+                    if current != _FALLBACK_MODEL:
+                        try:
+                            self._chat.switch_model(_FALLBACK_MODEL)
+                        except Exception as e:
+                            logger.error(f"Model switch failed: {e}")
+
             return  # Skip parsing/storing this error pulse
         else:
             # Success — count consecutive successes on fallback before restoring primary
@@ -651,8 +687,18 @@ class PulseLoop:
                                 self._chat.switch_model(_PRIMARY_MODEL)
                             except Exception as e:
                                 logger.error(f"Model restore failed: {e}")
+                            # DO NOT reset _restore_failures here — track across attempts
                             self._consecutive_429s = 0
                             self._fallback_successes = 0
+                            # Increment restore attempt counter so if primary
+                            # immediately 429s again, we're one step closer
+                            # to hard-locking.
+                            self._restore_failures = getattr(self, '_restore_failures', 0) + 1
+                            logger.info(
+                                f"Restore attempt #{self._restore_failures}/"
+                                f"{_MAX_RESTORE_FAILURES} — if primary 429s again, "
+                                f"{'will hard-lock to fallback' if self._restore_failures >= _MAX_RESTORE_FAILURES else 'will retry once more'}"
+                            )
                         else:
                             logger.debug(
                                 f"Fallback cooldown: {self._fallback_successes}/"
@@ -660,20 +706,40 @@ class PulseLoop:
                                 f"restoring primary"
                             )
                         return  # Don't reset _consecutive_429s yet — still cooling down
-            self._consecutive_429s = 0
-            self._fallback_successes = 0
+            else:
+                self._consecutive_429s = 0
+                self._fallback_successes = 0
 
         # 5. Parse output for action tags
         self._parse_output(thought)
 
-        # 5b. Log tools used and reset activity timer for any tool call
+        # 5b. Tool result queueing — results are now events for next pulse.
+        #     This ensures every tool interaction gets full preconscious
+        #     grounding on the next pulse cycle.
+        if hasattr(self._chat, 'get_pending_tool_results'):
+            pending = self._chat.get_pending_tool_results()
+            if pending:
+                for tr in pending:
+                    self.emit("tool_result", {
+                        "tool": tr["name"],
+                        "result": tr["result"][:1000],
+                    })
+
+        # 5c. Log tools used and track outbound tools for rate tier
+        # 5c. Log tools used and reset activity timer for any tool call
         if hasattr(self._chat, 'get_last_tool_calls'):
             tool_calls = self._chat.get_last_tool_calls()
             if tool_calls:
                 tool_names = [tc['name'] for tc in tool_calls]
                 logger.info(f"FC tools used: {tool_names}")
-                # Reset event timer for any tool usage
+                # Reset both event and activity timers for any tool usage
                 self._last_event_time = time.time()
+                self._last_activity_time = time.time()
+                # If we were in RESTING, move back to REGULAR cadence
+                if self._state == "RESTING":
+                    self._state = "REGULAR"
+                    logger.info("RESTING → REGULAR (tool activity)")
+
         # 5c. Track tokens for context window lifecycle
         if hasattr(self._chat, 'get_last_token_count'):
             self._session_token_count = self._chat.get_last_token_count()
@@ -764,11 +830,15 @@ class PulseLoop:
                 events=events,
                 pulse_count=self._pulse_count,
                 tool_calls=tool_calls_snapshot,
-                spatial_state=self.physics.get_spatial_state(),
+                spatial_state={
+                    **self.physics.get_spatial_state(),
+                    "pulse_state": self._state,
+                },
                 active_toolsets=set(self._active_toolsets),
                 memory_id=thought_memory_id,
                 lagrangian_before=lagrangian_before or {},
                 lagrangian_after=lagrangian_after or {},
+                injected_belief_ids=injected_belief_ids,
             )
             run_hooks(hook_ctx)
         except Exception as e:

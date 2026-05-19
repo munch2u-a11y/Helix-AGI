@@ -1,5 +1,5 @@
 """
-Helix AGI — Cognitive Space
+Helix_main — Cognitive Space
 
 8-dimensional spatial manifold for beliefs and memories. Every belief
 and memory gets a permanent position in 8D space, derived from its
@@ -644,7 +644,16 @@ class CognitiveSpace:
         T = H_here / max(H_baseline, 0.01)
         return float(T)
 
-    # ── Trail Particle Deposition ────────────────────────
+    def invalidate_entropy_baseline(self):
+        """Reset cached baseline entropy so it recomputes on next temperature call.
+
+        Called during context compression — the manifold may have drifted
+        significantly since the last baseline was sampled.
+        """
+        self._mean_entropy = None
+        logger.debug("Entropy baseline invalidated — will recompute on next temperature call")
+
+    # ── Trail Particle Deposition (V6 Phase 2) ────────────────────────
 
     def deposit_trail_particle(
         self,
@@ -730,7 +739,7 @@ class CognitiveSpace:
 
         return particles
 
-    # ── Interaction Potential ─────────────────────────────
+    # ── Interaction Potential (V6 Phase 3) ─────────────────────────────
 
     def compute_interaction_potential(
         self,
@@ -810,6 +819,7 @@ class CognitiveSpace:
         gamma: float = 0.8,
         dt: float = 1.0,
         stimulus_strength: float = 1.0,
+        affect_force: np.ndarray = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Advance the attention center one timestep via force integration.
 
@@ -824,6 +834,10 @@ class CognitiveSpace:
             gamma: Damping coefficient. Higher = more inertia.
             dt: Timestep (normalized, typically 1.0).
             stimulus_strength: Strength of external stimulus force.
+            affect_force: Optional 8D affect bias from the Plutchik
+                emotional field. When present, acts as a 4th force
+                that biases attention toward the emotional steering
+                vector. Strength is pre-scaled by the affect hook.
 
         Returns:
             (new_position, new_velocity)
@@ -839,8 +853,16 @@ class CognitiveSpace:
             position, stimulus_position, stimulus_strength
         )
 
+        # F_affect: emotional steering bias from Plutchik field
+        f_affect = np.zeros(PROJECTION_DIM, dtype=np.float32)
+        if affect_force is not None:
+            f_affect = np.asarray(affect_force, dtype=np.float32)
+            # Ensure correct dimensionality
+            if len(f_affect) != PROJECTION_DIM:
+                f_affect = np.zeros(PROJECTION_DIM, dtype=np.float32)
+
         # Total force
-        f_total = f_grav + f_stab + f_stim
+        f_total = f_grav + f_stab + f_stim + f_affect
 
         # Velocity update with damping (inertia)
         new_velocity = gamma * velocity + dt * f_total
@@ -1224,211 +1246,50 @@ class CognitiveSpace:
 
     # ── Bootstrap ─────────────────────────────────────────────────────
 
-    def bootstrap_from_chroma(self, belief_graph=None, memory=None):
-        """Backfill 8D positions for all existing beliefs and memories.
+    def bootstrap_from_journal(self, belief_graph=None, memory=None):
+        """Bootstrap both beliefs and memories from the unified JSONL journal.
 
-        Called once on first startup when beliefs/memories exist but
-        don't have positions yet. Reads embeddings from ChromaDB
-        collections and projects them to 8D.
-
-        After bootstrap, saves positions back to belief_graph.json
-        and memory.db for persistence.
+        Reads all entries from `cognitive_journal.jsonl` (managed by
+        `MemoryManager`) and populates the space directly.
         """
-        beliefs_added = 0
-        memories_added = 0
+        if self.base_dir is None:
+            logger.warning("CognitiveSpace.bootstrap_from_journal called without base_dir – cannot locate journal.")
+            return 0, 0
 
-        # ── Bootstrap beliefs ──────────────────────────────────────
-        if belief_graph:
-            all_beliefs = belief_graph.get_all_beliefs_flat()
+        from memory.cognitive_journal import CognitiveJournal
+        journal = CognitiveJournal(self.base_dir)
+        entries = journal.load_all()
 
-            # Pass 1: Beliefs that already have 8D positions — load directly
-            beliefs_with_positions = [
-                b for b in all_beliefs if b.get("position_8d")
-            ]
-            for belief in beliefs_with_positions:
-                pos_8d = np.array(belief["position_8d"], dtype=np.float32)
-                # Create synthetic embedding with 8D position in first dims
-                synth_emb = np.zeros(self.embedding_dim, dtype=np.float32)
-                synth_emb[:PROJECTION_DIM] = pos_8d
-
+        b_count = 0
+        m_count = 0
+        for entry in entries:
+            entry_type = entry.get("type")
+            point_id = str(entry.get("id"))
+            position = entry.get("position_8d", [])
+            metadata = entry.get("metadata", {})
+            if not position or len(position) != 8:
+                continue
+            embedding = np.array(position, dtype=np.float32)
+            if entry_type == "belief":
                 self.add_point(
-                    point_id=belief["id"],
-                    embedding=synth_emb,
+                    point_id=point_id,
+                    embedding=embedding,
                     point_type="belief",
-                    confidence=belief.get("confidence", 0.5),
-                    relations_count=len(belief.get("relations", [])),
-                    content=belief.get("content", ""),
-                    weight=belief.get("weight", "surface"),
+                    **metadata,
                 )
-                # Override with exact saved position (not re-projected)
-                if belief["id"] in self._points:
-                    self._points[belief["id"]]["position"] = pos_8d
-                beliefs_added += 1
-
-            if beliefs_with_positions:
-                logger.info(
-                    f"Loaded {len(beliefs_with_positions)} beliefs "
-                    f"from saved 8D positions"
+                b_count += 1
+            elif entry_type == "memory":
+                self.add_point(
+                    point_id=point_id,
+                    embedding=embedding,
+                    point_type="memory",
+                    **metadata,
                 )
-
-            # Pass 2: Beliefs without positions — need ChromaDB embeddings
-            beliefs_needing_positions = [
-                b for b in all_beliefs
-                if not b.get("position_8d")
-            ]
-
-            if beliefs_needing_positions:
-                logger.info(
-                    f"Bootstrapping {len(beliefs_needing_positions)} beliefs "
-                    f"into 8D space..."
-                )
-
-                # Try to get embeddings from Keeper's ChromaDB
-                try:
-                    import chromadb
-                    shadow_dir = Path(belief_graph.data_dir) / "chroma_shadow"
-                    if shadow_dir.exists():
-                        client = chromadb.PersistentClient(path=str(shadow_dir))
-                        collection = client.get_or_create_collection(
-                            name="keeper_seeds",
-                            metadata={"hnsw:space": "cosine"},
-                        )
-
-                        for belief in beliefs_needing_positions:
-                            chroma_id = f"b_{belief['id']}"
-                            try:
-                                result = collection.get(
-                                    ids=[chroma_id],
-                                    include=["embeddings"],
-                                )
-                                if result and len(result.get("embeddings", [])) > 0 and len(result["embeddings"][0]) > 0:
-                                    emb = np.array(result["embeddings"][0], dtype=np.float32)
-
-                                    # Auto-detect embedding dimension on first hit
-                                    if emb.shape[0] != self.embedding_dim:
-                                        logger.info(
-                                            f"Detected embedding dim={emb.shape[0]} "
-                                            f"(expected {self.embedding_dim}). Rebuilding projection."
-                                        )
-                                        self.embedding_dim = emb.shape[0]
-                                        self.projection = CognitiveProjection(
-                                            emb.shape[0], PROJECTION_DIM, PROJECTION_SEED
-                                        )
-                                        if self._proj_path:
-                                            self.projection.save(self._proj_path)
-
-                                    self.add_point(
-                                        point_id=belief["id"],
-                                        embedding=emb,
-                                        point_type="belief",
-                                        confidence=belief.get("confidence", 0.5),
-                                        relations_count=len(belief.get("relations", [])),
-                                        content=belief.get("content", ""),
-                                        weight=belief.get("weight", "surface"),
-                                    )
-
-                                    # Save position back to belief graph
-                                    pos = self.get_position(belief["id"])
-                                    if pos is not None:
-                                        belief_graph.update_belief(
-                                            belief["id"],
-                                            position_8d=pos.tolist(),
-                                        )
-                                    beliefs_added += 1
-
-                            except Exception as e:
-                                logger.debug(f"Skip belief {belief['id']}: {e}")
-
-                        logger.info(f"Bootstrapped {beliefs_added} beliefs into 8D space")
-
-                except ImportError:
-                    logger.warning("ChromaDB not available — cannot bootstrap belief positions")
-                except Exception as e:
-                    logger.warning(f"Belief bootstrap failed: {e}")
-
-        # ── Bootstrap memories ─────────────────────────────────────
-        if memory and hasattr(memory, '_chroma_collection') and memory._chroma_collection:
-            try:
-                collection = memory._chroma_collection
-                # Get all memory IDs and embeddings from ChromaDB
-                # ChromaDB .get() returns all if no filter specified
-                total = collection.count()
-                if total == 0:
-                    logger.info("No memories in ChromaDB to bootstrap")
-                else:
-                    logger.info(f"Bootstrapping {total} memories into 8D space...")
-
-                    # Batch fetch (ChromaDB default limit is high enough)
-                    batch_size = 1000
-                    offset = 0
-                    position_updates = {}
-
-                    while offset < total:
-                        result = collection.get(
-                            include=["embeddings", "metadatas"],
-                            limit=batch_size,
-                            offset=offset,
-                        )
-                        if not result or not result.get("ids"):
-                            break
-
-                        for i, doc_id in enumerate(result["ids"]):
-                            embs = result.get("embeddings", [])
-                            if len(embs) > i and len(embs[i]) > 0:
-                                emb = np.array(result["embeddings"][i], dtype=np.float32)
-
-                                # Auto-detect embedding dim
-                                if emb.shape[0] != self.embedding_dim and beliefs_added == 0:
-                                    logger.info(
-                                        f"Detected embedding dim={emb.shape[0]} from memories"
-                                    )
-                                    self.embedding_dim = emb.shape[0]
-                                    self.projection = CognitiveProjection(
-                                        emb.shape[0], PROJECTION_DIM, PROJECTION_SEED
-                                    )
-                                    if self._proj_path:
-                                        self.projection.save(self._proj_path)
-
-                                meta = result["metadatas"][i] if result.get("metadatas") else {}
-                                self.add_point(
-                                    point_id=doc_id,
-                                    embedding=emb,
-                                    point_type="memory",
-                                    importance=meta.get("importance", 0.5),
-                                    content=doc_id,
-                                )
-
-                                # Collect positions for SQLite batch update
-                                pos = self.get_position(doc_id)
-                                if pos is not None:
-                                    position_updates[doc_id] = pos.tolist()
-
-                                memories_added += 1
-
-                        offset += batch_size
-
-                    # NOTE: save_memory_positions() is not implemented on MemoryManager.
-                    # Positions are persisted via MemoryManager.store(position_8d=...) at
-                    # write time. This bootstrap path (bootstrap_from_chroma) has other
-                    # API mismatches (see connection audit Finding 6) and is not the
-                    # active bootstrap route — PhysicsEngine.bootstrap_from_stores() is.
-                    # if position_updates:
-                    #     memory.save_memory_positions(position_updates)
-
-                    logger.info(f"Bootstrapped {memories_added} memories into 8D space")
-
-            except Exception as e:
-                logger.warning(f"Memory bootstrap failed: {e}")
-
-        # Force tree rebuild after bootstrap
-        if beliefs_added > 0 or memories_added > 0:
+                m_count += 1
+        if b_count > 0 or m_count > 0:
             self._rebuild_tree()
-
-        logger.info(
-            f"Bootstrap complete: {beliefs_added} beliefs + "
-            f"{memories_added} memories = {self.point_count} total points"
-        )
-        return beliefs_added, memories_added
+        logger.info(f"CognitiveSpace bootstrapped from journal: {b_count} beliefs, {m_count} memories, total points={self.point_count}")
+        return b_count, m_count
 
     # ── Persistence ───────────────────────────────────────────────────
 
@@ -1522,7 +1383,7 @@ class CognitiveSpace:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# INTERACTION ENGINE — Affordance Orchestration Layer
+# V6: INTERACTION ENGINE — Affordance Orchestration Layer
 # ═══════════════════════════════════════════════════════════════════════
 #
 # Converts CognitiveSpace.compute_interaction_potential() results

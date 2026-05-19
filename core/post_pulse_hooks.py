@@ -63,6 +63,7 @@ class PostPulseHookContext:
         "thought", "events", "pulse_count", "tool_calls",
         "spatial_state", "active_toolsets",
         "memory_id", "lagrangian_before", "lagrangian_after",
+        "injected_belief_ids",
     )
 
     def __init__(
@@ -76,6 +77,7 @@ class PostPulseHookContext:
         memory_id: int = -1,
         lagrangian_before: Optional[Dict[str, Any]] = None,
         lagrangian_after: Optional[Dict[str, Any]] = None,
+        injected_belief_ids: Optional[List[str]] = None,
     ):
         self.thought = thought
         self.events = events or []
@@ -86,6 +88,7 @@ class PostPulseHookContext:
         self.memory_id = memory_id
         self.lagrangian_before = lagrangian_before or {}
         self.lagrangian_after = lagrangian_after or {}
+        self.injected_belief_ids = injected_belief_ids or []
 
 
 # Type alias for hook functions

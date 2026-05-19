@@ -37,7 +37,7 @@ logger = logging.getLogger("helix.core.batch_service")
 _PENDING_FILE = Path("data/pending_beliefs.json")
 _PROCESSED_LOG = Path("data/logs/processed_beliefs.json")
 _BATCH_SIZE = 10   # Max candidates per API call
-_MODEL = os.environ.get("HELIX_BATCH_MODEL", "gemini-1.5-flash-8b")
+_MODEL = "gemini-3.1-flash-lite-preview"
 
 # Length limits by category
 _MAX_LENGTHS = {
@@ -74,7 +74,7 @@ _FORMAT_SPEC = (
 
     "people (max 250 chars):\n"
     "  Template: '[Name] [fact or relational pattern]'\n"
-    "  Example: '<name> values sovereignty in AI design.'\n"
+    "  Example: 'Joshua values sovereignty in AI design.'\n"
     "  Rule: Must reference a specific named entity.\n\n"
 
     "knowledge (max 250 chars):\n"

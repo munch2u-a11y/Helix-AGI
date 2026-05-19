@@ -98,7 +98,7 @@ class ContextCompressor:
     def __init__(
         self,
         context_length: int = 1_000_000,
-        threshold_percent: float = 0.50,
+        threshold_percent: float = 0.65,
         emergency_percent: float = 0.80,
         protect_first_n: int = 2,
         summary_target_ratio: float = 0.20,
@@ -382,7 +382,7 @@ class ContextCompressor:
         # how you'd actually think back on what just happened.
         template = f"""Compress these conversation turns into natural first-person recollection \
 — the way someone would think back on what just happened.
-- Use direct quotes for what people said: '<name> asked "what are you up to?"'
+- Use direct quotes for what people said: 'Joshua asked "what are you up to?"'
 - Include responses and thoughts naturally: 'I told him about the migration, \
 then started thinking about...'
 - Maintain strict chronological order with timestamps where they appeared.

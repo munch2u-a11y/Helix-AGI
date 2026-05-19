@@ -47,12 +47,23 @@ class Preconscious:
     the gravitational neighborhood of the current thought.
     """
 
-    # How many memory points to pull from the spatial neighborhood
-    NEIGHBORHOOD_K = 6
+    # Neighborhood range — dynamically selected per-pulse based on
+    # manifold density. The existing TARGET_BUDGET in
+    # _pull_spatial_neighborhood still acts as the hard token cap.
+    NEIGHBORHOOD_K_MIN = 4
+    NEIGHBORHOOD_K_MAX = 16
     # How many temporal chain entries per matched memory
     CHAIN_WINDOW = 3
     # Max beliefs per category to inject
     BELIEFS_PER_CATEGORY = 3
+
+    # Short tool keywords that should always trigger toolset awareness
+    # despite being <= 3 chars (bypasses the length filter)
+    SHORT_TOOL_WHITELIST = {"git", "ssh", "pip", "npm", "sql", "api", "web", "rss", "cli"}
+
+    # Gravity-ranked belief injection parameters (replaces fixed token budgets)
+    MAX_BELIEFS_PER_QUERY = 15   # Hard cap per seed query
+    MIN_BELIEFS_PER_QUERY = 2    # Always include at least the top N
 
     def __init__(
         self,
@@ -217,6 +228,14 @@ class Preconscious:
             if somatic:
                 parts.append(somatic)
 
+        # ── 6b. Affect Field (Emotional Reactivation) ─────────────────
+        #    Surfaced memories from Plutchik wave packet interference.
+        #    When emotional patterns constructively interfere and overlap
+        #    with currently-retrieved memories, dormant memories surface.
+        affect_block = self._pull_affect_state()
+        if affect_block:
+            parts.append(affect_block)
+
         # ── 7. Spatial State (ambient) ───────────────────────────────
         spatial = self.physics.get_spatial_state()
         gamma = spatial.get("gamma", 0.5)
@@ -320,16 +339,6 @@ class Preconscious:
         if count:
             logger.debug(f"Lexicon blacklist reset ({count} entries cleared)")
 
-    def reset_belief_history(self):
-        """Clear the rolling belief history window.
-
-        Called when the context window is reset or compressed so that
-        belief injection starts fresh, preventing stale beliefs from
-        being excluded after a reset.
-        """
-        self._prev_pulse_beliefs.clear()
-        logger.debug("Preconscious belief history reset (rolling window cleared)")
-
     # ── Somatic Awareness (Stability Sentinel) ────────────────────────
 
     def _pull_somatic_state(self) -> str:
@@ -377,6 +386,83 @@ class Preconscious:
             logger.debug("Somatic state read failed: %s", e)
             return ""
 
+    # ── Affect Field Awareness ─────────────────────────────────────────
+
+    def _pull_affect_state(self) -> str:
+        """Read the Plutchik affect field and format for injection.
+
+        Returns dominant affect, field intensity, and any emotionally-
+        surfaced memory content. The affect field is a wave packet
+        interference system — constructive interference between
+        similar emotional events surfaces related memories.
+        """
+        try:
+            from core.affect_hook import get_last_result
+        except ImportError:
+            return ""
+
+        result = get_last_result()
+        if result is None:
+            return ""
+
+        parts = []
+
+        # Dominant affect (only if non-neutral)
+        if result.dominant_affect != "neutral":
+            parts.append(
+                f"(affect: {result.dominant_affect}"
+                f" | intensity={result.field_intensity:.2f}"
+                f" | packets={result.contributing_packets})"
+            )
+
+        # Boredom/novelty signal
+        if result.cognitive_diversity_signal >= 0.3:
+            parts.append(
+                f"(novelty-signal: {result.cognitive_diversity_signal:.2f}"
+                f" — seeking cognitive diversity)"
+            )
+
+        # Surfaced memories from emotional reactivation
+        if result.surfaced_memories:
+            # Look up content for surfaced memory/belief IDs
+            surfaced_content = []
+            for mem_id in result.surfaced_memories[:3]:  # Cap at 3
+                content = self._resolve_memory_content(mem_id)
+                if content:
+                    surfaced_content.append(content)
+
+            if surfaced_content:
+                parts.append(
+                    "(emotionally resonant: "
+                    + " | ".join(surfaced_content)
+                    + ")"
+                )
+
+        return "\n".join(parts) if parts else ""
+
+    def _resolve_memory_content(self, memory_id: str) -> str:
+        """Look up content for a memory/belief ID.
+
+        Checks both the belief store and memory manager.
+        Returns a short content string or empty.
+        """
+        # Try belief store first
+        if self.belief_store:
+            belief = self.belief_store.get_belief(memory_id)
+            if belief:
+                return belief.get("content", "")[:100]
+
+        # Try memory manager
+        if self.memory:
+            try:
+                mem = self.memory.get_memory(memory_id)
+                if mem:
+                    return mem.get("content", "")[:100]
+            except Exception:
+                pass
+
+        return ""
+
     # ── Toolset Awareness ─────────────────────────────────────────────
 
     def _toolset_awareness(self, neighborhood_content: str) -> str:
@@ -417,10 +503,12 @@ class Preconscious:
                 )
 
             # Only match keywords > 3 chars to avoid false positives
-            # on short words like "get", "set", "run"
+            # on short words like "get", "set", "run" — UNLESS the
+            # keyword is in our explicit whitelist of known tool names.
             matches = [
                 kw for kw in ts_keywords
-                if len(kw) > 3 and kw in content_lower
+                if (len(kw) > 3 or kw in self.SHORT_TOOL_WHITELIST)
+                and kw in content_lower
             ]
             if matches:
                 desc = ts.get("description", "")
@@ -495,6 +583,31 @@ class Preconscious:
 
     # ── Spatial Neighborhood ─────────────────────────────────────────
 
+    def _compute_dynamic_k(self) -> int:
+        """Compute neighborhood size based on local manifold density.
+
+        Uses the gravity field's active anchor count as a density proxy.
+        More active anchors = denser region = more candidates worth pulling.
+        The existing 500-token budget in _pull_spatial_neighborhood still
+        acts as the hard cap on what actually gets injected.
+        """
+        try:
+            field = self.physics.spatial_mind.belief_space.gravity_field
+            # Count anchors with non-trivial potential
+            import numpy as np
+            active = int((field.potential > 0.01).sum())
+            total = field.n_anchors
+            density_ratio = active / max(total, 1)
+
+            # Scale K linearly between min and max based on density
+            k = int(
+                self.NEIGHBORHOOD_K_MIN
+                + density_ratio * (self.NEIGHBORHOOD_K_MAX - self.NEIGHBORHOOD_K_MIN)
+            )
+            return max(self.NEIGHBORHOOD_K_MIN, min(k, self.NEIGHBORHOOD_K_MAX))
+        except Exception:
+            return self.NEIGHBORHOOD_K_MIN
+
     def _pull_spatial_neighborhood(self, trigger_text: str) -> str:
         """Query the 8D gravitational field for nearby memory points.
 
@@ -507,10 +620,13 @@ class Preconscious:
         if not trigger_text:
             return ""
 
+        # Dynamic K: scale with manifold density around current focus
+        k = self._compute_dynamic_k()
+
         # Query the physics engine's gravitational neighborhood
         neighbors = self.physics.query_neighborhood(
             focus_text=trigger_text,
-            k=self.NEIGHBORHOOD_K,
+            k=k,
             exclude_trails=True,
         )
 
@@ -631,19 +747,21 @@ class Preconscious:
     def _gravity_query(
         self,
         seed_text: str,
-        token_budget: int,
         exclude: set,
+        max_results: int = 15,
+        min_results: int = 2,
     ) -> List[Dict[str, Any]]:
         """Score cached beliefs by Verlinde gravity against a seed text.
 
-        Returns a list of {content, gravity, category} sorted by gravity
-        descending, filtered against `exclude` set, within `token_budget`.
-        No hard truncation — each belief is included in full or not at all.
+        Returns the top beliefs sorted by gravity descending. The gravity
+        ranking itself is the filter — no token budgets. The strongest
+        gravitational pulls are always included, capped at max_results.
 
         Args:
             seed_text: Text to embed as the query center.
-            token_budget: Max tokens for this query's results.
             exclude: Set of content strings to skip (previous pulse, etc).
+            max_results: Hard cap on returned beliefs.
+            min_results: Always return at least this many (if available).
         """
         import numpy as np
 
@@ -674,20 +792,11 @@ class Preconscious:
                 "mass": b["mass"],
             })
 
-        # Sort by gravity descending
+        # Sort by gravity descending — strongest pulls first
         scored.sort(key=lambda x: x["gravity"], reverse=True)
 
-        # Select within token budget — no hard truncation
-        selected = []
-        token_count = 0
-        for b in scored:
-            est_tokens = len(b["content"].split())
-            if token_count + est_tokens > token_budget:
-                continue  # skip this one, try smaller ones
-            selected.append(b)
-            token_count += est_tokens
-            if len(selected) >= 20:
-                break
+        # Take the top N by gravity, guaranteeing at least min_results
+        selected = scored[:max(max_results, min_results)]
 
         return selected
 
@@ -745,9 +854,6 @@ class Preconscious:
         already injected to avoid repetition.
         No hard truncation — full belief content or skip entirely.
         """
-        THOUGHT_BUDGET = 200
-        EVENT_BUDGET = 300
-
         # Ensure belief positions are cached
         self._ensure_belief_cache()
         if not self._belief_cache:
@@ -758,11 +864,12 @@ class Preconscious:
         if lexicon_exclude:
             exclude |= lexicon_exclude
 
-        # Query 1: previous thought seed
+        # Query 1: previous thought seed — gravity-ranked, no token budget
         thought_beliefs = self._gravity_query(
             seed_text=previous_thought,
-            token_budget=THOUGHT_BUDGET,
             exclude=exclude,
+            max_results=self.MAX_BELIEFS_PER_QUERY,
+            min_results=self.MIN_BELIEFS_PER_QUERY,
         )
 
         # Query 2: incoming events seed (if any)
@@ -773,8 +880,9 @@ class Preconscious:
             thought_contents = {b["content"] for b in thought_beliefs}
             event_beliefs = self._gravity_query(
                 seed_text=events_text,
-                token_budget=EVENT_BUDGET,
                 exclude=exclude | thought_contents,
+                max_results=self.MAX_BELIEFS_PER_QUERY,
+                min_results=self.MIN_BELIEFS_PER_QUERY,
             )
 
         # Merge and deduplicate (heavier wins on collision)
