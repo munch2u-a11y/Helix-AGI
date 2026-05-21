@@ -152,6 +152,7 @@ class SpatialMind:
         thought_embedding: np.ndarray,
         incoming_embedding: np.ndarray = None,
         agent_age_seconds: float = 3600.0,
+        cluster_centroid: np.ndarray = None,
     ) -> str:
         """Called once per heartbeat. Returns raw context to inject.
 
@@ -165,20 +166,32 @@ class SpatialMind:
             thought_embedding: Embedding of the conscious model's last output.
             incoming_embedding: Embedding of new stimulus (message, event).
             agent_age_seconds: Helix's lifetime for mass computation.
+            cluster_centroid: Optional 8D weighted centroid of the belief
+                clusters selected by the preconscious. When provided, this
+                is used as the stimulus position instead of averaging the
+                raw thought and incoming embeddings. This ensures attention
+                steers toward where the actual retrieved knowledge lives,
+                not toward an artificial midpoint between text embeddings.
 
         Returns:
             Raw context string — injected directly into the prompt.
         """
-        # 1. Project thought to 8D as stimulus position
-        stimulus_pos = self.belief_space.projection.project(thought_embedding)
+        # 1. Determine stimulus position
+        if cluster_centroid is not None:
+            # Preconscious provided the centroid of actual retrieved clusters.
+            # Use it directly — this is where the knowledge lives.
+            stimulus_pos = np.asarray(cluster_centroid, dtype=np.float32)
+            stimulus_strength = 1.5  # Strong — we know where we want to go
+        else:
+            # Fallback: project raw thought to 8D
+            stimulus_pos = self.belief_space.projection.project(thought_embedding)
+            stimulus_strength = 1.0
 
-        # If we have incoming stimulus, blend it as a stronger force
-        stimulus_strength = 1.0
-        if incoming_embedding is not None:
-            incoming_pos = self.belief_space.projection.project(incoming_embedding)
-            # Combined stimulus: average of thought and incoming
-            stimulus_pos = 0.5 * (stimulus_pos + incoming_pos)
-            stimulus_strength = 1.5  # External stimulus is slightly stronger
+            # If we have incoming stimulus, blend as a stronger force
+            if incoming_embedding is not None:
+                incoming_pos = self.belief_space.projection.project(incoming_embedding)
+                stimulus_pos = 0.5 * (stimulus_pos + incoming_pos)
+                stimulus_strength = 1.5
 
         # 2. Get Sentinel's Ω for stability coupling (λ)
         omega = 0.5  # Default neutral

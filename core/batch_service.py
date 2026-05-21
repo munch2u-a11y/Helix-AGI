@@ -74,7 +74,7 @@ _FORMAT_SPEC = (
 
     "people (max 250 chars):\n"
     "  Template: '[Name] [fact or relational pattern]'\n"
-    "  Example: 'Joshua values sovereignty in AI design.'\n"
+    "  Example: 'Jean-Luc values sovereignty in AI design.'\n"
     "  Rule: Must reference a specific named entity.\n\n"
 
     "knowledge (max 250 chars):\n"

@@ -1,5 +1,5 @@
 """
-Helix — Preconscious System (Spatial-Gravitational Memory Query)
+Helix — Preconscious System (Concept-Based Spatial-Gravitational Memory Query)
 
 The preconscious is the bridge between the spatial mind and the
 conscious LLM. On every pulse, it queries the 8D gravitational
@@ -8,13 +8,13 @@ beliefs, and state — NOT keyword matches, but the gravitational
 neighborhood around the current focus.
 
 How it works:
-  1. Takes the trigger text (last thought or incoming event)
-  2. Embeds it into 8D cognitive space via the physics engine
-  3. Queries the gravitational neighborhood:
-     - Nearby memory points scored by mass × temperature / distance²
-     - Temporal chains (what preceded/followed matched memories)
-  4. Pulls the heaviest relevant beliefs from the belief store
-  5. Adds scratchpad reminders and contact context
+  1. Takes the trigger text (last thought + incoming events)
+  2. Extracts 1-5 key concepts via RAKE-style keyphrase extraction
+  3. Embeds each concept independently into 8D cognitive space
+  4. Runs independent gravity queries centered on each concept:
+     - Nearby beliefs scored by mass × temperature / distance²
+     - No overlap between concept clusters (rolling blacklist)
+  5. Pulls lexicon matches, scratchpad, and contact context
   6. Formats everything as natural language "peripheral awareness"
 
 The conscious model receives this each pulse as its grounding.
@@ -35,6 +35,7 @@ from datetime import datetime
 from memory.memory_manager import MemoryManager
 from memory.belief_store import BeliefStore
 from core.physics_engine import PhysicsEngine
+from core.concept_extractor import ConceptExtractor
 
 logger = logging.getLogger("helix.core.preconscious")
 
@@ -98,11 +99,22 @@ class Preconscious:
         # to avoid repeating the same beliefs in consecutive pulses.
         self._prev_pulse_beliefs = []  # list of sets, each containing content strings from previous pulses
 
+        # Weighted centroid of the last pulse's selected belief clusters.
+        # Passed to the physics engine to steer attention toward actual
+        # knowledge locations rather than raw text midpoints.
+        self._last_cluster_centroid = None
+
         # Lexicon — priority term-matched dictionary loaded once.
         # Scanned every pulse BEFORE the 8D gravity query.
         self._lexicon_lookup: Dict[str, dict] = {}  # term_lower → entry
         self._lexicon_blacklist: set = set()         # entry IDs already injected this context window
         self._load_lexicon()
+
+        # Concept extractor — RAKE-style keyphrase extraction.
+        # Initialized with lexicon keys so it can separate known entities
+        # from general concepts during extraction.
+        lexicon_keys = set(self._lexicon_lookup.keys())
+        self._concept_extractor = ConceptExtractor(lexicon_keys=lexicon_keys)
 
     def _load_lexicon(self):
         """Load lexicon.json and build a case-insensitive term→entry lookup.
@@ -144,13 +156,17 @@ class Preconscious:
     ) -> Tuple[str, List[str]]:
         """Build the peripheral awareness block for a single pulse.
 
-        Called once per pulse with two separate seeds:
-          - previous_thought: the model's last output (always present)
-          - incoming_events: any new messages/events (may be empty)
+        Called once per pulse. Assembles context from multiple layers:
+          0. Lexicon — fast string match for known terms (priority)
+          1. Spatial neighborhood — gravitational memory recall
+          2. Belief grounding — concept-extracted independent gravity queries
+          3. Short-term memory, scratchpad, contact context
+          4. Somatic, affect, spatial state
 
-        Each seed generates its own gravity query with separate token
-        budgets, then results are merged, deduped, and filtered against
-        the previous pulse's beliefs.
+        The belief grounding layer (step 2) extracts 1-5 key concepts
+        from the combined trigger text and runs independent gravity
+        queries centered on each concept's 8D position. This replaces
+        the previous two-seed approach that created artificial midpoints.
 
         Args:
             previous_thought: The model's last thought output.
@@ -161,6 +177,9 @@ class Preconscious:
             Tuple containing:
               - A natural language string for injection into the pulse message.
               - A list of belief IDs that were surfaced (for provenance tracking).
+              - An optional 8D numpy array: the weighted centroid of the
+                selected belief clusters (used to steer the spatial mind's
+                attention center toward actual knowledge, not raw text midpoints).
         """
         parts = []
         injected_belief_ids = []
@@ -256,7 +275,7 @@ class Preconscious:
             parts.append(f"(trail: {flash_text})")
 
         if not parts:
-            return "", []
+            return "", [], None
 
         inner = "\n".join(parts)
         # Wrap in context fencing so the LLM distinguishes recalled
@@ -268,7 +287,7 @@ class Preconscious:
             "from the spatial mind.]\n\n"
             f"{inner}\n"
             "</spatial-awareness>"
-        ), injected_belief_ids
+        ), injected_belief_ids, self._last_cluster_centroid
 
     # ── Lexicon Match ─────────────────────────────────────────────────
 
@@ -447,15 +466,19 @@ class Preconscious:
         Returns a short content string or empty.
         """
         # Try belief store first
-        if self.belief_store:
-            belief = self.belief_store.get_belief(memory_id)
-            if belief:
-                return belief.get("content", "")[:100]
+        if self.beliefs:
+            try:
+                belief = self.beliefs.get_belief(memory_id)
+                if belief:
+                    return belief.get("content", "")[:100]
+            except Exception:
+                pass
 
-        # Try memory manager
+        # Try memory manager (journal-backed)
         if self.memory:
             try:
-                mem = self.memory.get_memory(memory_id)
+                entries = self.memory.journal.latest_by_id()
+                mem = entries.get(memory_id)
                 if mem:
                     return mem.get("content", "")[:100]
             except Exception:
@@ -790,6 +813,7 @@ class Preconscious:
                 "gravity": gravity,
                 "category": b["category"],
                 "mass": b["mass"],
+                "position_8d": b["position_8d"],
             })
 
         # Sort by gravity descending — strongest pulls first
@@ -843,51 +867,75 @@ class Preconscious:
         incoming_events: Optional[List[str]] = None,
         lexicon_exclude: Optional[set] = None,
     ) -> Tuple[str, List[str]]:
-        """Pull gravity-ranked beliefs for per-pulse context injection.
+        """Pull gravity-ranked beliefs via per-concept independent queries.
 
-        Two separate gravity queries with independent token budgets:
-          - previous_thought seed: 200 token budget (lighter)
-          - incoming_events seed:  300 token budget (heavier, if present)
+        Instead of embedding the entire thought and entire events as two
+        monolithic seeds (which creates an artificial midpoint centroid
+        that collects noise from between concept clusters), we:
 
-        Results are merged, deduplicated (heavier wins), and filtered
-        against the previous pulse's beliefs and any lexicon summaries
-        already injected to avoid repetition.
-        No hard truncation — full belief content or skip entirely.
+          1. Extract 1-5 key concepts from the combined trigger text.
+          2. Embed each concept independently → 8D position.
+          3. Run a separate gravity query centered on each concept.
+          4. Merge, deduplicate, and filter against the rolling blacklist.
+
+        Each concept acts as its own mini gravity center. The existing
+        T × M / d² formula stays intact — we only change WHAT gets
+        embedded as query seeds, not HOW gravity is computed.
         """
         # Ensure belief positions are cached
         self._ensure_belief_cache()
         if not self._belief_cache:
             return "", []
 
-        # Exclude beliefs from the previous pulse + lexicon summaries
+        # Build combined trigger text for concept extraction
+        trigger_text = previous_thought
+        if incoming_events:
+            trigger_text = " ".join(incoming_events) + " " + previous_thought
+
+        # Extract key concepts (dynamic budget based on input richness)
+        extraction = self._concept_extractor.extract(trigger_text)
+        concepts = extraction["concepts"]
+        budget = extraction["budget"]
+
+        if not concepts:
+            # Fallback: if extractor finds nothing substantive, use the
+            # raw trigger (truncated) as a single seed. This covers edge
+            # cases like very short inputs or heavy stop-word text.
+            concepts = [trigger_text[:200]] if trigger_text.strip() else []
+
+        if not concepts:
+            return "", []
+
+        # Exclude beliefs from the previous 3 pulses + lexicon summaries
         exclude = set().union(*self._prev_pulse_beliefs) if self._prev_pulse_beliefs else set()
         if lexicon_exclude:
             exclude |= lexicon_exclude
 
-        # Query 1: previous thought seed — gravity-ranked, no token budget
-        thought_beliefs = self._gravity_query(
-            seed_text=previous_thought,
-            exclude=exclude,
-            max_results=self.MAX_BELIEFS_PER_QUERY,
-            min_results=self.MIN_BELIEFS_PER_QUERY,
+        # Run independent gravity queries per concept
+        all_concept_beliefs = []
+        seen_contents = set(exclude)  # rolling blacklist across concepts
+
+        # Distribute the belief budget across concepts
+        per_concept_max = max(
+            self.MIN_BELIEFS_PER_QUERY,
+            self.MAX_BELIEFS_PER_QUERY // max(len(concepts), 1),
         )
 
-        # Query 2: incoming events seed (if any)
-        event_beliefs = []
-        if incoming_events:
-            events_text = " ".join(incoming_events)
-            # Also exclude anything already selected by thought query
-            thought_contents = {b["content"] for b in thought_beliefs}
-            event_beliefs = self._gravity_query(
-                seed_text=events_text,
-                exclude=exclude | thought_contents,
-                max_results=self.MAX_BELIEFS_PER_QUERY,
+        for concept in concepts:
+            concept_beliefs = self._gravity_query(
+                seed_text=concept,
+                exclude=seen_contents,
+                max_results=per_concept_max,
                 min_results=self.MIN_BELIEFS_PER_QUERY,
             )
+            # Add to rolling blacklist so the next concept doesn't
+            # pull the same beliefs (no overlap between clusters)
+            for b in concept_beliefs:
+                seen_contents.add(b["content"])
+            all_concept_beliefs.extend(concept_beliefs)
 
-        # Merge and deduplicate (heavier wins on collision)
-        merged = thought_beliefs + event_beliefs
-        merged = self._deduplicate_beliefs(merged)
+        # Deduplicate across concepts (heavier wins on collision)
+        merged = self._deduplicate_beliefs(all_concept_beliefs)
 
         # Re-sort merged results by gravity
         merged.sort(key=lambda x: x["gravity"], reverse=True)
@@ -925,11 +973,38 @@ class Preconscious:
         if len(self._prev_pulse_beliefs) > 3:
             self._prev_pulse_beliefs.pop(0)
 
-        logger.debug(
-            f"Gravity-ranked beliefs: {len(merged)} selected "
-            f"({len(thought_beliefs)} from thought, "
-            f"{len(event_beliefs)} from events)"
+        logger.info(
+            f"Concept-query beliefs: {len(merged)} selected "
+            f"from {len(concepts)} concepts (budget={budget}): "
+            f"{concepts[:3]}"
         )
+        for b in merged[:5]:
+            logger.info(
+                f"  ↳ g={b.get('gravity',0):.2f} m={b.get('mass',0):.1f} "
+                f"[{b.get('category','')}] {b.get('content','')[:80]}"
+            )
+
+        # Compute weighted centroid of selected clusters for attention steering.
+        # This replaces the raw text midpoint with the actual location of
+        # the knowledge that was retrieved.
+        import numpy as np
+        if merged:
+            positions = []
+            weights = []
+            for b in merged:
+                pos = b.get("position_8d")
+                if pos is not None:
+                    positions.append(pos)
+                    weights.append(b.get("gravity", 1.0))
+            if positions:
+                positions = np.array(positions, dtype=np.float32)
+                weights = np.array(weights, dtype=np.float32)
+                weights /= weights.sum() + 1e-8
+                self._last_cluster_centroid = (positions * weights[:, np.newaxis]).sum(axis=0)
+            else:
+                self._last_cluster_centroid = None
+        else:
+            self._last_cluster_centroid = None
 
         # Return formatted string and list of surfaced IDs
         surfaced_ids = [b.get("id", "") for b in merged if b.get("id")]

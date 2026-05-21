@@ -67,15 +67,19 @@ class CoOccurrenceTracker:
         self,
         belief_store,
         data_dir: str = "data",
+        cognitive_space=None,
     ):
         """Initialize the co-occurrence tracker.
 
         Args:
             belief_store: BeliefStore instance for reading/writing relations
             data_dir: Directory for state persistence
+            cognitive_space: Optional CognitiveSpace instance for Hebbian
+                drift (updating 8D positions of related beliefs)
         """
         self.belief_store = belief_store
         self.data_dir = Path(data_dir)
+        self.cognitive_space = cognitive_space
         self.co_counts: Dict[frozenset, float] = defaultdict(float)
         self._pulses_since_cluster = 0
         self._last_decay_day = time.localtime().tm_yday
@@ -300,6 +304,10 @@ class CoOccurrenceTracker:
         """Add bidirectional relations between all beliefs in a cluster.
 
         Only adds new relations — existing relations are preserved.
+        After wiring, applies Hebbian drift: related beliefs are pulled
+        slightly closer together in 8D space, proportional to their
+        co-occurrence count.
+
         Returns the number of new relations added.
 
         Args:
@@ -324,7 +332,74 @@ class CoOccurrenceTracker:
                     len(new_relations), bid, len(merged),
                 )
 
+        # Apply Hebbian drift: pull related beliefs closer in 8D space
+        if self.cognitive_space and added > 0:
+            self._apply_hebbian_drift(cluster_ids)
+
         return added
+
+    def _apply_hebbian_drift(self, cluster_ids: List[str]) -> None:
+        """Apply positional drift to pull co-occurring beliefs closer in 8D.
+
+        For each pair in the cluster, compute a small attractive displacement
+        proportional to the pair's co-occurrence count. This makes the manifold
+        self-organizing: beliefs that genuinely co-occur drift together over
+        time, improving gravity query accuracy.
+
+        The drift is localized and relative:
+          - Proportional to the specific pair's co-occurrence strength
+          - Normalized by current distance (closer pairs drift less)
+          - No arbitrary global cap — manifold degeneration is prevented
+            by the concept extractor (independent queries) and mass
+            decoupling (no self-reinforcing inflation)
+        """
+        import numpy as np
+
+        # Base drift fraction per unit of co-occurrence
+        # At co_count=3 (threshold), drift = 0.3%
+        # At co_count=10, drift = 1.0%
+        # At co_count=30, drift = 3.0%
+        DRIFT_PER_COCOUNT = 0.001  # 0.1% per co-occurrence count
+
+        drifted = 0
+        for id_a, id_b in combinations(cluster_ids, 2):
+            pair = frozenset({id_a, id_b})
+            co_count = self.co_counts.get(pair, 0)
+
+            if co_count < CO_OCCURRENCE_THRESHOLD:
+                continue  # Only drift for genuinely co-occurring pairs
+
+            pt_a = self.cognitive_space.get_point(id_a)
+            pt_b = self.cognitive_space.get_point(id_b)
+
+            if pt_a is None or pt_b is None:
+                continue
+
+            pos_a = pt_a["position"]
+            pos_b = pt_b["position"]
+
+            # Vector from A to B
+            delta = pos_b - pos_a
+            dist = float(np.linalg.norm(delta))
+
+            if dist < 1e-6:
+                continue  # Already co-located
+
+            # Drift fraction scales with co-occurrence count
+            drift_frac = DRIFT_PER_COCOUNT * co_count
+
+            # Apply symmetric drift: both beliefs move toward each other
+            displacement = delta * (drift_frac / 2.0)
+            pt_a["position"] = (pos_a + displacement).astype(np.float32)
+            pt_b["position"] = (pos_b - displacement).astype(np.float32)
+            drifted += 1
+
+        if drifted > 0:
+            self.cognitive_space._tree_dirty = True
+            logger.info(
+                "Hebbian drift: %d pairs shifted in 8D space",
+                drifted,
+            )
 
     # ── Decay ────────────────────────────────────────────────────────
 
@@ -439,6 +514,7 @@ _tracker: Optional[CoOccurrenceTracker] = None
 def register_co_occurrence_hook(
     belief_store,
     data_dir: str = "data",
+    cognitive_space=None,
 ) -> CoOccurrenceTracker:
     """Create and register the co-occurrence post-pulse hook.
 
@@ -447,6 +523,7 @@ def register_co_occurrence_hook(
     Args:
         belief_store: BeliefStore instance
         data_dir: Directory for state persistence
+        cognitive_space: Optional CognitiveSpace instance for Hebbian drift
 
     Returns:
         The CoOccurrenceTracker instance (for Curator access)
@@ -458,6 +535,7 @@ def register_co_occurrence_hook(
     _tracker = CoOccurrenceTracker(
         belief_store=belief_store,
         data_dir=data_dir,
+        cognitive_space=cognitive_space,
     )
 
     def _co_occurrence_hook(ctx) -> None:

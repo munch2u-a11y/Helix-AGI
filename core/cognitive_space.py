@@ -1026,14 +1026,20 @@ class CognitiveSpace:
     #   The LLM's resolution IS the gravitational action.
 
     def _compute_structural_mass(self, point_data: dict) -> float:
-        """A point's rest mass — purely structural, never changes.
+        """A point's rest mass — purely intrinsic, never changes.
 
-        Mass = c × (1 + |N| / N̄)
+        Mass = c  (confidence for beliefs, importance for memories)
 
-        This is the N in Verlinde's holographic principle:
-        how many information bits this concept contributes to
-        the holographic boundary. More connections = more bits
-        = more entropy displaced when attention approaches.
+        Individual mass reflects only the intrinsic quality of the
+        belief or memory — NOT how many connections it has. Cluster
+        gravity emerges naturally from spatial density: when multiple
+        related beliefs live near each other in 8D space, the gravity
+        field's anchor splatting concentrates more potential in that
+        region. The cluster pulls harder because it has more mass
+        points, not because individual points are heavier.
+
+        This prevents the self-reinforcing loop where:
+          relations → mass ↑ → gravity ↑ → more co-injection → more relations
 
         encoding_omega and encoding_s_total are preserved as
         spin data (emotional signature at formation) but do NOT
@@ -1045,10 +1051,7 @@ class CognitiveSpace:
         else:
             c = point_data.get("importance", 0.5)
 
-        n_connections = point_data.get("relations_count", 0)
-        n_mean = getattr(self, "_mean_connections", 1.0) or 1.0
-
-        return max(0.01, c * (1.0 + n_connections / n_mean))
+        return max(0.01, c)
 
     def _compute_temperature(self, point_data: dict) -> float:
         """A point's temperature — recency heat that radiates away.

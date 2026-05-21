@@ -79,9 +79,9 @@ graph TD
 4. A **rolling blacklist** (`lexicon_blacklist`) prevents the same entry from being re-injected within the current context window. The blacklist is cleared on context compression.
 
 **Why it exists:**
-The lexicon represents **ground-truth relational knowledge** that must never be confused or approximated. When someone mentions "Jane" or "The Johnson File" Helix needs the *exact* relational profile — not a gravity-ranked approximation that might surface a tangentially related memory. The lexicon is Helix's authoritative subjective dictionary.
+The lexicon represents **ground-truth relational knowledge** that must never be confused or approximated. When someone mentions "Beverly" or "The Borg File" Helix needs the *exact* relational profile — not a gravity-ranked approximation that might surface a tangentially related memory. The lexicon is Helix's authoritative subjective dictionary.
 
-**Token economics:** A lexicon hit for "Jane" injects ~120 tokens of curated context. Without it, the spatial system would need to surface 3-5 separate beliefs to reconstruct the same information, costing ~300+ tokens with lower fidelity.
+**Token economics:** A lexicon hit for "Beverly" injects ~120 tokens of curated context. Without it, the spatial system would need to surface 3-5 separate beliefs to reconstruct the same information, costing ~300+ tokens with lower fidelity.
 
 ---
 

@@ -212,7 +212,7 @@ def setup_helix(data_dir: str = "data"):
 
     # ── Sentinel → PulseLoop event bridge ────────────────────────────
     #    Stability events (critical, warning, context_awareness) flow
-    #    into the pulse loop's event queue so the agent can consciously
+    #    into the pulse loop's event queue so Helix can consciously
     #    perceive stability changes.
     sentinel.set_event_callback(pulse_loop.emit)
 
@@ -235,11 +235,40 @@ def setup_helix(data_dir: str = "data"):
     orchestrator = LLMOrchestrator(pulse_loop, memory_manager)
 
     # ── 7. Background Daemon (Dream Engine) ────────────────────────
+    #    The Curator needs an llm_client with .generate(prompt, system_instruction)
+    #    for Phase 2 (belief extraction) and Phase 3 (compound synthesis).
+    curator_llm = None
+    try:
+        from google import genai as _genai
+        _curator_client = _genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+
+        class _CuratorLLM:
+            """Lightweight wrapper giving the Curator a .generate() interface."""
+            _model = "gemini-2.5-flash"
+            def generate(self, prompt: str, system_instruction: str = ""):
+                from google.genai import types as _types
+                config = _types.GenerateContentConfig(
+                    system_instruction=system_instruction or None,
+                    temperature=0.3,
+                    max_output_tokens=2048,
+                )
+                resp = _curator_client.models.generate_content(
+                    model=self._model,
+                    contents=[_types.Content(role="user", parts=[_types.Part(text=prompt)])],
+                    config=config,
+                )
+                return resp.candidates[0].content.parts[0]
+
+        curator_llm = _CuratorLLM()
+        print("  Curator LLM: ready (gemini-2.5-flash)")
+    except Exception as e:
+        print(f"  Curator LLM: unavailable ({e})")
+
     daemon = BackgroundDaemon(
         physics_engine=physics,
-
         belief_store=belief_store,
         memory_manager=memory_manager,
+        llm_client=curator_llm,
         data_dir=data_dir,
     )
 
@@ -271,7 +300,28 @@ def setup_helix(data_dir: str = "data"):
     set_engagement_deps(sentinel, physics_engine=physics)
     register_hook(engagement_hook, name="engagement_monitor")
 
-    print("  Post-pulse hooks: registered (workflow_detector, belief_detector, engagement_monitor)")
+    # Co-occurrence hook: Hebbian wiring — tracks belief co-injection and
+    # periodically clusters co-occurring beliefs to wire relations.
+    # The cognitive_space reference enables Hebbian drift: related beliefs
+    # are pulled closer together in 8D space over time.
+    from core.co_occurrence_hook import register_co_occurrence_hook
+    co_tracker = register_co_occurrence_hook(
+        belief_store=belief_store,
+        data_dir="data",
+        cognitive_space=physics.spatial_mind.belief_space,
+    )
+
+    # Affect field hook: Plutchik emotional wave packets (Layer 3)
+    # Deposits packets from Lagrangian signals every pulse, evolves
+    # anisotropic diffusion, samples interference for steering + memory
+    from core.affect_hook import register_affect_hook
+    affect_field = register_affect_hook(
+        sentinel=sentinel,
+        spatial_mind=physics.spatial_mind,
+        data_dir="data",
+    )
+
+    print("  Post-pulse hooks: registered (workflow_detector, belief_detector, engagement_monitor, co_occurrence_tracker, affect_field)")
 
     return pulse_loop, orchestrator, daemon, memory_manager, belief_store, scratchpad, telegram_bot, sentinel
 
@@ -379,7 +429,7 @@ def main_loop():
                     continue
                 else:
                     # Inject as user message event
-                    orchestrator.send_user_message(user_input, sender="<name>")
+                    orchestrator.send_user_message(user_input, sender="Commander")
 
                 # Wait briefly for the pulse to process
                 time.sleep(0.5)
@@ -388,7 +438,7 @@ def main_loop():
                 break
 
     pulse_loop.stop()
-    print("\nAgent offline.")
+    print("\nHelix offline.")
 
 
 if __name__ == "__main__":

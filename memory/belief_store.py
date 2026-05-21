@@ -34,8 +34,14 @@ Each belief entry includes:
 
 Cognitive Mass Equation (from δ∫(H + λ·D_KL)dt = 0):
   Mass = m_s + m_a
-  m_s = confidence × (1 + |N| / N̄)   (structural density)
-  m_a = Ω_encoding × (1 - s_total)   (affective charge)
+  m_s = confidence                    (intrinsic structural mass)
+  m_a = Ω_encoding × (1 - s_total) × (0.5 + stability)   (affective charge)
+
+  NOTE: relation count is deliberately excluded from individual mass.
+  Cluster gravity emerges from spatial density — related beliefs near
+  each other in 8D space naturally concentrate gravitational potential
+  on nearby anchors. Individual mass inflation from relations caused
+  a self-reinforcing loop: relations → mass ↑ → gravity ↑ → co-injection → more relations.
 
 Cognitive Attrition Equation (nightly):
   C = min(1.0, (Base + w_T + w_R + w_V) × (0.5 + S))
@@ -249,8 +255,8 @@ class BeliefStore:
             if b.get("id") == belief_id:
                 b["access_count"] = b.get("access_count", 0) + 1
                 b["last_accessed"] = _now_iso()
-                # Mass grows slightly with each access (reinforcement)
-                b["mass"] = b.get("mass", 1.0) + 0.05
+                # Access drives temperature (recency heat) not permanent mass.
+                # Mass is intrinsic — only confidence and affective charge.
                 self._write_category(category, beliefs)
                 return
 
@@ -316,7 +322,7 @@ class BeliefStore:
     # ── Cross-Category Belief Lookup ─────────────────────────────────
     #    These methods search across ALL categories because the relation
     #    graph is cross-category (a self_identity belief can relate to a
-    #    knowledge belief). This was implicit historically because all beliefs
+    #    knowledge belief). This was implicit in V3-V7 because all beliefs
     #    lived in one file. With category files, we must scan all.
 
     def get_belief(self, belief_id: str) -> Optional[Dict[str, Any]]:
@@ -367,7 +373,7 @@ class BeliefStore:
         logger.warning(f"Belief not found for update: {belief_id}")
         return None
 
-    # ── Relation Graph Operations ──────────────
+    # ── Relation Graph Operations (Restored from V3-V7) ──────────────
 
     def get_related(self, belief_id: str) -> List[Dict[str, Any]]:
         """Get all beliefs related to this belief (bidirectional).
@@ -519,7 +525,7 @@ class BeliefStore:
 
         return self.update_belief(belief_id, confidence=new)
 
-    # ── Non-Destructive Merge ──────────────────
+    # ── Non-Destructive Merge (Restored from V3-V7) ──────────────────
 
     def find_near_duplicates(self, threshold: float = 0.75) -> List[tuple]:
         """Find semantically similar belief pairs.
@@ -550,7 +556,7 @@ class BeliefStore:
     ) -> Optional[Dict[str, Any]]:
         """Merge near-duplicate beliefs. Keeps the more confident version.
 
-        Near-duplicates are the only pathological pattern.
+        Per V3 philosophy: near-duplicates are the only pathological pattern.
         This runs during nap/sleep, NOT during waking consciousness.
 
         NON-DESTRUCTIVE: The winner keeps its ID, absorbs the loser's
@@ -639,13 +645,14 @@ class BeliefStore:
         logger.info(f"Beliefs merged: {merge_id} → {keep_id} ({reason})")
         return self.get_belief(keep_id)
 
-    # ── Context Assembly ───────────────────────
+    # ── Context Assembly (Restored from V3-V7) ───────────────────────
 
     def get_context_beliefs(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Get beliefs that should be in the context window.
 
         Returns the highest-confidence beliefs across all categories.
-        We return beliefs with confidence >= 0.60 (the 'deep' threshold), sorted
+        In V3-V7 this returned core + deep weight tiers. Here we return
+        beliefs with confidence >= 0.60 (the 'deep' threshold), sorted
         by confidence descending.
         """
         all_beliefs = self.get_all_beliefs_flat()
@@ -660,7 +667,7 @@ class BeliefStore:
         Produces minimal, scannable output like:
             • I am Helix. [0.99]
             • I am an AI. [0.99]
-            • <name> is trustworthy. [0.95]
+            • Jean-Luc is trustworthy. [0.95]
         """
         if beliefs is None:
             beliefs = self.get_context_beliefs()
@@ -675,7 +682,7 @@ class BeliefStore:
 
         return "\n".join(lines)
 
-    # ── Equilibrium Confidence ────────────────────────────
+    # ── Equilibrium Confidence (from V6-7) ────────────────────────────
 
     PRUNING_THRESHOLD = 0.20
     _ATTRITION_BASE = 0.20  # ground-state energy = vacuum threshold
@@ -861,7 +868,7 @@ class BeliefStore:
             **per_category,
         }
 
-    # ── Formatted Output for LLM Consumption ─────────────────────
+    # ── V8: Formatted Output for LLM Consumption ─────────────────────
 
     def get_all_beliefs_formatted(self) -> str:
         """Return all beliefs across all categories as readable natural language.
@@ -896,7 +903,7 @@ class BeliefStore:
 
         return "\n".join(parts) if parts else "(no beliefs yet)"
 
-    # ── Belief Backup for Unconscious Cycle ──────────────────────
+    # ── V8: Belief Backup for Unconscious Cycle ──────────────────────
 
     def backup_beliefs(self, reason: str = "manual") -> str:
         """Save a versioned copy of all belief files.
@@ -924,7 +931,7 @@ class BeliefStore:
         logger.info(f"Beliefs backed up to {backup_dir}")
         return backup_dir
 
-    # ── Direct Belief Lookup ─────────────────────────────────────
+    # ── V8: Direct Belief Lookup ─────────────────────────────────────
 
     def get_belief_by_id(self, category: str, belief_id: str) -> Optional[Dict[str, Any]]:
         """Look up a specific belief by ID."""
@@ -962,28 +969,25 @@ class BeliefStore:
     def compute_cognitive_mass(self, belief: dict) -> float:
         """A belief's gravitational mass — derived from the Helical Lagrangian.
 
-        m_s: confidence × (1 + connections / mean_connections)
-        m_a: Ω_encoding × (1 - s_total_encoding)
+        m_s: confidence (intrinsic structural mass)
+        m_a: Ω_encoding × (1 - s_total_encoding) × (0.5 + stability)
 
-        Concepts formed during stability attract; concepts formed
-        during crisis have less pull but remain present.
+        Individual mass is purely intrinsic — it does NOT include
+        relation count. Cluster gravity emerges from spatial density:
+        related beliefs living near each other in 8D space concentrate
+        more potential on nearby gravity anchors naturally.
+
+        This prevents the self-reinforcing loop where:
+          relations → mass ↑ → gravity ↑ → more co-injection → more relations
         """
         c = belief.get("confidence", 0.5)
-        n_connections = len(belief.get("relations", []))
 
-        # Compute N̄ from all beliefs in this category
-        all_beliefs = self.get_all_beliefs_flat()
-        total_connections = sum(len(b.get("relations", [])) for b in all_beliefs)
-        n_mean = (total_connections / len(all_beliefs)) if all_beliefs else 1.0
-        n_mean = max(n_mean, 1.0)
-
-        m_s = c * (1.0 + n_connections / n_mean)
+        # Structural mass = confidence only (no relation count)
+        m_s = c
 
         # Affective charge from Lagrangian state at encoding,
         # amplified by the belief's stability index.
         # Higher stability → stronger affective charge → more mass.
-        # This creates the positive feedback loop: beliefs that prove
-        # correct (high stability) gain mass and outcompete older ones.
         enc = belief.get("encoding_lagrangian", {})
         omega_enc = enc.get("omega", 0.5)
         s_total_enc = enc.get("s_total", 0.15)

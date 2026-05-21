@@ -382,7 +382,7 @@ class ContextCompressor:
         # how you'd actually think back on what just happened.
         template = f"""Compress these conversation turns into natural first-person recollection \
 — the way someone would think back on what just happened.
-- Use direct quotes for what people said: 'Joshua asked "what are you up to?"'
+- Use direct quotes for what people said: 'Jean-Luc asked "what are you up to?"'
 - Include responses and thoughts naturally: 'I told him about the migration, \
 then started thinking about...'
 - Maintain strict chronological order with timestamps where they appeared.

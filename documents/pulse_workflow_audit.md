@@ -30,7 +30,7 @@ Traditional AI agents follow a *request‑response* model: they sleep until a pr
 
 ### 2.1 The Event Queue (Verified lines 249‑319)
 When an asynchronous event arrives (`emit()`):
-1. `_translate_event()` (lines 268‑301) converts the structured JSON into a first‑person natural‑language sentence, e.g. `"[14:32:01] Nemo is talking to me via direct. They said: 'Hello'"`.
+1. `_translate_event()` (lines 268‑301) converts the structured JSON into a first‑person natural‑language sentence, e.g. `"[14:32:01] William Riker is talking to me via direct. They said: 'Hello'"`.
 2. The sentence is appended to a thread‑safe `_event_queue`.
 3. If the event type is `user_message`, `_wake_event` is set, instantly promoting the state machine from **RESTING**/`DORMANT` to **ACTIVE**.
 

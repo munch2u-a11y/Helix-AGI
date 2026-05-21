@@ -143,6 +143,7 @@ class PhysicsEngine:
         thought_text: str,
         incoming_text: str = None,
         omega: float = 0.5,
+        cluster_centroid: "np.ndarray | None" = None,
     ):
         """Advance the spatial mind one pulse.
 
@@ -154,6 +155,16 @@ class PhysicsEngine:
         5. Updates γ (inertia)
         6. Traces cognitive trail → ⟪flash⟫ fragments
         7. Queries both spaces for gravity-ranked context
+
+        Args:
+            thought_text: The model's last thought output.
+            incoming_text: New stimulus text (message, event), or None.
+            omega: Sentinel's hedonic Ω.
+            cluster_centroid: Optional 8D position of the weighted centroid
+                of retrieved belief clusters. When present, the spatial mind
+                uses this as the stimulus position instead of computing a
+                raw text midpoint, ensuring attention steers toward actual
+                knowledge locations.
         """
         self._pulse_count += 1
 
@@ -180,6 +191,7 @@ class PhysicsEngine:
             thought_embedding=thought_emb,
             incoming_embedding=incoming_emb,
             agent_age_seconds=3600.0,
+            cluster_centroid=cluster_centroid,
         )
 
         # Clean up temp sentinel proxy

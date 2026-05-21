@@ -87,7 +87,7 @@ During `_pulse`, `preconscious.inject` calls `scratchpad.get_summary()` and embe
 <spatial-awareness>
 ...
 (REMINDER DUE: Follow up on the database migration)
-(scratchpad: 2 active note(s): Need to fix the Sentinel metrics; Draft the email to Sarah)
+(scratchpad: 2 active note(s): Need to fix the Sentinel metrics; Draft the email to Deanna Troi)
 ...
 </spatial-awareness>
 ```

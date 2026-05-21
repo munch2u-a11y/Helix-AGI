@@ -606,7 +606,7 @@ class PulseLoop:
 
         # 2. Pre-conscious injection
         #    Separate seeds: previous thought + incoming events
-        preconscious_context, injected_belief_ids = self.preconscious.inject(
+        preconscious_context, injected_belief_ids, cluster_centroid = self.preconscious.inject(
             previous_thought=self._previous_thoughts[:500],
             incoming_events=events if events else None,
             trigger_type="user_message" if events else "llm_output",
@@ -785,6 +785,7 @@ class PulseLoop:
             thought_text=thought,
             incoming_text=incoming_text,
             omega=omega,
+            cluster_centroid=cluster_centroid,
         )
 
         # 8. Carry forward

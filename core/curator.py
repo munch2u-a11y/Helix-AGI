@@ -199,7 +199,7 @@ class Curator:
         all_beliefs = self.beliefs.get_all_beliefs_flat()
 
         # ── Extract multi-word terms + filter noise ──────────────────
-        # 1. Strip possessive 's from words (Joshua's → Joshua)
+        # 1. Strip possessive 's from words (Jean-Luc's → Jean-Luc)
         # 2. Detect multi-word terms (consecutive capitalized words)
         # 3. Track article usage: "the X" = named entity, "a/an X" = generic
         # 4. A term is noise if "a/an" precedes it more than "the" does
