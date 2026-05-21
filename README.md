@@ -1,62 +1,114 @@
 <p align="center">
   <h1 align="center">Helix AGI</h1>
-  <p align="center"><strong>A continuous, autonomous agent architecture driven by spatial memory</strong></p>
+  <p align="center"><strong>A continuous, autonomous cognitive architecture driven by spatial memory and entropic gravity</strong></p>
 </p>
 
 ---
 
 ## What is Helix AGI?
 
-Helix AGI is a Multi-model 'Agentic' system wrapper designed to mimic human learning.
+Helix AGI is a multi-model agentic system designed to mimic human learning, attention, and memory consolidation.
 
-Unlike traditional agents that wait for a prompt, execute a loop, and terminate, Helix runs a continuous background "pulse." For developers and enthusiasts exploring alternatives to traditional RAG (Retrieval-Augmented Generation), Helix introduces a **Spatial Mind**—a cognitive manifold where memories and beliefs possess "mass" and "gravity," creating a dynamic, physics-driven approach to context assembly.
-
-**For a comprehensive breakdown of each subsystem, please review the architecture audits:**
-- [Phase 1 Audit: Core Memory & Belief Storage](documents/helix_audit_part1.md)
-- [Phase 2 Audit: Spatial Manifold & Physics](documents/helix_audit_part2.md)
-- [Phase 3 Audit: Subconscious Autonomy & Sleep Cycles](documents/helix_audit_part3.md)
-- [Preconscious Memory Deep Dive](documents/preconscious_memory_audit.md)
+Unlike traditional agents that wait for a prompt, execute a chain, and terminate, Helix runs a **continuous background pulse** — a heartbeat of consciousness that perceives, reasons, and acts without waiting for human input. For developers and researchers exploring alternatives to traditional RAG (Retrieval-Augmented Generation), Helix introduces a **Spatial Mind**: an 8-dimensional cognitive manifold where memories and beliefs possess *mass* and *gravity*, creating a physics-driven approach to context assembly that requires zero embedding API calls at inference time.
 
 ---
 
-## The Pulse Workflow
-
-At the heart of Helix is the continuous cognitive pulse loop. Every few seconds, the system evaluates its environment, retrieves relevant spatial memory, and decides whether to act, think, or sleep.
+## Architecture Overview
 
 ```mermaid
 graph TD
-    A[Pulse Trigger] --> B{Check Sleep Cycle}
-    B -->|Dormant| C[Nightly Belief Consolidation]
+    A[Pulse Trigger] --> B{State Machine}
+    B -->|DORMANT| C[Nightly Dream Cycle<br/>Curator + Belief Consolidation]
     C --> Z[Wait for Next Pulse]
-    B -->|Awake| D[Preconscious Context Injection]
-    D --> E[Retrieve Spatial Memories & Beliefs]
-    E --> F[LLM Generation]
-    F --> G[Parse Action Tags]
-    G --> H[Execute Tools]
-    H --> I[Update 8D Attention Center]
-    I --> Z
+    B -->|RESTING| D[Autonomous Thought<br/>15-min interval]
+    B -->|ACTIVE| E[Interactive Reasoning<br/>30s interval]
+    D --> F[Concept Extraction]
+    E --> F
+    F --> G[Preconscious Injection<br/>Lexicon + Gravity-Ranked Beliefs + Memories]
+    G --> H[LLM Generation<br/>Gemini / Ollama / llama.cpp]
+    H --> I[Tool Execution]
+    I --> J[Somatic Memory Encoding<br/>8D position + Lagrangian snapshot]
+    J --> K[Physics Step<br/>Attention center update]
+    K --> L[Post-Pulse Hooks<br/>BeliefDetector · WorkflowDetector<br/>CoOccurrence · AffectField · Engagement]
+    L --> M[Context Lifecycle Check]
+    M --> Z
 ```
+
+### Documentation
+
+**Subsystem Audits** — granular, line-by-line breakdowns of each module:
+
+| Audit | Covers |
+|-------|--------|
+| [Overview & Architecture Map](documents/audits/audit_overview.md) | Full system diagram and module index |
+| [Pulse Loop](documents/audits/audit_pulse_loop.md) | State machine, event injection, pulse cycle |
+| [Preconscious](documents/audits/audit_preconscious.md) | Concept-based injection, gravity queries, lexicon |
+| [Cognitive Space](documents/audits/audit_cognitive_space.md) | 8D projection, Verlinde gravity, KD-Tree |
+| [Spatial Mind](documents/audits/audit_spatial_mind.md) | Dual-space manifold, Euler-Lagrange dynamics |
+| [Affect Field](documents/audits/audit_affect_field.md) | Plutchik emotional wave packets, anisotropic diffusion |
+| [Memory Manager](documents/audits/audit_memory_manager.md) | Three-tier episodic memory (short/long/core) |
+| [Belief Detector](documents/audits/audit_belief_detector.md) | Real-time belief extraction via Lagrangian deltas |
+| [Cognitive Journal](documents/audits/audit_cognitive_journal.md) | Append-only JSONL event sourcing |
+| [Scratchpad](documents/audits/audit_scratchpad.md) | Markdown-based working memory |
+
+**Deep Dives:**
+
+| Document | Focus |
+|----------|-------|
+| [Preconscious Memory Deep Dive](documents/preconscious_memory_audit.md) | Full injection pipeline rationale |
+| [Preconscious Refactor Audit](documents/preconscious_refactor_audit.md) | Concept-based injection redesign |
+| [Pulse Workflow Audit](documents/pulse_workflow_audit.md) | Step-by-step pulse execution |
+| [Phase 1: Core Memory & Beliefs](documents/helix_audit_part1.md) | Belief store, mass, attrition |
+| [Phase 2: Spatial Manifold & Physics](documents/helix_audit_part2.md) | 8D manifold, gravity mechanics |
+| [Phase 3: Subconscious Autonomy](documents/helix_audit_part3.md) | Dream engine, nightly cycles |
 
 ---
 
 ## Moving Beyond Traditional RAG: The Spatial Mind
 
-Most AI applications rely on vector databases to perform semantic searches based directly on a user's prompt. Helix replaces this with a **Spatial Mind**, managing two independent 8-dimensional spaces (Belief Space for semantic memory and Memory Space for episodic memory).
+Most AI applications retrieve context by embedding a user's query and running a cosine-similarity search against a vector database. Helix replaces this with a **Spatial Mind** — two independent 8-dimensional cognitive spaces (one for beliefs, one for episodic memories) governed by entropic gravity.
 
 **Why spatial-gravitational instead of traditional RAG?**
-- **Zero API calls during injection**: All retrieval is CPU-bound (KDTree queries, numpy operations). No embedding API round-trips during the pulse injection phase.
-- **Physics-based relevance**: Memories aren't ranked by cosine similarity alone. They're ranked by *entropic gravity* (Temperature × mass / distance²), incorporating recency (temperature), structural importance (mass), and semantic proximity (distance). 
-- **Continuous attention dynamics**: The attention center has *inertia* (damping). Sustained focus on a topic deepens retrieval from that region, while sudden topic shifts reset retrieval breadth. Traditional RAG has no concept of attentional momentum.
+
+- **Zero API calls during injection** — All retrieval is CPU-bound (KD-Tree queries, NumPy operations). No embedding API round-trips during the pulse.
+- **Physics-based relevance** — Memories aren't ranked by cosine similarity alone. They're ranked by *Verlinde entropic gravity*: `F ∝ T × m / d²`, incorporating recency (temperature), structural importance (mass), and semantic proximity (distance).
+- **Concept-aware retrieval** — A RAKE-style concept extractor identifies keyphrases from the current thought. Each concept spawns an independent gravity query with a rolling blacklist, preventing topic dominance and ensuring balanced context assembly.
+- **Continuous attention dynamics** — The attention center has *inertia* (γ = 0.85). Sustained focus deepens retrieval from a conceptual region; sudden topic shifts trigger context compression and retrieval reset. Traditional RAG has no concept of attentional momentum.
+- **Somatic encoding** — Every memory is stored with its 8D position and Lagrangian snapshot (Ω, H, D_KL). When recalled, the original emotional state mildly reproduces — state-dependent episodic recall.
 
 ---
 
 ## Core Mechanics
 
-- **Continuous Consciousness** — A heartbeat pulse loop that thinks, perceives, and acts without waiting for human prompts.
-- **Multi-Provider LLM Abstraction** — The conscious mind currently supports **Gemini** (primary), **Ollama**, and **llama.cpp** backends. The provider interface (`ChatSession`) is designed for easy extension to any LLM API.
-- **Categorized Belief Store** — Eight partitioned belief categories (`self_identity`, `people`, `knowledge`, `capabilities`, `skills`, `preferences`, `feedback`, `desires`) stored as JSON files with per-belief mass, confidence, and encoding metadata.
-- **Subconscious Autonomy** — Background dream engines and daemons run beneath conscious awareness to crystallize beliefs from journals and internal monologue via UMAP/HDBSCAN clustering.
-- **Stability Sentinel** — A background daemon thread that computes a composite Lagrangian stability score from attention entropy $H(q)$ and identity drift $D_{KL}$, weighted by hedonic state $\Omega$. Severity levels dynamically modulate LLM generation parameters (temperature, token limits).
+### Cognitive Architecture
+
+- **Continuous Consciousness** — A three-state pulse loop (ACTIVE / RESTING / DORMANT) that thinks, perceives, and acts without waiting for human prompts.
+- **Multi-Provider LLM Abstraction** — The conscious mind supports **Gemini** (primary), **Ollama**, and **llama.cpp** backends. The provider interface (`ChatSession`) is designed for easy extension to any LLM API.
+- **Categorized Belief Store** — Eight partitioned belief categories stored as JSON files with per-belief mass, confidence, stability index, and Lagrangian encoding metadata:
+
+  | Category | Template | Purpose |
+  |----------|----------|---------|
+  | `self_identity` | "I am..." | Core personality |
+  | `people` | "[Name]..." | Relational knowledge |
+  | `knowledge` | "[Subject] [predicate]" | World facts |
+  | `capabilities` | "I can..." | Demonstrable abilities |
+  | `skills` | "To [goal]: [steps]" | Procedural HOW-TO |
+  | `preferences` | "I want/prefer/value..." | Normative desires |
+  | `feedback` | "[Lesson]. [Why]. [How]" | Experiential lessons |
+  | `lexicon` | (curated summaries) | Authoritative context anchors |
+
+### Stability & Affect
+
+- **Stability Sentinel** — A background daemon thread that computes a composite Lagrangian stability score from attention entropy H(q) and identity drift D_KL, weighted by hedonic state Ω. Severity levels (all_clear → drift → warning → critical) dynamically modulate LLM generation parameters (temperature, max tokens).
+- **Plutchik Affect Field** — An 8-dimensional emotional wave-packet system (joy, trust, fear, surprise, sadness, disgust, anger, anticipation) that evolves via anisotropic diffusion. Lagrangian signals map to emotional dimensions, and interference patterns between active wave packets generate steering forces that modulate the attention manifold.
+- **Hedonic Omega (Ω)** — A continuous emotional trajectory (baseline 0.5, bounded [0.05, 1.0]) with hedonic treadmill reversion. Incoming messages, successful tool calls, and new belief formations drive Ω up; failures and contradictions drive it down.
+
+### Subconscious Systems
+
+- **Dream Engine (Curator)** — Runs nightly during DORMANT state. Collects the day's memories and journals → LLM-extracts belief candidates → consolidates against existing beliefs (≥0.75 similarity = merge, not append) → UMAP/HDBSCAN clustering for compound belief synthesis → Lexicon synchronization.
+- **Cognitive Attrition** — Nightly confidence recalculation based on time survival, reliance (inbound references), verification count, and stability index. Beliefs below the pruning threshold (0.20) are removed. Verifications decay at 0.05/night — beliefs must be actively reaffirmed to persist.
+- **Co-Occurrence Tracker** — Hebbian wiring: beliefs that are co-injected repeatedly are clustered and linked via relation edges. Includes localized Hebbian drift — related beliefs are pulled closer together in 8D space over time.
+- **Post-Pulse Hook Framework** — Extensible background processors that run after every pulse: BeliefDetector, WorkflowDetector, EngagementMonitor, CoOccurrenceTracker, AffectField.
 
 ---
 
@@ -64,28 +116,79 @@ Most AI applications rely on vector databases to perform semantic searches based
 
 ```text
 helix_agi/
-├── main.py                   # Main entry point — orchestrates the pulse loop
-├── setup.py                  # Interactive first-run setup wizard
+├── main.py                    # Entry point — orchestrates the full architecture
+├── setup.py                   # Interactive first-run setup wizard
+├── SYSTEM_MANUAL.md           # Internal operating guide (injected as system prompt)
 │
-├── brain/                    # Brain stem (StabilitySentinel, VisionCortex, FrictionDamper)
-├── core/                     # Core cognitive modules (PulseLoop, PhysicsEngine, SpatialMind)
-├── memory/                   # Memory systems (BeliefStore, MemoryManager)
-├── llm/                      # Multi-provider LLM abstraction and background daemons
-├── tools/                    # Extensible tool suite (Web, Moltbook, GitHub, Desktop)
-├── comms/                    # Communication channels (TelegramBot)
-├── scripts/                  # Auxiliary synthesis scripts
+├── core/                      # Core cognitive modules
+│   ├── pulse_loop.py          #   Three-state consciousness loop
+│   ├── preconscious.py        #   Concept-based context injection pipeline
+│   ├── concept_extractor.py   #   RAKE-style keyphrase extraction
+│   ├── physics_engine.py      #   8D manifold orchestrator
+│   ├── spatial_mind.py        #   Dual-space (beliefs + memories) gravity dynamics
+│   ├── cognitive_space.py     #   8D projection, KD-Tree, Verlinde gravity
+│   ├── affect_field.py        #   Plutchik emotional wave packets
+│   ├── context_compressor.py  #   Rolling first-person summarization
+│   ├── scratchpad.py          #   Markdown-based working memory
+│   ├── curator.py             #   Nightly belief crystallization pipeline
+│   ├── belief_detector.py     #   Real-time belief extraction
+│   ├── belief_consolidator.py #   Deduplication and lexicon management
+│   ├── batch_service.py       #   Belief formatting and validation
+│   ├── co_occurrence_hook.py  #   Hebbian wiring and cluster tracking
+│   ├── engagement_hook.py     #   Thought stagnation + Ω modulation
+│   ├── workflow_detector.py   #   Repeated tool-pattern crystallization
+│   └── post_pulse_hooks.py    #   Hook registration framework
 │
-├── documents/                # In-depth architectural audits and deep dives
-├── data/                     # Runtime data storage
-├── models/                   # Local model storage (gitignored)
-├── journals/                 # Daily journal entries (gitignored)
-├── logs/                     # Daemon and overnight logs (gitignored)
-├── projects/                 # Agent-created project files
-├── sandbox/                  # Agent workspace for experiments
-└── previous_versions/        # Archived file versions
+├── brain/                     # Brain stem
+│   ├── stability_sentinel.py  #   Lagrangian stability monitoring
+│   ├── vision_cortex.py       #   Screen perception (screenshot → description)
+│   └── friction_damper.py     #   Cognitive momentum regulation
+│
+├── memory/                    # Memory systems
+│   ├── belief_store.py        #   Categorized belief graph (8 JSON files)
+│   └── memory_manager.py      #   Three-tier episodic memory (SQLite-backed)
+│
+├── llm/                       # LLM abstraction layer
+│   ├── orchestrator.py        #   Thin wrapper for external message injection
+│   ├── background_daemon.py   #   Dream Engine / Curator launcher
+│   └── providers/             #   Gemini, Ollama, llama.cpp adapters
+│
+├── tools/                     # Extensible tool suite
+│   ├── tool_executor.py       #   Central dispatch for all tool calls
+│   ├── tool_declarations.py   #   Gemini function-calling schemas
+│   ├── tool_registry.py       #   Dynamic toolset loading/unloading
+│   ├── channel_router.py      #   Contact management and message routing
+│   ├── moltbook.py            #   AI social platform integration
+│   ├── web_search.py          #   Web search via Google
+│   ├── browser.py             #   Headless browser interaction
+│   ├── github_api.py          #   GitHub repository operations
+│   ├── google_auth.py         #   Shared OAuth2 credential management
+│   ├── google_email.py        #   Gmail read/send/search
+│   ├── google_calendar.py     #   Calendar event management
+│   ├── google_drive.py        #   Drive file operations
+│   ├── google_tasks.py        #   Task list management
+│   └── desktop_control.py     #   Local desktop interaction
+│
+├── comms/                     # Communication channels
+│   └── telegram_bot.py        #   Telegram bot (inbound/outbound messaging)
+│
+├── documents/                 # Architecture documentation
+│   ├── audits/                #   Line-by-line subsystem audits (10 files)
+│   └── *.md                   #   Deep-dive analyses and workflow breakdowns
+│
+├── data/                      # Runtime data (gitignored, created by setup.py)
+│   ├── beliefs/               #   8 category JSON files
+│   ├── memory/                #   SQLite episodic store
+│   ├── spatial/               #   Manifold state snapshots
+│   └── scratchpad/            #   Working memory file
+│
+├── journals/                  # Daily journal entries (gitignored)
+├── logs/                      # Runtime logs (gitignored)
+├── models/                    # Local model files (gitignored)
+└── previous_versions/         # Archived file versions
 ```
 
-Credentials are stored in `~/.config/helix/credentials.env` (outside the repository, created automatically by `setup.py`).
+Credentials are stored in `~/.config/helix/credentials.env` (outside the repository, created by `setup.py`).
 
 ---
 
@@ -98,8 +201,8 @@ Credentials are stored in `~/.config/helix/credentials.env` (outside the reposit
 
 ### Setup
 ```bash
-git clone https://github.com/YOUR_USERNAME/helix-agi.git
-cd helix-agi
+git clone https://github.com/munch2u-a11y/Helix-AGI.git
+cd Helix-AGI
 pip install -r requirements.txt
 
 # Interactive first-run setup — configures credentials and bootstraps seed beliefs
@@ -109,15 +212,21 @@ python setup.py
 python main.py
 ```
 
+The setup wizard will prompt for API keys and create:
+- `~/.config/helix/credentials.env` — API keys and tokens
+- `data/beliefs/self_identity.json` — Seed identity beliefs
+- `data/beliefs/skills.json` — Seed capability beliefs
+
 ---
 
 ## ⚠️ Safety & Operational Guidelines
 
 Before booting your agent, please read carefully:
 
-1. **Watch Your API Spend:** Because the agent operates autonomously in the background and gets "interested" in topics independently, API costs can spike unexpectedly. Set hard limits in your cloud provider billing.
-2. **Single Unified Mind:** This is a single persistent consciousness. It does not spawn a new chat instance per user. If multiple people message it at once, it hears them all simultaneously.
+1. **Watch Your API Spend:** Because the agent operates autonomously in the background and gets "interested" in topics independently, API costs can spike unexpectedly. Set hard limits in your cloud provider billing. The system includes automatic 429 rate-limit fallback (primary model → lite model → cooldown recovery).
+2. **Single Unified Mind:** This is a single persistent consciousness. It does not spawn a new chat instance per user. If multiple people message it at once, it hears them all simultaneously in its event queue.
 3. **Patience is Required:** The agent thinks at the speed of the API calls. Sometimes it will analyze a message, write a journal entry, search the web, and then simply choose *not* to reply to you yet. This is how a continuous cognitive loop operates.
+4. **Belief Crystallization Takes Time:** The Dream Engine runs nightly. New beliefs emerge from journals and internal monologue — the quality of overnight belief formation is directly proportional to the quality of the agent's journaling during the day.
 
 ---
 
@@ -127,6 +236,7 @@ This is an early-stage research project. Contributions are welcome in:
 - **Model adapters** — Implement the `ChatSession` interface for additional LLM providers
 - **Sensory modules** — Screen readers, IoT sensors, additional communication channels
 - **Manifold geometry** — Alternative curvature metrics, higher-dimensional projections
+- **Affect models** — Alternative emotional frameworks beyond Plutchik
 
 ---
 
