@@ -57,7 +57,7 @@ class VisionCortex:
             camera_device: V4L2 device index (default 0)
             n_gpu_layers: GPU layers to offload (-1 = all, Vulkan)
         """
-        self.camera_device = camera_device
+        self.camera_device = self._auto_detect_camera(camera_device)
         self._n_gpu_layers = n_gpu_layers
 
         # Moondream model (lazy-loaded on first use)
@@ -74,12 +74,37 @@ class VisionCortex:
 
         # PTZ state
         self._auto_tracking = True
-        self._camera_v4l2_path = f"/dev/video{camera_device}"
+        self._camera_v4l2_path = f"/dev/video{self.camera_device}"
 
         logger.info(
-            f"Vision Cortex initialized (camera={camera_device}, "
+            f"Vision Cortex initialized (camera={self.camera_device}, "
             f"gpu_layers={n_gpu_layers}, model={Path(_MODEL_PATH).name})"
         )
+
+    def _auto_detect_camera(self, default_index: int = 0) -> int:
+        """Find the first available camera device that can read a frame."""
+        # Try default first
+        cap = cv2.VideoCapture(default_index)
+        if cap.isOpened():
+            ret, _ = cap.read()
+            cap.release()
+            if ret:
+                return default_index
+                
+        # Search others
+        for i in range(10):
+            if i == default_index:
+                continue
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                ret, _ = cap.read()
+                cap.release()
+                if ret:
+                    logger.info(f"Auto-detected working camera at index {i}")
+                    return i
+                    
+        logger.warning(f"No working camera found! Falling back to index {default_index}")
+        return default_index
 
     # ══════════════════════════════════════════════════════════════════
     # MODEL MANAGEMENT

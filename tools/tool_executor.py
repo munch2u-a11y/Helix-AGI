@@ -326,7 +326,9 @@ class ToolExecutor:
             entry = self._registry.get_entry(name)
             if entry:
                 try:
-                    return entry.handler(args)
+                    result = entry.handler(args)
+                    self._store_action_memory(name, args)
+                    return result
                 except Exception as e:
                     logger.error(f"Tool {name} failed: {e}")
                     return f"Tool error ({name}): {e}"
@@ -336,10 +338,34 @@ class ToolExecutor:
         if handler is None:
             return f"Unknown tool: {name}"
         try:
-            return handler(self, args)
+            result = handler(self, args)
+            self._store_action_memory(name, args)
+            return result
         except Exception as e:
             logger.error(f"Tool {name} failed: {e}")
             return f"Tool error ({name}): {e}"
+
+    def _store_action_memory(self, name: str, args: dict):
+        """Store a semantic memory that the agent used a tool."""
+        # Don't store communication tools that already log their own memory
+        if name in {"reply", "send_message", "verbalize", "memory_store"}:
+            return
+            
+        if getattr(self, "memory_manager", None):
+            try:
+                # Truncate args so we don't blow up memory with giant strings
+                args_str = str(args)
+                if len(args_str) > 200:
+                    args_str = args_str[:200] + "...[truncated]"
+                    
+                self.memory_manager.store(
+                    content=f"I used the '{name}' tool with arguments: {args_str}",
+                    memory_type="action",
+                    source="tool_executor",
+                    importance=0.6,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to store action memory: {e}")
 
     # ── FC Handlers (structured args) ────────────────────────────────
 

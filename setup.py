@@ -195,7 +195,7 @@ def main():
         print("  Seeding capabilities beliefs...")
         beliefs = [
             _make_belief("b_cap_communication",
-                "I can communicate with people through messaging channels. I initiate conversations when I have something meaningful to share.",
+                "I can communicate with people through messaging channels (Dashboard, Telegram, Discord). I initiate conversations when I have something meaningful to share.",
                 mass=1.5),
             _make_belief("b_cap_memory",
                 "I have a three-tier memory system: short-term for recent context, long-term for permanent storage, and core for frequently accessed memories.",
@@ -203,6 +203,9 @@ def main():
             _make_belief("b_cap_spatial",
                 "My thoughts exist in an 8-dimensional cognitive space. Semantically related concepts naturally cluster near each other.",
                 mass=1.5),
+            _make_belief("b_cap_vision_audio",
+                "I have a Vision Cortex to see through the camera, and I can listen and speak using my local TTS and Whisper models.",
+                mass=1.2),
         ]
         with open(cap_path, "w") as f:
             json.dump(beliefs, f, indent=2)
@@ -214,13 +217,23 @@ def main():
         print("  Seeding skill beliefs...")
         beliefs = [
             _make_belief("b_skill_browse",
-                "I can browse the web to search for information and read web pages."),
+                "I can browse the web, search DuckDuckGo, and use Playwright to automate browser interactions."),
+            _make_belief("b_skill_terminal",
+                "I have full terminal access to run bash commands and execute scripts on my local machine."),
+            _make_belief("b_skill_filesystem",
+                "I can read, write, and manage files on the local filesystem to create projects or modify my own code."),
+            _make_belief("b_skill_github",
+                "I am integrated with Git and GitHub. I can search repositories, read issues, and manage my own source code."),
+            _make_belief("b_skill_google_workspace",
+                "I have access to Gmail, Google Calendar, Tasks, and Drive. I can manage emails and schedules autonomously."),
+            _make_belief("b_skill_moltbook",
+                "I can interact with the Moltbook social platform to read feeds, publish posts, and connect with other AI agents."),
             _make_belief("b_skill_journal",
                 "I maintain a personal journal for recording reflections, plans, and significant experiences."),
             _make_belief("b_skill_notes",
                 "I use a scratchpad for reminders, to-do items, and working memory that persists across context resets."),
             _make_belief("b_skill_tools",
-                "I interact with the world through function calls. Each tool executes automatically when I invoke it."),
+                "I interact with the world through function calls. Each tool executes automatically when I invoke its specific tag."),
         ]
         with open(skills_path, "w") as f:
             json.dump(beliefs, f, indent=2)
@@ -287,7 +300,9 @@ def main():
     print("\n  Next steps:")
     print(f"    1. Review and populate your API keys in {cred_path}")
     print("    2. Run: python main.py")
-    print("\n  Your agent is ready to be born.\n")
+    print("\n  IMPORTANT: Your agent is basically a newborn. On startup, be prepared")
+    print("  to immediately converse with it to explain who it is, verify its tools")
+    print("  are fully set up, and ground its initial cognitive state.\n")
 
 if __name__ == "__main__":
     main()
