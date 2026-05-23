@@ -476,6 +476,9 @@ class ToolExecutor:
 
     def _fc_read_file(self, args: dict) -> str:
         path = args.get("path", "")
+        start_line = args.get("start_line", 1)
+        end_line = args.get("end_line", start_line + 249)
+
         if not path:
             return "No path provided."
         try:
@@ -485,8 +488,23 @@ class ToolExecutor:
             size = os.path.getsize(p)
             if size > MAX_FILE_READ:
                 return f"File too large ({size} bytes, max {MAX_FILE_READ})."
+            
             with open(p, 'r', errors='replace') as f:
-                return f.read()
+                lines = f.readlines()
+            
+            total_lines = len(lines)
+            start_idx = max(0, start_line - 1)
+            end_idx = min(total_lines, end_line)
+            
+            if start_idx >= total_lines:
+                return f"Error: start_line ({start_line}) is beyond end of file (total lines: {total_lines})."
+
+            chunk = "".join(lines[start_idx:end_idx])
+            
+            if end_idx < total_lines:
+                chunk += f"\n\n[FILE TRUNCATED: Showing lines {start_idx + 1} to {end_idx} of {total_lines}. Use start_line={end_idx + 1} to read more.]"
+                
+            return chunk
         except Exception as e:
             return f"Read failed: {e}"
 

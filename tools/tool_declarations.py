@@ -95,13 +95,21 @@ CORE_TOOLS = [
     },
     {
         "name": "read_file",
-        "description": "Read the contents of a local file.",
+        "description": "Read the contents of a local file in chunks. Defaults to reading the first 250 lines. Use start_line and end_line to read further chunks of large files.",
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
                     "description": "Absolute or home-relative path to the file",
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "Optional. The line number to start reading from (1-indexed). Defaults to 1.",
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "Optional. The line number to stop reading at (inclusive). Defaults to start_line + 250.",
                 },
             },
             "required": ["path"],
