@@ -290,7 +290,9 @@ This is an early-stage research project. Contributions are welcome in:
 
 ## License
 
-GNU Affero General Public License v3.0 (AGPLv3) — see [LICENSE](LICENSE).
+**Open Source:** [AGPL-3.0](LICENSE) — free to use, modify, and distribute with copyleft obligations. If you deploy a modified version as a network service, you must share your source code.
+
+**Commercial:** For proprietary use without AGPL obligations, commercial licenses are available. Contact [**helix.agi.email@gmail.com**](mailto:helix.agi.email@gmail.com) for details.
 
 ---
 
