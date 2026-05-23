@@ -3,7 +3,7 @@ Helix — Main Entry Point
 
 Initializes the full cognitive architecture and runs the pulse loop:
   - Three-tier memory (short-term, long-term, core)
-  - Categorized belief store (identity, people, capabilities, desires, knowledge)
+  - Categorized belief store (identity, people, capabilities, skills, knowledge, preferences)
   - Astrophysical physics engine
   - Active pre-conscious (short-term + core + beliefs + scratchpad)
   - Scratchpad (conscious notepad with reminders)

@@ -952,7 +952,7 @@ class Preconscious:
                 lines.append(f"(about someone: {content})")
             elif cat == "knowledge":
                 lines.append(f"(I understand: {content})")
-            elif cat in ("desires", "preferences"):
+            elif cat == "preferences":
                 lines.append(f"(I want: {content})")
             elif cat == "capabilities":
                 lines.append(f"(I can: {content})")

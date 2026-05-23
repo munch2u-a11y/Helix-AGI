@@ -79,3 +79,6 @@ Thumbs.db
 nohup.out
 
 AI_Spatial_Memory/
+
+# Local backups
+*_helix_backup/

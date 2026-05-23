@@ -63,18 +63,14 @@ def _now_iso() -> str:
 
 
 # Belief category definitions
-# NOTE: capabilities and desires are kept during migration to the
-# new taxonomy. Once manual review is complete, remove them and
-# update any references.
 BELIEF_CATEGORIES = {
     "self_identity": "self_identity.json",
     "people": "people.json",
-    "capabilities": "capabilities.json",   # Migration: split into skills + retained capabilities
-    "desires": "desires.json",              # Migration: moving to preferences
+    "capabilities": "capabilities.json",
     "knowledge": "knowledge.json",
-    "skills": "skills.json",                # NEW — procedural HOW-TO knowledge
-    "preferences": "preferences.json",      # NEW — replaces desires
-    "feedback": "feedback.json",            # NEW — lessons from experiences
+    "skills": "skills.json",
+    "preferences": "preferences.json",
+    "feedback": "feedback.json",
 }
 
 # Template for a person profile entry (stored within people.json)

@@ -78,7 +78,6 @@ CATEGORY_COLORS = {
     "people": "#F472B6",
     "preferences": "#FB923C",
     "feedback": "#94A3B8",
-    "desires": "#E879F9",
 }
 
 
