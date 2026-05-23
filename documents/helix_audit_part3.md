@@ -285,7 +285,7 @@ Telegram bot integration for external communication. Messages arrive as events i
           │                                 │
     ┌─────▼──────────────┐           ┌──────▼───────┐
     │  CognitiveSpace    │           │  pending_    │
-    │  (Verlinde, H, KL) │           │  beliefs.json│
+    │  (Gravity, H, KL) │           │  beliefs.json│
     └─────┬──────────────┘           └──────┬───────┘
           │                                 │
     ┌─────▼──────┐                   ┌──────▼───────┐
@@ -299,7 +299,7 @@ Telegram bot integration for external communication. Messages arrive as events i
 
 | Equation | Source | Purpose |
 |----------|--------|---------|
-| $F = 2\pi k_B T m / (r+\epsilon)$ | Verlinde (2010) | Gravity-ranked relevance |
+| $F = T \cdot m / (d^2 + \epsilon)$ | Inverse-square gravity | Gravity-ranked relevance |
 | $T(t) = T_0 \gamma^2 / ((t-t_0)^2 + \gamma^2)$ | Lorentzian decay | Recency weighting |
 | $\ddot{q} = -\nabla\Phi + F_{stim}$ | Euler-Lagrange | Attention dynamics |
 | $S = H + \Omega \cdot D_{KL}$ | Helical Lagrangian | Stability monitoring |

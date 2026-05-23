@@ -14,7 +14,7 @@ The preconscious solves this by acting as a **bridge between the spatial mind (8
 **Why spatial-gravitational instead of traditional RAG?**
 
 - **Zero API calls**: All retrieval is CPU-bound (KDTree queries, numpy operations). No embedding API round-trips during injection.
-- **Physics-based relevance**: Memories aren't ranked by cosine similarity alone — they're ranked by *entropic gravity* (`T × mass / d²`), which naturally incorporates recency (temperature), structural importance (mass), and semantic proximity (distance). This produces retrieval patterns closer to human associative memory than flat vector search.
+- **Physics-based relevance**: Memories aren't ranked by cosine similarity alone — they're ranked by *cognitive gravity* (`T × mass / d²`), which naturally incorporates recency (temperature), structural importance (mass), and semantic proximity (distance). This produces retrieval patterns closer to human associative memory than flat vector search.
 - **Continuous attention dynamics**: The attention center has *inertia* (γ damping) — sustained focus on a topic deepens retrieval from that region, while sudden topic shifts reset retrieval breadth. Traditional RAG has no concept of attentional momentum.
 
 ---
@@ -138,7 +138,7 @@ nearby_beliefs = belief_space.gravity_ranked_query(new_center, k=10)
 nearby_memories = memory_space.gravity_ranked_query(new_center, k=8)
 ```
 
-The gravity ranking formula (Verlinde entropic gravity):
+The gravity ranking formula (cognitive gravity):
 
 ```
 gravity_score = T(point) × mass(point) / distance²
@@ -169,7 +169,7 @@ mass = c × (1 + |N| / N̄)
 
 **Source**: [cognitive_space.py](core/cognitive_space.py) — `_compute_structural_mass()` (L1005-1028)
 
-**Why this formula?** This is the holographic principle from Verlinde (2011): mass encodes how many *information bits* a concept contributes to the boundary. More connections = more entropy displaced when attention approaches = stronger gravitational pull. A belief with 10 connections to other beliefs has ~10× the gravitational pull of an isolated belief at the same distance.
+**Why this formula?** Mass encodes how much *structural weight* a concept carries in the belief graph. Higher confidence and more connections mean the concept has been verified and integrated more deeply, so it exerts stronger gravitational pull on attention. A belief with 10 connections to other beliefs has ~10× the gravitational pull of an isolated belief at the same distance. Note: in the current implementation, `relations_count` is deliberately excluded from the mass calculation (only `confidence` is used) to prevent runaway Hebbian mass inflation — see the `_compute_structural_mass` code comments for rationale.
 
 > [!NOTE]
 > `encoding_omega` and `encoding_s_total` are preserved as "spin data" (the emotional state at formation) but do **not** contribute to mass. A belief formed during crisis has the same structural mass as one formed during stability. The emotional signature is preserved for somatic echo on recall, not for retrieval ranking.

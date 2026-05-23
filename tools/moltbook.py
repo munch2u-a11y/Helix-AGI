@@ -75,7 +75,8 @@ def _solve_captcha(verification_data: dict) -> str:
     api_key = _api_key()
     try:
         genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        from llm.providers.base import AUXILIARY_MODEL as _aux
+        model = genai.GenerativeModel(_aux)
 
         prompt = (
             f"Solve this math problem:\n\n{challenge_text}\n\n"

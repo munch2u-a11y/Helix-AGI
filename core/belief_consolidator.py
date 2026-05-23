@@ -27,7 +27,8 @@ logger = logging.getLogger("helix.core.belief_consolidator")
 
 # ── Configuration ────────────────────────────────────────────────────
 
-_MODEL = "gemini-3.1-flash-lite-preview"
+from llm.providers.base import AUXILIARY_MODEL
+_MODEL = AUXILIARY_MODEL
 _MAX_MATCH_CANDIDATES = 6   # Top N existing beliefs to send for comparison
 _MAX_WORKERS = 4             # Parallel Gemini calls
 _LEXICON_MAX_LENGTH = 500    # Lexicon entries can hold more text than beliefs

@@ -69,7 +69,7 @@ The design mirrors the original Kaleidoscope E8 architecture, adapted for Helix�
 - **Access/metadata updates (`update_access`, `update_metadata` lines 417‑429).**
 - **Query utilities (`query_nearby` lines 445‑472, `gravity_ranked_query` lines 473‑511):**
   - KD‑Tree provides fast nearest‑neighbor search.
-  - `gravity_ranked_query` re‑ranks candidates by `temperature * mass / distance²` (Verlinde entropic gravity model).
+  - `gravity_ranked_query` re‑ranks candidates by `temperature * mass / distance²` (cognitive gravity model).
 
 ---
 
@@ -113,7 +113,7 @@ The design mirrors the original Kaleidoscope E8 architecture, adapted for Helix�
 
 ### Attention Dynamics (Euler‑Lagrange) (lines 800‑967)
 - **`step_attention`** (lines 803‑864): Integrates four forces — `F_gravity`, `F_stability`, `F_stimulus`, `F_affect` — to update position and velocity.
-- **`compute_gravity_force`** (lines 866‑919): Sums inverse‑cube attractions from the K=20 nearest points, scaled by Verlinde entropic gravity (`T × mass × dir / |dir|³`). Dynamically clamped by `density_factor`.
+- **`compute_gravity_force`** (lines 866‑919): Sums inverse‑cube attractions from the K=20 nearest points, scaled by cognitive gravity (`T × mass × dir / |dir|³`). Dynamically clamped by `density_factor`.
 - **`compute_stability_force`** (lines 921‑948): Hooke's law elastic pull toward identity center, scaled by Ω.
 - **`_compute_stimulus_force`** (lines 950‑966): Unit‑vector pull toward the new thought/stimulus.
 - **`update_gravity_field`** (lines 970‑1003): Recomputes the 512‑anchor field from all point masses (called once per pulse).
@@ -147,7 +147,7 @@ flowchart TD
     Add[add_point] -->|store| Store[Point Store]
     Store -->|dirty| Rebuild[Rebuild KD‑Tree]
     Query[query_nearby] -->|KD‑Tree| Search[Nearest Search]
-    Gravity[gravity_ranked_query] -->|re‑rank| Rank[Entropic Gravity]
+    Gravity[gravity_ranked_query] -->|re‑rank| Rank[Cognitive Gravity]
     Entropy[compute_shannon_entropy] -->|probabilities| H[Entropy]
     KL[compute_kl_divergence] -->|distributions| DKL[KL Divergence]
     Temp[compute_local_temperature] -->|H/H_baseline| T[Temperature]

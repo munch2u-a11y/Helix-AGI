@@ -99,7 +99,7 @@ Both the raw events and the LLM‑generated thought are persisted via `MemoryMan
 - **`lagrangian_snapshot`** – the sentinel’s `Ω`, `H`, `D_KL` at the moment of encoding.
 - **`importance`** and **`tags`** for downstream retrieval.
 
-> **Why?**  By coupling memory with *where* (spatial) and *how* (somatic) the agent was, later retrieval can rank memories using **entropic gravity** (mass × temperature / distance²) rather than raw cosine similarity.
+> **Why?**  By coupling memory with *where* (spatial) and *how* (somatic) the agent was, later retrieval can rank memories using **cognitive gravity** (mass × temperature / distance²) rather than raw cosine similarity.
 
 ### Step 8: Physics Step (Lines 717‑724)
 `physics.step_pulse()` receives the thought text, any incoming event text, and the current **omega** (sentinel‑derived arousal).  It:

@@ -44,6 +44,11 @@ MIN_CLUSTER_SIZE = 3
 # Daily decay factor for co-occurrence counts (0.95 = 5% decay per day)
 DAILY_DECAY_FACTOR = 0.95
 
+# Maximum new relations a single belief can gain per day.
+# Prevents early manifold hyper-crystallization when only a few beliefs
+# exist and they all get co-injected on every pulse.
+MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY = 2
+
 # State file for persistence across restarts
 STATE_FILENAME = "co_occurrence_state.json"
 
@@ -84,6 +89,9 @@ class CoOccurrenceTracker:
         self._pulses_since_cluster = 0
         self._last_decay_day = time.localtime().tm_yday
         self._last_cluster_time = 0.0
+        # Daily relation wiring cap: {belief_id: count_wired_today}
+        self._wired_today: Dict[str, int] = defaultdict(int)
+        self._wired_today_day = time.localtime().tm_yday
 
         # Load persisted state if available
         self._load_state()
@@ -304,6 +312,8 @@ class CoOccurrenceTracker:
         """Add bidirectional relations between all beliefs in a cluster.
 
         Only adds new relations — existing relations are preserved.
+        Enforces a daily cap (MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY) to
+        prevent early manifold hyper-crystallization.
         After wiring, applies Hebbian drift: related beliefs are pulled
         slightly closer together in 8D space, proportional to their
         co-occurrence count.
@@ -313,9 +323,24 @@ class CoOccurrenceTracker:
         Args:
             cluster_ids: List of belief IDs in this cluster
         """
+        # Reset daily cap if the day has changed
+        today = time.localtime().tm_yday
+        if today != self._wired_today_day:
+            self._wired_today.clear()
+            self._wired_today_day = today
+
         added = 0
 
         for bid in cluster_ids:
+            # Check daily cap for this belief
+            if self._wired_today[bid] >= MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY:
+                logger.debug(
+                    "Daily relation cap reached for %s (%d/%d) — skipping",
+                    bid, self._wired_today[bid],
+                    MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY,
+                )
+                continue
+
             belief = self.belief_store.get_belief(bid)
             if not belief:
                 continue
@@ -324,12 +349,20 @@ class CoOccurrenceTracker:
             new_relations = set(cluster_ids) - {bid} - existing_relations
 
             if new_relations:
+                # Enforce cap: only wire up to remaining daily budget
+                remaining = MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY - self._wired_today[bid]
+                if len(new_relations) > remaining:
+                    new_relations = set(list(new_relations)[:remaining])
+
                 merged = list(existing_relations | new_relations)
                 self.belief_store.update_belief(bid, relations=merged)
                 added += len(new_relations)
+                self._wired_today[bid] += len(new_relations)
                 logger.debug(
-                    "Wired %d new relations for %s (total: %d)",
+                    "Wired %d new relations for %s (total: %d, today: %d/%d)",
                     len(new_relations), bid, len(merged),
+                    self._wired_today[bid],
+                    MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY,
                 )
 
         # Apply Hebbian drift: pull related beliefs closer in 8D space
@@ -453,6 +486,8 @@ class CoOccurrenceTracker:
                 },
                 "last_decay_day": self._last_decay_day,
                 "last_cluster_time": self._last_cluster_time,
+                "wired_today": dict(self._wired_today),
+                "wired_today_day": self._wired_today_day,
             }
             with open(state_path, "w", encoding="utf-8") as f:
                 json.dump(serializable, f, indent=2)
@@ -477,6 +512,11 @@ class CoOccurrenceTracker:
 
             self._last_decay_day = data.get("last_decay_day", time.localtime().tm_yday)
             self._last_cluster_time = data.get("last_cluster_time", 0.0)
+
+            # Restore daily wiring cap state
+            wired = data.get("wired_today", {})
+            self._wired_today = defaultdict(int, {k: int(v) for k, v in wired.items()})
+            self._wired_today_day = data.get("wired_today_day", time.localtime().tm_yday)
 
             logger.info(
                 "Co-occurrence state loaded: %d pairs from %s",

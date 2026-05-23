@@ -774,7 +774,7 @@ class Preconscious:
         max_results: int = 15,
         min_results: int = 2,
     ) -> List[Dict[str, Any]]:
-        """Score cached beliefs by Verlinde gravity against a seed text.
+        """Score cached beliefs by cognitive gravity against a seed text.
 
         Returns the top beliefs sorted by gravity descending. The gravity
         ranking itself is the filter — no token budgets. The strongest

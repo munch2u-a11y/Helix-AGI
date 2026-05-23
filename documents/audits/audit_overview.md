@@ -6,7 +6,7 @@ This directory contains the definitive, line-by-line technical audits of the Hel
 
 ### System Architecture Summary
 
-Helix is an event-driven, continuously running cognitive daemon. It breaks from standard RAG (Retrieval-Augmented Generation) patterns by implementing an **8-dimensional spatial manifold** where beliefs and memories attract attention via **entropic gravity** (a physics-based model replacing keyword search). The system is subjectively grounded: it experiences "pulses" of consciousness, continuously updates an append-only memory journal, and compresses its context window to preserve first-person narrative continuity.
+Helix is an event-driven, continuously running cognitive daemon. It breaks from standard RAG (Retrieval-Augmented Generation) patterns by implementing an **8-dimensional spatial manifold** where beliefs and memories attract attention via **cognitive gravity** (a physics-inspired model replacing keyword search). The system is subjectively grounded: it experiences "pulses" of consciousness, continuously updates an append-only memory journal, and compresses its context window to preserve first-person narrative continuity.
 
 ### Core Architecture Diagram
 
@@ -94,7 +94,7 @@ The following detailed module audits are available:
 
 ### Design Philosophy
 
-1. **Entropic Gravity over Search:** Memories are not retrieved via text similarity; they attract the attention center based on mass (structural density) and temperature (recency glow).
+1. **Gravity over Search:** Memories are not retrieved via text similarity; they attract the attention center based on mass (confidence) and temperature (recency).
 2. **First-Person Continuity:** The `ContextCompressor` rolls the context window forward as a subjective narrative ("I thought... I did..."), never wiping the slate clean.
 3. **No External Databases:** SQLite and ChromaDB have been entirely excised in favor of flat text files (Markdown scratchpads, JSONL journals) and in-memory 8D projections.
 4. **Somatic Anchoring:** Generation parameters (like temperature) are not hardcoded but derived natively from the manifold's entropy, mimicking an organism's shifting states of focus.

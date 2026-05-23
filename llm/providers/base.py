@@ -11,10 +11,24 @@ To add a new provider:
 """
 
 import logging
+import os
 from typing import Optional, Dict, Any, List
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger("helix.llm.providers.base")
+
+# ── Centralized Model Configuration ──────────────────────────────────
+# All model names are configurable via environment variables.
+# Set these in ~/.config/helix/credentials.env or export them.
+#
+#   HELIX_PRIMARY_MODEL   — Main conscious mind (default: gemini-2.5-flash)
+#   HELIX_FALLBACK_MODEL  — 429 rate-limit fallback (default: gemini-2.0-flash-lite)
+#   HELIX_AUXILIARY_MODEL — Background tasks: curator, batch, compressor
+#                           (default: gemini-2.0-flash-lite)
+#
+PRIMARY_MODEL = os.environ.get("HELIX_PRIMARY_MODEL", "gemini-2.5-flash")
+FALLBACK_MODEL = os.environ.get("HELIX_FALLBACK_MODEL", "gemini-2.0-flash-lite")
+AUXILIARY_MODEL = os.environ.get("HELIX_AUXILIARY_MODEL", "gemini-2.0-flash-lite")
 
 
 class ChatSession(ABC):
@@ -122,12 +136,10 @@ def detect_available_provider() -> Optional[ProviderConfig]:
 
     Gemini is the conscious mind. Ollama/llama.cpp are for subagents.
     """
-    import os
-
     # 1. Gemini API — primary conscious mind
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     if gemini_key:
-        model_name = os.environ.get("HELIX_PRIMARY_MODEL", "gemini-1.5-flash")
+        model_name = PRIMARY_MODEL
         logger.info(f"Auto-detected Gemini API key — using {model_name}")
         return ProviderConfig(
             provider_type="gemini",
@@ -173,7 +185,7 @@ def detect_available_provider() -> Optional[ProviderConfig]:
     try:
         import llama_cpp
         model_path = (
-            os.path.expanduser("~/.ollama/models/blobs/")
+            os.path.expanduser("~/.ollama/models/blobs/") +
             "sha256-afb54ad43a39f947407f5cabc59856348d70e072baa5c62d436332157c151bcd"
         )
         if os.path.exists(model_path):

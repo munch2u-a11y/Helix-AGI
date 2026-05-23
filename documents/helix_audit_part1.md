@@ -159,21 +159,20 @@ where n is the number of points and d=8 is the target dimension. This means the 
 
 This is the mathematical heart of Helix. Every other subsystem ultimately depends on the computations in this file.
 
-### 4.1 Verlinde Entropic Gravity
+### 4.1 Cognitive Gravity
 
-The relevance of a memory or belief to the current thought is computed using **Verlinde's entropic gravity** equation (verified lines 300–380):
+The relevance of a memory or belief to the current thought is computed using a **gravity-inspired inverse-square** equation (verified lines 300–380):
 
-$$F = \frac{2\pi \cdot k_B \cdot T \cdot m}{r + \epsilon}$$
+$$F = \frac{T \cdot m}{d^2 + \epsilon}$$
 
 Where:
 - **F** = gravitational force (relevance score)
-- **k_B** = Boltzmann constant (set to 1.0 as a dimensionless scale)
-- **T** = local temperature (recency-weighted; see §4.2)
-- **m** = cognitive mass of the belief/memory (see §6.2)
-- **r** = Euclidean distance in 8D space between the attention center and the concept
-- **ε** = small epsilon (0.01) to prevent division by zero
+- **T** = temperature (recency-weighted; see §4.2)
+- **m** = cognitive mass of the belief/memory (confidence for beliefs, importance for memories)
+- **d** = Euclidean distance in 8D space between the attention center and the concept
+- **ε** = small epsilon (0.05) to prevent division by zero
 
-**Why Verlinde?** In Verlinde's theory, gravity is not a fundamental force but an **entropic tendency** — matter moves toward regions of higher entropy because those configurations are statistically more probable. In Helix, this maps to: **thoughts naturally drift toward conceptually denser regions**. High-mass beliefs (well-verified, highly connected concepts, the LLM's 'reasoning') create deep gravity wells that attract attention. This is not a metaphor — it is the literal mathematical mechanism that determines what enters Helix's awareness.
+**Why gravity?** The inverse-square formula creates a natural attentional landscape where **thoughts drift toward conceptually denser regions**. High-mass beliefs (well-verified, important concepts) create deep gravity wells that attract attention. Dense clusters of related beliefs pull harder because they contribute more mass points to the same region of 8D space. Temperature modulates this: recently accessed concepts burn hot and exert stronger pull, while older concepts cool gradually but never disappear.
 
 ### 4.2 Lorentzian Temperature Cooling
 
@@ -220,7 +219,7 @@ Where:
 When the preconscious queries the manifold for "what's nearby?", the CognitiveSpace (verified lines 700–800):
 
 1. Uses a **scipy KDTree** for O(log n) nearest-neighbor lookup in 8D.
-2. Computes Verlinde gravity for each neighbor.
+2. Computes cognitive gravity for each neighbor.
 3. Sorts by gravitational force (descending).
 4. Returns the top-k results with their content, mass, temperature, and force.
 

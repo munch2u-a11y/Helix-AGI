@@ -37,7 +37,8 @@ logger = logging.getLogger("helix.core.batch_service")
 _PENDING_FILE = Path("data/pending_beliefs.json")
 _PROCESSED_LOG = Path("data/logs/processed_beliefs.json")
 _BATCH_SIZE = 10   # Max candidates per API call
-_MODEL = "gemini-3.1-flash-lite-preview"
+from llm.providers.base import AUXILIARY_MODEL
+_MODEL = AUXILIARY_MODEL
 
 # Length limits by category
 _MAX_LENGTHS = {

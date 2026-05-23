@@ -135,7 +135,7 @@ gravity = mass / (dist_sq + 1e-4)
 # Take the top max_results (default 15), guarantee min_results (default 2)
 ```
 
-- Scores each cached belief by Verlinde gravity against the seed text's 8‑D position.
+- Scores each cached belief by cognitive gravity against the seed text's 8‑D position.
 - Simply takes the top N by gravity — no percentile floor needed.
 - The gravity ranking itself is the filter; `max_results` provides the cap.
 
@@ -202,7 +202,7 @@ When `PulseLoop._build_pulse_message` assembles the final prompt, the preconscio
 
 (lexicon — Helix: autonomous cognitive daemon)
 (vivid recall: remembered the 8D manifold projection technique)
-  (before: was discussing Verlinde gravity models)
+  (before: was discussing gravity models)
   (after: started implementing the KD-Tree index)
 (related: user asked about sentiment analysis)
 (I understand: the system uses a Shannon entropy metric)

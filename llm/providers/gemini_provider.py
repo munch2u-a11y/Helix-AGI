@@ -35,7 +35,7 @@ class GeminiSession(ChatSession):
 
     def __init__(
         self,
-        model: str = "gemini-3-flash-preview",
+        model: str = None,
         system_instruction: str = "",
         temperature: float = 0.8,
         max_output_tokens: int = 8192,
@@ -47,7 +47,8 @@ class GeminiSession(ChatSession):
         from google import genai
         from google.genai import types
 
-        self._model = model
+        from llm.providers.base import PRIMARY_MODEL
+        self._model = model or PRIMARY_MODEL
         self._tool_executor = tool_executor
         self._preconscious = preconscious
         self._genai = genai

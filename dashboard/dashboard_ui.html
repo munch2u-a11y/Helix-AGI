@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Helix — Cognitive Dashboard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Inter:wght@300;400;500;600&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root {
+    --bg: #0a0e17; --panel: #111827; --border: #1e293b;
+    --text: #e2e8f0; --dim: #64748b; --accent: #3b82f6;
+    --gold: #fbbf24; --green: #4ade80; --red: #f87171;
+    --purple: #a78bfa; --pink: #f472b6; --orange: #fb923c;
+  }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Inter', sans-serif; height: 100vh;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+    padding: 12px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px;
+  }
+  header h1 {
+    font-size: 16px; font-weight: 600; letter-spacing: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--purple));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .status-badge {
+    padding: 3px 10px; border-radius: 12px; font-size: 11px;
+    font-weight: 500; letter-spacing: 1px;
+    background: rgba(74,222,128,0.15); color: var(--green); border: 1px solid rgba(74,222,128,0.3);
+  }
+  .status-badge.dormant { background: rgba(100,116,139,0.15); color: var(--dim); border-color: rgba(100,116,139,0.3); }
+  .status-badge.active { background: rgba(59,130,246,0.15); color: var(--accent); border-color: rgba(59,130,246,0.3); }
+  .pulse-count { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--dim); margin-left: auto; }
+
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* Left panel: logs */
+  .log-panel {
+    width: 35%; min-width: 300px; display: flex; flex-direction: column;
+    border-right: 1px solid var(--border);
+  }
+  .tab-bar {
+    display: flex; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .tab-bar button {
+    flex: 1; padding: 8px 4px; background: none; border: none;
+    color: var(--dim); font-size: 11px; font-weight: 500;
+    cursor: pointer; border-bottom: 2px solid transparent;
+    font-family: 'Inter', sans-serif; letter-spacing: 0.5px;
+    transition: all 0.2s;
+  }
+  .tab-bar button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-bar button:hover { color: var(--text); }
+  .log-content {
+    flex: 1; overflow-y: auto; padding: 8px 12px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    line-height: 1.6; background: var(--bg);
+  }
+  .log-content::-webkit-scrollbar { width: 6px; }
+  .log-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .log-line { padding: 1px 0; word-wrap: break-word; }
+  .log-line.warn { color: var(--gold); }
+  .log-line.error { color: var(--red); }
+  .log-line .ts { color: var(--dim); }
+
+  /* Center: 3D scene */
+  .scene-panel {
+    flex: 1; position: relative; background: var(--bg);
+    border-right: 1px solid var(--border);
+  }
+  #three-canvas { width: 100%; height: 100%; display: block; }
+  .scene-label {
+    position: absolute; top: 8px; left: 12px; font-size: 10px;
+    color: var(--dim); letter-spacing: 1px; font-weight: 500;
+    pointer-events: none;
+  }
+  #tooltip {
+    position: absolute; display: none; padding: 6px 10px;
+    background: rgba(17,24,39,0.95); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 11px; max-width: 280px;
+    pointer-events: none; z-index: 10; color: var(--text);
+    font-family: 'JetBrains Mono', monospace; line-height: 1.4;
+  }
+  .legend {
+    position: absolute; bottom: 12px; left: 12px; display: flex;
+    flex-wrap: wrap; gap: 8px; pointer-events: none;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 10px; color: var(--dim);
+  }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* Right: gauges */
+  .gauge-panel {
+    width: 220px; min-width: 200px; padding: 16px;
+    background: var(--panel); overflow-y: auto;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .gauge-section { }
+  .gauge-section h3 {
+    font-size: 10px; letter-spacing: 1.5px; color: var(--dim);
+    margin-bottom: 10px; font-weight: 500;
+  }
+  .gauge {
+    margin-bottom: 10px;
+  }
+  .gauge-header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .gauge-label { font-size: 12px; font-weight: 500; }
+  .gauge-value {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--accent);
+  }
+  .gauge-bar {
+    height: 6px; background: var(--border); border-radius: 3px;
+    overflow: hidden;
+  }
+  .gauge-fill {
+    height: 100%; border-radius: 3px; transition: width 0.8s ease;
+    background: linear-gradient(90deg, var(--accent), var(--purple));
+  }
+  .gauge-fill.omega { background: linear-gradient(90deg, var(--red), var(--gold), var(--green)); }
+  .gauge-fill.gamma { background: linear-gradient(90deg, var(--green), var(--accent)); }
+
+  .cat-list { list-style: none; }
+  .cat-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 3px 0; font-size: 11px;
+  }
+  .cat-name { display: flex; align-items: center; gap: 6px; }
+  .cat-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .cat-count {
+    font-family: 'JetBrains Mono', monospace; color: var(--dim);
+    font-size: 11px;
+  }
+
+  /* Chat panel (hidden by default, shown when Chat tab active) */
+  .chat-panel {
+    display: none; flex-direction: column; flex: 1;
+    background: var(--bg);
+  }
+  .chat-panel.visible { display: flex; }
+  .chat-messages {
+    flex: 1; overflow-y: auto; padding: 10px 12px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    line-height: 1.6;
+  }
+  .chat-messages::-webkit-scrollbar { width: 6px; }
+  .chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .chat-msg {
+    margin-bottom: 8px; padding: 6px 10px; border-radius: 8px;
+    max-width: 90%; word-wrap: break-word;
+  }
+  .chat-msg.inbound {
+    background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.25);
+    align-self: flex-end; margin-left: auto;
+  }
+  .chat-msg.outbound {
+    background: rgba(74,222,128,0.1); border: 1px solid rgba(74,222,128,0.2);
+  }
+  .chat-msg .chat-sender { font-size: 10px; color: var(--dim); margin-bottom: 2px; }
+  .chat-msg .chat-time { font-size: 9px; color: var(--dim); float: right; margin-left: 12px; }
+  .chat-input-bar {
+    display: flex; gap: 6px; padding: 8px 12px;
+    border-top: 1px solid var(--border); background: var(--panel);
+  }
+  .chat-input-bar input[type="text"] {
+    flex: 1; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; color: var(--text);
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    outline: none;
+  }
+  .chat-input-bar input[type="text"]:focus { border-color: var(--accent); }
+  .chat-input-bar .sender-input {
+    width: 80px; text-align: center; flex: none;
+  }
+  .chat-input-bar button {
+    background: var(--accent); border: none; color: white;
+    padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500;
+    transition: background 0.2s;
+  }
+  .chat-input-bar button:hover { background: #2563eb; }
+</style>
+</head>
+<body>
+<header>
+  <h1>HELIX COGNITIVE DASHBOARD</h1>
+  <span id="state-badge" class="status-badge">UNKNOWN</span>
+  <span class="pulse-count">Pulse <span id="pulse-num">—</span></span>
+</header>
+<div class="main">
+  <!-- Log Panel -->
+  <div class="log-panel">
+    <div class="tab-bar">
+      <button class="active" data-tab="thoughts">Thoughts</button>
+      <button data-tab="tools">Tools</button>
+      <button data-tab="beliefs">Beliefs</button>
+      <button data-tab="spatial">Spatial</button>
+      <button data-tab="chat">Chat</button>
+    </div>
+    <div id="log-content" class="log-content"></div>
+    <div id="chat-panel" class="chat-panel">
+      <div id="chat-messages" class="chat-messages"></div>
+      <div class="chat-input-bar">
+        <input type="text" id="chat-sender" class="sender-input" placeholder="Name" />
+        <input type="text" id="chat-input" placeholder="Talk to Helix..." />
+        <button id="chat-send">Send</button>
+      </div>
+    </div>
+  </div>
+  <!-- 3D Scene -->
+  <div class="scene-panel">
+    <div class="scene-label">8D → 3D PCA PROJECTION</div>
+    <canvas id="three-canvas"></canvas>
+    <div id="tooltip"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <!-- Gauges -->
+  <div class="gauge-panel">
+    <div class="gauge-section">
+      <h3>LAGRANGIAN GAUGES</h3>
+      <div class="gauge">
+        <div class="gauge-header"><span class="gauge-label">Ω Stability</span><span class="gauge-value" id="g-omega">—</span></div>
+        <div class="gauge-bar"><div class="gauge-fill omega" id="gf-omega" style="width:50%"></div></div>
+      </div>
+      <div class="gauge">
+        <div class="gauge-header"><span class="gauge-label">γ Inertia</span><span class="gauge-value" id="g-gamma">—</span></div>
+        <div class="gauge-bar"><div class="gauge-fill gamma" id="gf-gamma" style="width:50%"></div></div>
+      </div>
+    </div>
+    <div class="gauge-section">
+      <h3>MANIFOLD</h3>
+      <div class="cat-item"><span class="cat-name">Total Points</span><span class="cat-count" id="point-count">—</span></div>
+    </div>
+    <div class="gauge-section">
+      <h3>BELIEF CATEGORIES</h3>
+      <ul class="cat-list" id="cat-list"></ul>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+               "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── State ──
+let currentTab = 'thoughts';
+let logTotal = { thoughts: 0, tools: 0, beliefs: 0, spatial: 0 };
+const CAT_COLORS = {
+  self_identity:'#FFD700', knowledge:'#4A9EFF', skills:'#4ADE80',
+  capabilities:'#A78BFA', people:'#F472B6', preferences:'#FB923C',
+  feedback:'#94A3B8', desires:'#E879F9', memory:'#475569', belief:'#666'
+};
+
+// ── Log Tabs ──
+const logContent = document.getElementById('log-content');
+const chatPanel = document.getElementById('chat-panel');
+
+document.querySelectorAll('.tab-bar button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelector('.tab-bar button.active').classList.remove('active');
+    btn.classList.add('active');
+    currentTab = btn.dataset.tab;
+    if (currentTab === 'chat') {
+      logContent.style.display = 'none';
+      chatPanel.classList.add('visible');
+    } else {
+      logContent.style.display = '';
+      chatPanel.classList.remove('visible');
+      logTotal[currentTab] = 0;
+      logContent.innerHTML = '';
+      fetchLogs();
+    }
+  });
+});
+
+function fetchLogs() {
+  fetch(`/api/logs?tab=${currentTab}&since=${logTotal[currentTab]}`)
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('log-content');
+      data.lines.forEach(line => {
+        const div = document.createElement('div');
+        div.className = 'log-line';
+        if (/WARNING/i.test(line)) div.className += ' warn';
+        if (/ERROR/i.test(line)) div.className += ' error';
+        // Dim timestamp
+        const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
+        if (tsMatch) {
+          div.innerHTML = `<span class="ts">${tsMatch[1]}</span>${line.slice(tsMatch[1].length)}`;
+        } else {
+          div.textContent = line;
+        }
+        el.appendChild(div);
+      });
+      logTotal[currentTab] = data.total;
+      el.scrollTop = el.scrollHeight;
+    })
+    .catch(() => {});
+}
+
+// ── Three.js Scene ──
+const canvas = document.getElementById('three-canvas');
+const container = canvas.parentElement;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e17);
+scene.fog = new THREE.FogExp2(0x0a0e17, 0.08);
+
+const camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 200);
+camera.position.set(8, 6, 8);
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+renderer.setSize(container.clientWidth, container.clientHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.3;
+
+// Lights
+scene.add(new THREE.AmbientLight(0x334466, 0.6));
+const dLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dLight.position.set(5, 10, 5);
+scene.add(dLight);
+
+// Grid
+const grid = new THREE.GridHelper(20, 20, 0x1e293b, 0x111827);
+grid.position.y = -0.5;
+scene.add(grid);
+
+// Point groups
+let pointMeshes = [];
+let pointData = [];
+
+// Attention crosshair
+const attnGeo = new THREE.OctahedronGeometry(0.25, 0);
+const attnMat = new THREE.MeshStandardMaterial({
+  color: 0x3b82f6, emissive: 0x3b82f6, emissiveIntensity: 0.8,
+  transparent: true, opacity: 0.9
+});
+const attnMesh = new THREE.Mesh(attnGeo, attnMat);
+scene.add(attnMesh);
+
+// Trail line
+const trailMat = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.4 });
+const trailGeo = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(), new THREE.Vector3()
+]);
+const trailLine = new THREE.Line(trailGeo, trailMat);
+scene.add(trailLine);
+
+// Raycaster for hover
+const raycaster = new THREE.Raycaster();
+raycaster.params.Points = { threshold: 0.3 };
+const mouse = new THREE.Vector2();
+const tooltip = document.getElementById('tooltip');
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  let hit = false;
+  for (let i = 0; i < pointMeshes.length; i++) {
+    const intersects = raycaster.intersectObject(pointMeshes[i]);
+    if (intersects.length > 0) {
+      const d = pointData[i];
+      tooltip.innerHTML = `<strong>${d.category}</strong><br>${d.content || d.id}<br>mass: ${d.mass}`;
+      tooltip.style.display = 'block';
+      tooltip.style.left = (e.clientX - canvas.getBoundingClientRect().left + 12) + 'px';
+      tooltip.style.top = (e.clientY - canvas.getBoundingClientRect().top - 10) + 'px';
+      hit = true;
+      break;
+    }
+  }
+  if (!hit) tooltip.style.display = 'none';
+});
+
+function updateSpatial(data) {
+  // Remove old meshes
+  pointMeshes.forEach(m => { scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
+  pointMeshes = [];
+  pointData = data.points || [];
+
+  const seenCategories = new Set();
+
+  data.points.forEach(p => {
+    const radius = Math.max(0.08, Math.min(0.4, Math.sqrt(p.mass) * 0.25));
+    const geo = p.type === 'memory'
+      ? new THREE.SphereGeometry(0.05, 6, 6)
+      : new THREE.SphereGeometry(radius, 12, 12);
+    const color = new THREE.Color(p.color || '#666');
+    const mat = new THREE.MeshStandardMaterial({
+      color, emissive: color, emissiveIntensity: p.type === 'memory' ? 0.1 : 0.3,
+      transparent: p.type === 'memory', opacity: p.type === 'memory' ? 0.35 : 0.85,
+      roughness: 0.6,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(p.x, p.y, p.z);
+    scene.add(mesh);
+    pointMeshes.push(mesh);
+    seenCategories.add(p.category);
+  });
+
+  // Update attention
+  const a = data.attention;
+  attnMesh.position.set(a.x, a.y, a.z);
+
+  // Update trail
+  const ap = data.attention_prev;
+  const positions = trailLine.geometry.attributes.position;
+  if (positions) {
+    positions.setXYZ(0, ap.x, ap.y, ap.z);
+    positions.setXYZ(1, a.x, a.y, a.z);
+    positions.needsUpdate = true;
+  }
+
+  // Update legend
+  const legendEl = document.getElementById('legend');
+  legendEl.innerHTML = '';
+  seenCategories.forEach(cat => {
+    if (cat === 'memory' || cat === 'belief') return;
+    const item = document.createElement('span');
+    item.className = 'legend-item';
+    item.innerHTML = `<span class="legend-dot" style="background:${CAT_COLORS[cat]||'#666'}"></span>${cat}`;
+    legendEl.appendChild(item);
+  });
+
+  document.getElementById('point-count').textContent = data.point_count;
+}
+
+function updateGauges(data) {
+  document.getElementById('g-omega').textContent = data.omega.toFixed(3);
+  document.getElementById('gf-omega').style.width = (data.omega * 100) + '%';
+  document.getElementById('g-gamma').textContent = data.gamma.toFixed(3);
+  document.getElementById('gf-gamma').style.width = ((data.gamma - 0.5) / 0.45 * 100) + '%';
+  document.getElementById('pulse-num').textContent = data.pulse;
+
+  const badge = document.getElementById('state-badge');
+  badge.textContent = data.state;
+  badge.className = 'status-badge ' + (data.state || '').toLowerCase();
+
+  const catList = document.getElementById('cat-list');
+  catList.innerHTML = '';
+  if (data.beliefs && data.beliefs.categories) {
+    Object.entries(data.beliefs.categories).sort((a,b) => b[1]-a[1]).forEach(([cat, count]) => {
+      const li = document.createElement('li');
+      li.className = 'cat-item';
+      li.innerHTML = `<span class="cat-name"><span class="cat-dot" style="background:${CAT_COLORS[cat]||'#666'}"></span>${cat}</span><span class="cat-count">${count}</span>`;
+      catList.appendChild(li);
+    });
+  }
+}
+
+// ── Animation Loop ──
+let time = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  time += 0.02;
+  attnMesh.rotation.y = time;
+  attnMesh.scale.setScalar(1 + Math.sin(time * 2) * 0.15);
+  renderer.render(scene, camera);
+}
+animate();
+
+// ── Resize ──
+window.addEventListener('resize', () => {
+  const w = container.clientWidth, h = container.clientHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+});
+
+// ── Chat System ──
+let chatOutboundTotal = 0;
+const chatMessages = document.getElementById('chat-messages');
+const chatInput = document.getElementById('chat-input');
+const chatSender = document.getElementById('chat-sender');
+const chatSendBtn = document.getElementById('chat-send');
+
+// Persist sender name
+chatSender.value = localStorage.getItem('helix_chat_sender') || 'Tester';
+chatSender.addEventListener('change', () => {
+  localStorage.setItem('helix_chat_sender', chatSender.value);
+});
+
+function appendChatMsg(sender, content, type, ts) {
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + type;
+  const timeStr = ts ? new Date(ts * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
+  div.innerHTML = `<span class="chat-sender">${sender}</span><span class="chat-time">${timeStr}</span><br>${content}`;
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function sendChatMessage() {
+  const content = chatInput.value.trim();
+  if (!content) return;
+  const sender = chatSender.value.trim() || 'Tester';
+  fetch('/api/messages', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ sender, content }),
+  }).then(() => {
+    appendChatMsg(sender, content, 'inbound');
+    chatInput.value = '';
+  }).catch(() => {});
+}
+
+chatSendBtn.addEventListener('click', sendChatMessage);
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendChatMessage();
+});
+
+function pollChatOutbound() {
+  fetch(`/api/messages/outbound?since=${chatOutboundTotal}`)
+    .then(r => r.json())
+    .then(data => {
+      (data.messages || []).forEach(msg => {
+        appendChatMsg('Helix', msg.content, 'outbound', msg.timestamp);
+      });
+      chatOutboundTotal = data.total || chatOutboundTotal;
+    })
+    .catch(() => {});
+}
+
+setInterval(pollChatOutbound, 3000);
+
+// ── Polling ──
+setInterval(() => { if (currentTab !== 'chat') fetchLogs(); }, 3000);
+setInterval(() => {
+  fetch('/api/spatial').then(r=>r.json()).then(updateSpatial).catch(()=>{});
+}, 10000);
+setInterval(() => {
+  fetch('/api/status').then(r=>r.json()).then(updateGauges).catch(()=>{});
+}, 5000);
+
+// Initial fetch
+fetchLogs();
+pollChatOutbound();
+fetch('/api/spatial').then(r=>r.json()).then(updateSpatial).catch(()=>{});
+fetch('/api/status').then(r=>r.json()).then(updateGauges).catch(()=>{});
+</script>
+</body>
+</html>

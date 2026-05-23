@@ -42,6 +42,7 @@ from core.physics_engine import PhysicsEngine
 from core.preconscious import Preconscious
 from core.scratchpad import Scratchpad
 from llm.providers.base import ChatSession, ProviderConfig, create_session, detect_available_provider
+from llm.providers.base import PRIMARY_MODEL, FALLBACK_MODEL
 from core.context_compressor import ContextCompressor
 
 logger = logging.getLogger("helix.core.pulse_loop")
@@ -402,7 +403,7 @@ class PulseLoop:
                     self._fallback_successes = 0
                     self._restore_failures = 0
                     # Restore primary model
-                    _PRIMARY_MODEL = "gemini-2.5-flash"
+                    _PRIMARY_MODEL = PRIMARY_MODEL
                     if hasattr(self._chat, 'switch_model'):
                         current = getattr(self._chat, '_model', '')
                         if current != _PRIMARY_MODEL:
@@ -418,7 +419,7 @@ class PulseLoop:
             # ── Rate-Limit Gate ───────────────────────────────────
             #    When rate-limited, force fallback model but keep pulsing.
             if self._rate_limited:
-                _FALLBACK = "gemini-3.1-flash-lite-preview"
+                _FALLBACK = FALLBACK_MODEL
                 if self._chat is not None:
                     # Session exists — switch model if needed
                     if hasattr(self._chat, 'switch_model'):
@@ -623,8 +624,8 @@ class PulseLoop:
         thought = self._send_pulse(pulse_message)
 
         # 4b. If we got a 429, back off and optionally fallback model
-        _FALLBACK_MODEL = "gemini-3.1-flash-lite-preview"
-        _PRIMARY_MODEL = "gemini-2.5-flash"
+        _FALLBACK_MODEL = FALLBACK_MODEL
+        _PRIMARY_MODEL = PRIMARY_MODEL
         # How many consecutive successes on fallback before trying primary again.
         _FALLBACK_COOLDOWN_PULSES = 10
         # How many failed restore attempts before hard-locking to fallback

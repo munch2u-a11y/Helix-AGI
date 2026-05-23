@@ -492,10 +492,10 @@ class CognitiveSpace:
             if not pt:
                 continue
 
-            # Verlinde entropic gravity: F = T × ΔS / Δx
+            # Cognitive gravity: F = T × m / d²
             # T = concept temperature (recency heat)
-            # ΔS ~ mass (structural information bits)
-            # Δx = distance in 8D space
+            # m = structural mass (confidence or importance)
+            # d = distance in 8D space
             mass = self._compute_structural_mass(pt)
             temperature = self._compute_temperature(pt)
 
@@ -909,7 +909,7 @@ class CognitiveSpace:
             temperature = self._compute_temperature(point_data)
             direction = point_data["position"] - position
 
-            # Verlinde: F = T × mass × dir / |dir|³
+            # Cognitive gravity: F = T × mass × dir / |dir|³
             force += temperature * mass * direction / (dist ** 3)
 
         # ---- Dynamic force clamp based on current density ----
@@ -1011,19 +1011,19 @@ class CognitiveSpace:
 
         self.gravity_field.compute_field(positions, masses)
 
-    # ── Verlinde Entropic Gravity ──────────────────────────────────────
+    # ── Cognitive Gravity ──────────────────────────────────────────────
     #
-    # From Verlinde (2011): F = T × ΔS / Δx
-    #   Gravity is NOT fundamental — it emerges from entropy.
-    #   T = temperature of the holographic screen
-    #   ΔS = entropy change when a particle displaces information
-    #   Δx = displacement
-    #
-    # In the mind-universe:
-    #   Mass = structural density (N holographic bits = connections)
+    # Gravity-inspired inverse-square retrieval ranking.
+    #   Mass = structural density (confidence or importance)
     #   Temperature = recency heat (radiates in pulse-time)
     #   Force = T × mass / d²  (the emergent will)
     #   The LLM's resolution IS the gravitational action.
+    #
+    # The formula is structurally isomorphic to Newtonian gravity with
+    # recency-weighted temperature and confidence-based mass. Dense
+    # clusters of related beliefs pull harder because they contribute
+    # more mass points to the same region, not because individual
+    # points are inflated.
 
     def _compute_structural_mass(self, point_data: dict) -> float:
         """A point's rest mass — purely intrinsic, never changes.
@@ -1056,9 +1056,8 @@ class CognitiveSpace:
     def _compute_temperature(self, point_data: dict) -> float:
         """A point's temperature — recency heat that radiates away.
 
-        From Verlinde's equipartition: E = ½ × N × k_B × T
         Temperature determines how strongly this concept's mass
-        contributes to the entropic force. Hot = strong pull.
+        contributes to the gravitational force. Hot = strong pull.
         Cold = baseline pull. Nothing is ever removed.
 
         T = T₀ / (1 + (pulse_age / τ)²)

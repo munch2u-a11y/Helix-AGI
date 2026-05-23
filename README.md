@@ -1,6 +1,6 @@
 <p align="center">
   <h1 align="center">Helix AGI</h1>
-  <p align="center"><strong>A continuous, autonomous cognitive architecture driven by spatial memory and entropic gravity</strong></p>
+  <p align="center"><strong>A continuous, autonomous cognitive architecture driven by spatial memory and cognitive gravity</strong></p>
 </p>
 
 ---
@@ -43,7 +43,7 @@ graph TD
 | [Overview & Architecture Map](documents/audits/audit_overview.md) | Full system diagram and module index |
 | [Pulse Loop](documents/audits/audit_pulse_loop.md) | State machine, event injection, pulse cycle |
 | [Preconscious](documents/audits/audit_preconscious.md) | Concept-based injection, gravity queries, lexicon |
-| [Cognitive Space](documents/audits/audit_cognitive_space.md) | 8D projection, Verlinde gravity, KD-Tree |
+| [Cognitive Space](documents/audits/audit_cognitive_space.md) | 8D projection, cognitive gravity, KD-Tree |
 | [Spatial Mind](documents/audits/audit_spatial_mind.md) | Dual-space manifold, Euler-Lagrange dynamics |
 | [Affect Field](documents/audits/audit_affect_field.md) | Plutchik emotional wave packets, anisotropic diffusion |
 | [Memory Manager](documents/audits/audit_memory_manager.md) | Three-tier episodic memory (short/long/core) |
@@ -66,12 +66,12 @@ graph TD
 
 ## Moving Beyond Traditional RAG: The Spatial Mind
 
-Most AI applications retrieve context by embedding a user's query and running a cosine-similarity search against a vector database. Helix replaces this with a **Spatial Mind** — two independent 8-dimensional cognitive spaces (one for beliefs, one for episodic memories) governed by entropic gravity.
+Most AI applications retrieve context by embedding a user's query and running a cosine-similarity search against a vector database. Helix replaces this with a **Spatial Mind** — two independent 8-dimensional cognitive spaces (one for beliefs, one for episodic memories) governed by cognitive gravity.
 
 **Why spatial-gravitational instead of traditional RAG?**
 
 - **Zero API calls during injection** — All retrieval is CPU-bound (KD-Tree queries, NumPy operations). No embedding API round-trips during the pulse.
-- **Physics-based relevance** — Memories aren't ranked by cosine similarity alone. They're ranked by *Verlinde entropic gravity*: `F ∝ T × m / d²`, incorporating recency (temperature), structural importance (mass), and semantic proximity (distance).
+- **Physics-based relevance** — Memories aren't ranked by cosine similarity alone. They're ranked by *cognitive gravity*: `F ∝ T × m / d²`, incorporating recency (temperature), structural importance (mass), and semantic proximity (distance).
 - **Concept-aware retrieval** — A RAKE-style concept extractor identifies keyphrases from the current thought. Each concept spawns an independent gravity query with a rolling blacklist, preventing topic dominance and ensuring balanced context assembly.
 - **Continuous attention dynamics** — The attention center has *inertia* (γ = 0.85). Sustained focus deepens retrieval from a conceptual region; sudden topic shifts trigger context compression and retrieval reset. Traditional RAG has no concept of attentional momentum.
 - **Somatic encoding** — Every memory is stored with its 8D position and Lagrangian snapshot (Ω, H, D_KL). When recalled, the original emotional state mildly reproduces — state-dependent episodic recall.
@@ -126,7 +126,7 @@ helix_agi/
 │   ├── concept_extractor.py   #   RAKE-style keyphrase extraction
 │   ├── physics_engine.py      #   8D manifold orchestrator
 │   ├── spatial_mind.py        #   Dual-space (beliefs + memories) gravity dynamics
-│   ├── cognitive_space.py     #   8D projection, KD-Tree, Verlinde gravity
+│   ├── cognitive_space.py     #   8D projection, KD-Tree, cognitive gravity
 │   ├── affect_field.py        #   Plutchik emotional wave packets
 │   ├── context_compressor.py  #   Rolling first-person summarization
 │   ├── scratchpad.py          #   Markdown-based working memory
@@ -176,6 +176,12 @@ helix_agi/
 │   ├── audits/                #   Line-by-line subsystem audits (10 files)
 │   └── *.md                   #   Deep-dive analyses and workflow breakdowns
 │
+├── dashboard/                 # Real-time cognitive monitoring
+│   ├── dashboard.py           #   Flask backend (read-only observer)
+│   └── dashboard_ui.html      #   Three.js 3D frontend
+│
+├── scripts/                   # Agent utility scripts
+│
 ├── data/                      # Runtime data (gitignored, created by setup.py)
 │   ├── beliefs/               #   8 category JSON files
 │   ├── memory/                #   SQLite episodic store
@@ -203,6 +209,12 @@ Credentials are stored in `~/.config/helix/credentials.env` (outside the reposit
 ```bash
 git clone https://github.com/munch2u-a11y/Helix-AGI.git
 cd Helix-AGI
+
+# Create and activate a virtual environment
+python3 -m venv venv
+source venv/bin/activate  # Linux/macOS
+# venv\Scripts\activate   # Windows
+
 pip install -r requirements.txt
 
 # Interactive first-run setup — configures credentials and bootstraps seed beliefs
@@ -212,10 +224,46 @@ python setup.py
 python main.py
 ```
 
-The setup wizard will prompt for API keys and create:
-- `~/.config/helix/credentials.env` — API keys and tokens
-- `data/beliefs/self_identity.json` — Seed identity beliefs
-- `data/beliefs/skills.json` — Seed capability beliefs
+The setup wizard will prompt for your name, agent name, and API keys. It creates:
+- `~/.config/helix/credentials.env` — API keys and tokens (outside the repo)
+- `data/beliefs/` — 19 seed beliefs across 7 categories (identity, capabilities, skills, knowledge, preferences, people, feedback)
+- `data/memory/`, `data/spatial/` — Runtime directories for episodic memory and manifold state
+
+### Model Configuration
+
+All LLM model names are configurable via environment variables. Set these in `~/.config/helix/credentials.env` or export them:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `HELIX_PRIMARY_MODEL` | `gemini-2.5-flash` | Main conscious mind |
+| `HELIX_FALLBACK_MODEL` | `gemini-2.0-flash-lite` | 429 rate-limit fallback |
+| `HELIX_AUXILIARY_MODEL` | `gemini-2.0-flash-lite` | Background tasks (curator, batch service, compressor) |
+
+### Communication Channels
+
+During `setup.py`, you choose which communication channels to enable. The dashboard chat is always available — external channels are opt-in:
+
+| Channel | Token Env Var | Notes |
+|---------|--------------|-------|
+| **Dashboard** | *(always on)* | Web UI chat at `localhost:5050` — zero config |
+| **Telegram** | `HELIX_TELEGRAM_TOKEN` | Requires a Telegram Bot Token from @BotFather |
+| **Discord** | `HELIX_DISCORD_TOKEN` | Requires a Discord bot token with Message Content intent. Install: `pip install discord.py` |
+
+Enabled channels are stored as `HELIX_COMMS_CHANNELS=dashboard,telegram,discord` in credentials.env. Only enabled channels get their tools loaded into the agent's context.
+
+### Cognitive Dashboard
+
+The dashboard launches automatically when you run `main.py` — no separate terminal needed. Open `http://localhost:5050` in your browser.
+
+To change the port, set `HELIX_DASHBOARD_PORT=8080` in your environment.
+
+The dashboard provides:
+- **Thought Stream** — Filtered log tails (thoughts, tools, beliefs, spatial activity)
+- **Chat** — Bidirectional messaging with Helix through the web UI
+- **3D Mind Space** — Interactive Three.js visualization of the 8D cognitive manifold (rotate, zoom, pan)
+- **Lagrangian Gauges** — Real-time Ω stability, γ inertia, belief category breakdown
+
+The dashboard is read-only for monitoring — the chat channel is the only write path, and it uses the same event queue as Telegram and Discord.
 
 ---
 

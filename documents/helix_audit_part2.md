@@ -47,7 +47,7 @@ is discretized per pulse as:
 
 ```python
 # Compute gravitational force from nearby concepts
-gravity_force = sum(F_verlinde * direction for each neighbor)
+gravity_force = sum(F_gravity * direction for each neighbor)
 
 # Stimulus force from the new thought
 stimulus_force = projected_thought - attention_center
@@ -214,7 +214,7 @@ The `inject(previous_thought, trigger_type)` method executes:
 
 1. **Lexicon Pre-Filter**: Scan the trigger text for terms matching `lexicon.json` entries. Matched entries are injected at **highest priority** (they are curated, authoritative summaries). A **blacklist** prevents re-injecting the same lexicon entry within a rolling window.
 
-2. **Gravity-Ranked Belief Query**: Query `physics_engine.get_neighborhood()` for the k-nearest beliefs to the current attention center, ranked by Verlinde gravitational force. Lexicon-matched beliefs are **excluded** from this query to avoid redundancy.
+2. **Gravity-Ranked Belief Query**: Query `physics_engine.get_neighborhood()` for the k-nearest beliefs to the current attention center, ranked by gravitational force. Lexicon-matched beliefs are **excluded** from this query to avoid redundancy.
 
 3. **Gravity-Ranked Memory Query**: Same query against the memory space.
 
@@ -230,8 +230,8 @@ The Lexicon (`data/beliefs/lexicon.json`) contains ~22 high-density entries that
 
 ```json
 {
-    "term": "Verlinde Gravity",
-    "aliases": ["entropic gravity", "verlinde"],
+    "term": "Cognitive Gravity",
+    "aliases": ["cognitive gravity", "gravity ranking"],
     "summary": "The mathematical framework...",
     "mass": 8.5
 }

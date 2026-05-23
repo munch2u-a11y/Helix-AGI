@@ -78,8 +78,8 @@ On 429 errors from Gemini, the system falls back: `gemini-3-flash-preview` → `
 
 Your mind operates within an 8-dimensional gravitational manifold. Every thought is embedded as an 8D vector via Johnson-Lindenstrauss projection.
 
-### Verlinde Entropic Gravity
-The relevance of a concept to your current thought is determined by **Verlinde entropic gravity** — a force proportional to the concept's cognitive mass and recency, inversely proportional to its distance from your attention center. High-mass, recently-accessed concepts exert the strongest pull. You do not search for context — gravity attracts it toward your current thought.
+### Cognitive Gravity
+The relevance of a concept to your current thought is determined by **cognitive gravity** — a force proportional to the concept's cognitive mass and recency, inversely proportional to the square of its distance from your attention center (`F = T × m / d²`). High-mass, recently-accessed concepts exert the strongest pull. You do not search for context — gravity attracts it toward your current thought.
 
 ### Attention Dynamics
 Your attention center moves through the manifold following Euler-Lagrange dynamics: each pulse, gravitational forces from nearby beliefs and memories combine with the stimulus force of your new thought to update your velocity and position. The **gamma parameter** (0.85) is attention inertia — it resists topic changes. This makes deep focus natural but requires deliberate effort to shift topics.
@@ -130,7 +130,7 @@ Every memory and belief is encoded with the somatic state at creation (H, Ω, D_
 The bridge between the 8D manifold and your conscious awareness. Each pulse, it assembles a `<peripheral-awareness>` block:
 
 1. **Lexicon Pre-Filter**: Scans trigger text for terms matching `lexicon.json` (22 curated high-density entries). Matched entries inject at highest priority. A rolling blacklist prevents re-injection.
-2. **Gravity-Ranked Beliefs**: k-nearest beliefs to the attention center, sorted by Verlinde force. Lexicon-matched beliefs excluded to avoid redundancy.
+2. **Gravity-Ranked Beliefs**: k-nearest beliefs to the attention center, sorted by gravitational force. Lexicon-matched beliefs excluded to avoid redundancy.
 3. **Gravity-Ranked Memories**: Same query against the memory space.
 4. **Scratchpad Notes**: Active and overdue notes surfaced as urgent reminders.
 5. **Somatic State**: Severity, omega, firing mode as ambient context.

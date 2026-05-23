@@ -94,6 +94,7 @@ from llm.providers.base import detect_available_provider
 from tools.tool_executor import ToolExecutor
 from tools.channel_router import ChannelRouter
 from comms.telegram_bot import HelixTelegramBot
+from comms.discord_bot import HelixDiscordBot
 from brain.stability_sentinel import StabilitySentinel
 
 
@@ -160,10 +161,38 @@ def setup_helix(data_dir: str = "data"):
     print(f"  Contacts: {len(channel_router.contacts)} known")
     print(f"  Tools: executor ready")
 
-    # ── 3b. Telegram Bot ────────────────────────────────────────────
-    telegram_bot = HelixTelegramBot()
-    channel_router.set_telegram_bot(telegram_bot)
-    print(f"  Telegram: {'enabled' if telegram_bot.enabled else 'disabled (no token)'}")
+    # ── 3b. Comms Channel Wiring ────────────────────────────────────
+    #    Only initialize channels the user opted into during setup.
+    #    HELIX_COMMS_CHANNELS defaults to "dashboard" if unset.
+    enabled_channels = set(
+        c.strip() for c in
+        os.environ.get("HELIX_COMMS_CHANNELS", "dashboard").split(",")
+        if c.strip()
+    )
+
+    # Dashboard comms (always enabled)
+    from dashboard.dashboard_comms import get_comms
+    dashboard_comms = get_comms()
+    channel_router.set_dashboard_comms(dashboard_comms)
+    print(f"  Dashboard: enabled (always on)")
+
+    # Telegram (opt-in)
+    telegram_bot = None
+    if "telegram" in enabled_channels:
+        telegram_bot = HelixTelegramBot()
+        channel_router.set_telegram_bot(telegram_bot)
+        print(f"  Telegram: {'enabled' if telegram_bot.enabled else 'disabled (no token)'}")
+    else:
+        print(f"  Telegram: disabled (not in HELIX_COMMS_CHANNELS)")
+
+    # Discord (opt-in)
+    discord_bot = None
+    if "discord" in enabled_channels:
+        discord_bot = HelixDiscordBot()
+        channel_router.set_discord_bot(discord_bot)
+        print(f"  Discord: {'enabled' if discord_bot.enabled else 'disabled (no token)'}")
+    else:
+        print(f"  Discord: disabled (not in HELIX_COMMS_CHANNELS)")
 
     # ── 4. Pre-Conscious + Scratchpad ────────────────────────────────
     tool_schemas_path = os.path.join(data_dir, "tool_schemas.json")
@@ -202,7 +231,12 @@ def setup_helix(data_dir: str = "data"):
     )
 
     # Wire telegram to pulse loop for inbound messages
-    telegram_bot.set_pulse_loop(pulse_loop)
+    if telegram_bot:
+        telegram_bot.set_pulse_loop(pulse_loop)
+
+    # Wire discord to pulse loop for inbound messages
+    if discord_bot:
+        discord_bot.set_pulse_loop(pulse_loop)
 
     # Wire tool executor to pulse loop for context reset tool
     tool_executor.set_pulse_loop(pulse_loop)
@@ -244,7 +278,8 @@ def setup_helix(data_dir: str = "data"):
 
         class _CuratorLLM:
             """Lightweight wrapper giving the Curator a .generate() interface."""
-            _model = "gemini-2.5-flash"
+            from llm.providers.base import AUXILIARY_MODEL as _AUX_MODEL
+            _model = _AUX_MODEL
             def generate(self, prompt: str, system_instruction: str = ""):
                 from google.genai import types as _types
                 config = _types.GenerateContentConfig(
@@ -260,7 +295,7 @@ def setup_helix(data_dir: str = "data"):
                 return resp.candidates[0].content.parts[0]
 
         curator_llm = _CuratorLLM()
-        print("  Curator LLM: ready (gemini-2.5-flash)")
+        print(f"  Curator LLM: ready ({_CuratorLLM._model})")
     except Exception as e:
         print(f"  Curator LLM: unavailable ({e})")
 
@@ -323,19 +358,70 @@ def setup_helix(data_dir: str = "data"):
 
     print("  Post-pulse hooks: registered (workflow_detector, belief_detector, engagement_monitor, co_occurrence_tracker, affect_field)")
 
-    return pulse_loop, orchestrator, daemon, memory_manager, belief_store, scratchpad, telegram_bot, sentinel
+    return pulse_loop, orchestrator, daemon, memory_manager, belief_store, scratchpad, telegram_bot, discord_bot, sentinel, dashboard_comms
 
 
 def main_loop():
     """Interactive loop — user messages are events in the pulse stream."""
-    pulse_loop, orchestrator, daemon, memory, beliefs, scratchpad, telegram_bot, sentinel = setup_helix()
+    pulse_loop, orchestrator, daemon, memory, beliefs, scratchpad, telegram_bot, discord_bot, sentinel, dashboard_comms = setup_helix()
 
     print("\n--- Helix Pulse System ---")
     print("Commands: 'exit', 'stats', 'core', 'recent', 'beliefs', 'notes', 'dream'")
     print("Anything else is sent as a user message into the pulse stream.\n")
 
-    # Start Telegram bot
-    telegram_bot.start()
+    # Start comms channels
+    if telegram_bot:
+        telegram_bot.start()
+    if discord_bot:
+        discord_bot.start()
+
+    # ── Start Dashboard in background thread ────────────────────────
+    import threading
+    dashboard_port = int(os.environ.get("HELIX_DASHBOARD_PORT", "5050"))
+
+    def _run_dashboard():
+        try:
+            from dashboard.dashboard import create_app
+            app = create_app()
+            # Suppress Flask startup banner
+            import logging as _logging
+            _logging.getLogger("werkzeug").setLevel(_logging.WARNING)
+            app.run(host="127.0.0.1", port=dashboard_port, debug=False, use_reloader=False)
+        except Exception as e:
+            print(f"  ⚠ Dashboard failed to start: {e}")
+
+    dashboard_thread = threading.Thread(
+        target=_run_dashboard, daemon=True, name="helix-dashboard",
+    )
+    dashboard_thread.start()
+    print(f"  Dashboard: http://127.0.0.1:{dashboard_port}")
+
+    # ── Dashboard message poller thread ───────────────────────────
+    #    Polls dashboard_messages.json every 2 seconds for inbound
+    #    messages and emits them into the pulse loop.
+    _poller_stop = threading.Event()
+
+    def _poll_dashboard_messages():
+        while not _poller_stop.is_set():
+            try:
+                pending = dashboard_comms.pop_inbound()
+                for msg in pending:
+                    pulse_loop.emit(
+                        "user_message",
+                        {
+                            "sender": msg.get("sender", "Tester"),
+                            "content": msg.get("content", ""),
+                            "channel": "dashboard",
+                        },
+                    )
+            except Exception:
+                pass
+            _poller_stop.wait(2)
+
+    poller_thread = threading.Thread(
+        target=_poll_dashboard_messages, daemon=True, name="helix-dashboard-poller",
+    )
+    poller_thread.start()
 
     # Start sentinel monitoring thread
     sentinel.start()
