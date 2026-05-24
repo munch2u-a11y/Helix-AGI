@@ -678,7 +678,7 @@ class CognitiveSpace:
             "importance": importance,
             "relations_count": 0,
             "weight": "trail",
-            "content": content[:80] if content else "",
+            "content": content if content else "",
             "encoding_omega": omega,
             "encoding_s_total": 0.0,
             "last_accessed": time.time(),
@@ -693,6 +693,30 @@ class CognitiveSpace:
 
         if self._pending_additions >= KDTREE_REBUILD_THRESHOLD:
             self._rebuild_tree()
+
+    def extract_cooled_trail_particles(self, temp_threshold: float = 0.10) -> list[dict]:
+        """Extract and remove trail particles that have cooled below the threshold.
+        
+        This allows callers to snapshot them to permanent storage (like the 
+        Cognitive Journal) before removing them from RAM to free memory.
+        """
+        cooled = []
+        pids_to_remove = []
+        for pid, data in self._points.items():
+            if data.get("type") == "trail":
+                T = self._compute_temperature(data)
+                if T <= temp_threshold:
+                    cooled.append(data.copy())
+                    cooled[-1]["id"] = pid
+                    pids_to_remove.append(pid)
+                    
+        for pid in pids_to_remove:
+            del self._points[pid]
+            
+        if pids_to_remove:
+            self._tree_dirty = True
+            
+        return cooled
 
     def decay_trail_particles(self, **kwargs):
         """DEPRECATED — no-op. Temperature handles cooling.

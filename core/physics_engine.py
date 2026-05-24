@@ -209,7 +209,7 @@ class PhysicsEngine:
         # Deposit trail particles in both spaces
         self.spatial_mind.belief_space.deposit_trail_particle(
             position=self.attention_center,
-            content=thought_text[:80] if thought_text else "",
+            content=thought_text if thought_text else "",
             pulse_id=self._pulse_count,
             omega=omega,
         )
@@ -222,6 +222,10 @@ class PhysicsEngine:
             f"Pulse {self._pulse_count}: "
             f"γ={self._gamma:.2f}, flashes={len(self.last_flashes)}"
         )
+
+    def extract_cooled_trail_particles(self) -> list[dict]:
+        """Extract trail particles from belief space that have cooled down."""
+        return self.spatial_mind.belief_space.extract_cooled_trail_particles(temp_threshold=0.10)
 
     # ── Spatial State for Preconscious ────────────────────────────────
 

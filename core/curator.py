@@ -145,6 +145,16 @@ class Curator:
                 stats["lexicon_updated"] = lexicon_updates.get("updated", 0)
             except Exception as e:
                 logger.error(f"Lexicon sync failed (continuing): {e}")
+
+            # Phase 6: Journal Compaction
+            logger.info("Curator Phase 6: Journal Compaction")
+            try:
+                if hasattr(self.memory, "compact_journal"):
+                    stats["journal_compacted"] = self.memory.compact_journal()
+                else:
+                    logger.warning("memory_manager does not support journal compaction yet.")
+            except Exception as e:
+                logger.error(f"Journal compaction failed (continuing): {e}")
             
         except Exception as e:
             logger.error(f"Curator cycle failed: {e}")
