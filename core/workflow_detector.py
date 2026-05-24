@@ -183,7 +183,7 @@ def _crystallize_pattern(
             importance=min(0.6 + (count * 0.05), 0.9),
             tags=["workflow", "auto_crystallized"] + list(sequence),
             lagrangian_snapshot=lagrangian,
-            position_8d=position,
+            embedding=position,
         )
         
         # Inject into spatial field so Helix is immediately aware

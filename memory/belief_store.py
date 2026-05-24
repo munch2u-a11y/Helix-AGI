@@ -25,7 +25,8 @@ Each belief entry includes:
   - stability_index: 0.0-1.0 — destabilizing (0) to stabilizing (1)
   - relations: list[str] — IDs of logically related beliefs
   - memory_refs: list[str] — IDs of source memories
-  - position_8d: list[float] — permanent 8D manifold coordinates
+  - embedding: list[float] — 384D manifold coordinates (native embedding)
+  - position_8d: list[float] — legacy 8D coordinates (backward compat)
   - encoding_lagrangian: dict — somatic state at encoding {omega, s_total, H, D_KL}
   - created_at: ISO 8601 timestamp
   - last_accessed: ISO 8601 timestamp
@@ -38,9 +39,9 @@ Cognitive Mass Equation (from δ∫(H + λ·D_KL)dt = 0):
   m_a = Ω_encoding × (1 - s_total) × (0.5 + stability)   (affective charge)
 
   NOTE: relation count is deliberately excluded from individual mass.
-  Cluster gravity emerges from spatial density — related beliefs near
-  each other in 8D space naturally concentrate gravitational potential
-  on nearby anchors. Individual mass inflation from relations caused
+   Cluster gravity emerges from spatial density — related beliefs near
+   each other in 384D space naturally concentrate gravitational potential.
+   Individual mass inflation from relations caused
   a self-reinforcing loop: relations → mass ↑ → gravity ↑ → co-injection → more relations.
 
 Cognitive Attrition Equation (nightly):
@@ -171,6 +172,7 @@ class BeliefStore:
         relations: list = None,
         memory_refs: list = None,
         position_8d: list = None,
+        embedding: list = None,
         encoding_lagrangian: dict = None,
     ) -> bool:
         """Add a new belief to a category.
@@ -190,7 +192,8 @@ class BeliefStore:
             stability_index: 0.0 (destabilizing) to 1.0 (stabilizing)
             relations: IDs of logically related beliefs
             memory_refs: IDs of source memories (provenance)
-            position_8d: 8D manifold coordinates [x0..x7]
+            embedding: 384D manifold coordinates
+            position_8d: Legacy 8D coordinates (backward compat)
             encoding_lagrangian: Somatic state at encoding {omega, s_total, H, D_KL}
         """
         beliefs = self._read_category(category)
@@ -216,6 +219,7 @@ class BeliefStore:
             "relations": relations or [],
             "memory_refs": memory_refs or [],
             "position_8d": position_8d,
+            "embedding": embedding or position_8d,
             "encoding_lagrangian": encoding_lagrangian or {
                 "omega": 0.5, "s_total": 0.15, "H": 0.15, "D_KL": 0.0,
             },
@@ -345,7 +349,7 @@ class BeliefStore:
         """
         allowed_fields = {
             "content", "relations", "memory_refs", "confidence",
-            "verifications", "stability_index", "position_8d",
+            "verifications", "stability_index", "position_8d", "embedding",
             "mass", "last_accessed", "access_count",
             "encoding_lagrangian", "tags",
         }

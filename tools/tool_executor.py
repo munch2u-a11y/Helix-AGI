@@ -140,6 +140,7 @@ class ToolExecutor:
             "append_file": self._fc_append_file,
             "verbalize": self._fc_verbalize,
             "memory_recall": self._fc_memory_recall,
+            "belief_recall": self._fc_belief_recall,
             "note": self._fc_note,
             "note_done": self._fc_note_done,
             "list_notes": self._fc_list_notes,
@@ -559,9 +560,6 @@ class ToolExecutor:
                 return "Memory manager not initialized."
 
             # Use somatic echo recall when sentinel is available.
-            # This reproduces the emotional state from encoding —
-            # memories formed under stress nudge Ω downward on recall,
-            # memories formed during flow nudge Ω upward.
             sentinel = getattr(self, "_sentinel", None)
             if sentinel:
                 results = self.memory_manager.recall_with_somatic_echo(
@@ -585,6 +583,37 @@ class ToolExecutor:
             return "\n".join(lines)
         except Exception as e:
             return f"Memory recall failed: {e}"
+
+    def _fc_belief_recall(self, args: dict) -> str:
+        """Search the belief manifold by gravitational proximity."""
+        query = args.get("query", "")
+        if not query:
+            return "No search query provided."
+        try:
+            physics = getattr(self, "_physics_engine", None)
+            if not physics:
+                return "Physics engine not available for belief recall."
+
+            results = physics.query_neighborhood(
+                focus_text=query, k=5, exclude_trails=True
+            )
+
+            if not results:
+                return f"No beliefs found matching: {query}"
+
+            lines = [f"Beliefs near '{query}' (by cognitive gravity):"]
+            for r in results:
+                content = r.get("content", "")
+                gravity = r.get("relevance", 0)
+                mass = r.get("mass", 0)
+                btype = r.get("type", "belief")
+                marker = "★" if gravity > 5.0 else "●" if gravity > 1.0 else "·"
+                lines.append(
+                    f"  {marker} [g={gravity:.2f} m={mass:.2f}] {content}"
+                )
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Belief recall failed: {e}"
 
     def _fc_verbalize(self, args: dict) -> str:
         tag = ActionTag(tag="SPEAK", param="", content=args.get("text", ""))

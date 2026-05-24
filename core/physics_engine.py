@@ -5,14 +5,14 @@ Thin wrapper around SpatialMind that preserves the external API used by
 pulse_loop.py, preconscious.py, and dream_engine.py.
 
 Internally delegates to SpatialMind which owns:
-  - Dual CognitiveSpace instances (belief field + memory field)
-  - KDTree-indexed 8D spatial queries (O(log N))
-  - GravityField (512-anchor grid)
+  - Single CognitiveSpace (belief field, 384D native)
+  - Numpy/FAISS spatial queries
+  - On-demand gravity computation (no pre-computed anchor grid)
   - Real Shannon entropy, KL divergence, local temperature
   - Euler-Lagrange attention dynamics with force integration
 
-Previous implementation (single flat dict, brute-force O(N)) saved to:
-  previous_versions/physics_engine_pre_manifold.txt
+Previous implementation (8D projected, dual-space) saved to:
+  previous_versions/physics_engine_pre_384d.txt
 """
 
 import re
@@ -24,63 +24,52 @@ from typing import Optional, Dict, List, Any
 
 import numpy as np
 
-from core.cognitive_space import CognitiveSpace, CognitiveProjection, PROJECTION_DIM
+from core.cognitive_space import CognitiveSpace, SPATIAL_DIM
 from core.spatial_mind import SpatialMind
 
 logger = logging.getLogger("helix.core.physics_engine")
 
 # ── Constants ────────────────────────────────────────────────────────
 EMBEDDING_DIM = 384  # all-MiniLM-L6-v2
-PROJECTION_SEED = 42
 
 
 class PhysicsEngine:
     """Helix's spatial physics engine.
 
-    Wraps SpatialMind to provide the same external API that pulse_loop,
-    preconscious, and dream_engine depend on:
+    Wraps SpatialMind to provide the external API that pulse_loop,
+    preconscious, and dream_engine depend on.
 
-      step_pulse(thought_text, incoming_text, omega)
-      attention_center
-      get_spatial_state() → dict
-      query_neighborhood(focus_text, k, exclude_trails) → list
-      query_temporal_chain(anchor_pulse, window) → list
-      embed_and_project(text) → np.ndarray
-      embed_text(text) → np.ndarray
-
-    Internally uses SpatialMind with dual belief+memory spaces,
-    KDTree indexing, and real Lagrangian physics.
+    Key change: no projection step. embed() returns native 384D.
+    Single belief space — memories not spatially indexed.
     """
 
     def __init__(self, data_dir: str = None, gravity_constant: float = 0.1):
         self.G = gravity_constant
-
-        # ── Data directory ──
         self.data_dir = Path(data_dir) if data_dir else None
         if self.data_dir:
             self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        # ── SpatialMind (dual 8D spaces) ──
+        # ── SpatialMind (single 384D belief space) ──
         self.spatial_mind = SpatialMind(
             embedding_dim=EMBEDDING_DIM,
             base_dir=self.data_dir,
         )
 
-        # ── Embedder (lazy-loaded, shared with SpatialMind) ──
+        # ── Embedder (lazy-loaded) ──
         self._embedder = None
 
-        # ── Pulse counter (mind's proper time) ──
+        # ── Pulse counter ──
         self._pulse_count = 0
 
-        # ── Trail flashes (consumed by preconscious each pulse) ──
+        # ── Trail flashes ──
         self.last_flashes: List[str] = []
 
-        # ── Load persisted attention state ──
+        # ── Load persisted state ──
         self._load_attention()
 
-        logger.info("PhysicsEngine initialized (dual 8D spatial manifold via SpatialMind)")
+        logger.info("PhysicsEngine initialized (384D native manifold via SpatialMind)")
 
-    # ── Properties delegated to SpatialMind ───────────────────────────
+    # ── Properties ────────────────────────────────────────────────────
 
     @property
     def attention_center(self) -> np.ndarray:
@@ -109,7 +98,6 @@ class PhysicsEngine:
     # ── Embedder ──────────────────────────────────────────────────────
 
     def _get_embedder(self):
-        """Lazy-load ChromaDB's all-MiniLM-L6-v2 (CPU, no Ollama)."""
         if self._embedder is None:
             try:
                 from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
@@ -120,7 +108,7 @@ class PhysicsEngine:
         return self._embedder
 
     def embed_text(self, text: str) -> np.ndarray:
-        """Embed text → 384D vector. Returns zeros on failure."""
+        """Embed text → 384D vector."""
         embedder = self._get_embedder()
         if embedder is None:
             return np.zeros(EMBEDDING_DIM, dtype=np.float32)
@@ -131,12 +119,15 @@ class PhysicsEngine:
             logger.debug(f"Embedding failed: {e}")
             return np.zeros(EMBEDDING_DIM, dtype=np.float32)
 
-    def embed_and_project(self, text: str) -> np.ndarray:
-        """Text → 384D embedding → 8D position. The main interface."""
-        emb = self.embed_text(text)
-        return self.spatial_mind.belief_space.projection.project(emb)
+    def embed(self, text: str) -> np.ndarray:
+        """Text → 384D embedding. Native position, no projection."""
+        return self.embed_text(text)
 
-    # ── Pulse Step (called once per heartbeat) ────────────────────────
+    def embed_and_project(self, text: str) -> np.ndarray:
+        """Backward-compat alias for embed(). No projection in 384D."""
+        return self.embed_text(text)
+
+    # ── Pulse Step ────────────────────────────────────────────────────
 
     def step_pulse(
         self,
@@ -145,45 +136,18 @@ class PhysicsEngine:
         omega: float = 0.5,
         cluster_centroid: "np.ndarray | None" = None,
     ):
-        """Advance the spatial mind one pulse.
-
-        Delegates to SpatialMind.pulse_from_text() which:
-        1. Embeds thought → 8D stimulus position
-        2. Gets omega from sentinel for stability coupling
-        3. Updates gravity fields in both spaces
-        4. Steps attention via 3-force integration
-        5. Updates γ (inertia)
-        6. Traces cognitive trail → ⟪flash⟫ fragments
-        7. Queries both spaces for gravity-ranked context
-
-        Args:
-            thought_text: The model's last thought output.
-            incoming_text: New stimulus text (message, event), or None.
-            omega: Sentinel's hedonic Ω.
-            cluster_centroid: Optional 8D position of the weighted centroid
-                of retrieved belief clusters. When present, the spatial mind
-                uses this as the stimulus position instead of computing a
-                raw text midpoint, ensuring attention steers toward actual
-                knowledge locations.
-        """
+        """Advance the spatial mind one pulse."""
         self._pulse_count += 1
 
-        # Set omega on the sentinel reference within spatial_mind
-        # (spatial_mind reads sentinel.omega if wired, else uses 0.5)
-        # We pass omega directly by temporarily setting it
         if self.spatial_mind.sentinel:
-            # Sentinel is wired — it provides omega directly
             pass
         else:
-            # No sentinel wired to spatial_mind — create a mock omega
-            # so spatial_mind.pulse() uses our passed omega value
             class _OmegaProxy:
                 def __init__(self, val):
                     self.omega = val
             self.spatial_mind.sentinel = _OmegaProxy(omega)
             self.spatial_mind._temp_sentinel = True
 
-        # Embed and pulse
         thought_emb = self.embed_text(thought_text) if thought_text else np.zeros(EMBEDDING_DIM, dtype=np.float32)
         incoming_emb = self.embed_text(incoming_text) if incoming_text else None
 
@@ -194,19 +158,15 @@ class PhysicsEngine:
             cluster_centroid=cluster_centroid,
         )
 
-        # Clean up temp sentinel proxy
         if getattr(self.spatial_mind, '_temp_sentinel', False):
             self.spatial_mind.sentinel = None
             self.spatial_mind._temp_sentinel = False
 
-        # Extract flashes from the formatted context
         self.last_flashes = []
         if context:
-            import re as _re
-            flash_matches = _re.findall(r'⟪(.+?)⟫', context)
+            flash_matches = re.findall(r'⟪(.+?)⟫', context)
             self.last_flashes = flash_matches[:5]
 
-        # Deposit trail particles in both spaces
         self.spatial_mind.belief_space.deposit_trail_particle(
             position=self.attention_center,
             content=thought_text if thought_text else "",
@@ -214,23 +174,15 @@ class PhysicsEngine:
             omega=omega,
         )
 
-        # Periodic save
         if self._pulse_count % 10 == 0:
             self._save_attention()
 
-        logger.debug(
-            f"Pulse {self._pulse_count}: "
-            f"γ={self._gamma:.2f}, flashes={len(self.last_flashes)}"
-        )
-
     def extract_cooled_trail_particles(self) -> list[dict]:
-        """Extract trail particles from belief space that have cooled down."""
         return self.spatial_mind.belief_space.extract_cooled_trail_particles(temp_threshold=0.10)
 
-    # ── Spatial State for Preconscious ────────────────────────────────
+    # ── Spatial State ─────────────────────────────────────────────────
 
     def get_spatial_state(self) -> Dict[str, Any]:
-        """Return spatial state for preconscious injection."""
         return {
             "pulse": self._pulse_count,
             "gamma": round(self._gamma, 3),
@@ -238,14 +190,11 @@ class PhysicsEngine:
             "identity_dist": round(float(np.linalg.norm(
                 self.attention_center - self.spatial_mind._identity_center
             )), 3),
-            "memory_points": (
-                self.spatial_mind.belief_space.point_count +
-                self.spatial_mind.memory_space.point_count
-            ),
+            "memory_points": self.spatial_mind.belief_space.point_count,
             "flashes": self.last_flashes,
         }
 
-    # ── Gravitational Neighborhood Query ──────────────────────────────
+    # ── Neighborhood Query ────────────────────────────────────────────
 
     def query_neighborhood(
         self,
@@ -254,30 +203,18 @@ class PhysicsEngine:
         k: int = 8,
         exclude_trails: bool = True,
     ) -> List[Dict[str, Any]]:
-        """Query the K most gravitationally relevant points.
-
-        Queries BOTH belief and memory spaces and merges results.
-        Points scored by gravity = T × mass / distance².
-        """
-        # Determine focus position
+        """Query the K most gravitationally relevant beliefs."""
         if focus_position is not None:
             center = focus_position
         elif focus_text:
-            center = self.embed_and_project(focus_text)
+            center = self.embed(focus_text)
         else:
             center = self.attention_center
 
-        # Query both spaces
-        belief_results = self.spatial_mind.belief_space.gravity_ranked_query(
-            center, k=k
-        )
-        memory_results = self.spatial_mind.memory_space.gravity_ranked_query(
-            center, k=k
-        )
+        results = self.spatial_mind.belief_space.gravity_ranked_query(center, k=k)
 
-        # Merge and format
         scored = []
-        for pid, gravity, dist in belief_results:
+        for pid, gravity, dist in results:
             pt = self.spatial_mind.belief_space.get_point(pid)
             if not pt:
                 continue
@@ -294,84 +231,46 @@ class PhysicsEngine:
                 "creation_pulse": pt.get("creation_pulse", 0),
             })
 
-        for pid, gravity, dist in memory_results:
-            pt = self.spatial_mind.memory_space.get_point(pid)
-            if not pt:
-                continue
-            if exclude_trails and pt.get("type") == "trail":
-                continue
-            scored.append({
-                "point_id": pid,
-                "content": pt.get("content", ""),
-                "relevance": round(gravity, 4),
-                "distance": round(dist, 4),
-                "mass": round(self.spatial_mind.memory_space._compute_structural_mass(pt), 3),
-                "temperature": round(self.spatial_mind.memory_space._compute_temperature(pt), 4),
-                "type": pt.get("type", "memory"),
-                "creation_pulse": pt.get("creation_pulse", 0),
-            })
-
-        # Sort by relevance, return top K
         scored.sort(key=lambda x: x["relevance"], reverse=True)
 
-        # Mark as accessed (route to correct space)
         for s in scored[:k]:
-            pid = s["point_id"]
-            if s["type"] == "belief":
-                self.spatial_mind.belief_space.update_access(pid)
-            else:
-                self.spatial_mind.memory_space.update_access(pid)
+            self.spatial_mind.belief_space.update_access(s["point_id"])
 
         return scored[:k]
 
-    def query_temporal_chain(
-        self,
-        anchor_pulse: int,
-        window: int = 5,
-    ) -> List[Dict[str, Any]]:
-        """Get points temporally adjacent to a given pulse.
-
-        Searches both belief and memory spaces.
-        """
+    def query_temporal_chain(self, anchor_pulse: int, window: int = 5) -> List[Dict[str, Any]]:
         chain = []
-        for space in [self.spatial_mind.belief_space, self.spatial_mind.memory_space]:
-            for pid, p in space._points.items():
-                cp = p.get("creation_pulse", 0)
-                if abs(cp - anchor_pulse) <= window and cp != anchor_pulse:
-                    chain.append({
-                        "point_id": pid,
-                        "content": p.get("content", ""),
-                        "creation_pulse": cp,
-                        "type": p.get("type", "memory"),
-                        "distance_pulses": cp - anchor_pulse,
-                    })
+        for pid, p in self.spatial_mind.belief_space._points.items():
+            cp = p.get("creation_pulse", 0)
+            if abs(cp - anchor_pulse) <= window and cp != anchor_pulse:
+                chain.append({
+                    "point_id": pid,
+                    "content": p.get("content", ""),
+                    "creation_pulse": cp,
+                    "type": p.get("type", "belief"),
+                    "distance_pulses": cp - anchor_pulse,
+                })
         chain.sort(key=lambda x: x["creation_pulse"])
         return chain
 
     # ── Point Registration ────────────────────────────────────────────
 
     def add_belief_point(self, belief_id: str, text: str, **metadata):
-        """Add a belief to the belief space."""
         emb = self.embed_text(text)
         self.spatial_mind.add_belief(belief_id, emb, **metadata)
 
     def add_memory_point(self, memory_id: str, text: str, **metadata):
-        """Add a memory to the memory space."""
+        """Backward compat — adds to belief space as type 'memory'."""
         emb = self.embed_text(text)
-        self.spatial_mind.add_memory(memory_id, emb, **metadata)
+        self.spatial_mind.belief_space.add_point(
+            point_id=memory_id, embedding=emb, point_type="memory", **metadata
+        )
 
-    # ── Bootstrap from existing stores ────────────────────────────────
+    # ── Bootstrap ─────────────────────────────────────────────────────
 
     def bootstrap_from_stores(self, belief_store, memory_manager):
-        """Populate both spaces from existing belief store and memory DB.
-
-        Called once during initialization to hydrate the manifold with
-        existing data so gravity fields are non-empty from the start.
-        """
+        """Populate belief space from existing belief store."""
         beliefs_added = 0
-        memories_added = 0
-
-        # Bootstrap beliefs
         try:
             all_beliefs = belief_store.get_all_beliefs_flat()
             for b in all_beliefs:
@@ -391,49 +290,19 @@ class PhysicsEngine:
         except Exception as e:
             logger.warning(f"Belief bootstrap failed: {e}")
 
-        # Bootstrap memories
-        try:
-            recent = memory_manager.get_recent(limit=500, minutes_back=60*24*7)
-            for m in recent:
-                content = m.get("content", "")
-                if not content or len(content) < 10:
-                    continue
-                emb = self.embed_text(content)
-                self.spatial_mind.memory_space.add_point(
-                    point_id=m.get("id", f"mem_{memories_added}"),
-                    embedding=emb,
-                    point_type="memory",
-                    importance=m.get("importance", 0.5),
-                    content=content[:200],
-                )
-                memories_added += 1
-        except Exception as e:
-            logger.warning(f"Memory bootstrap failed: {e}")
-
-        # Rebuild trees
         if beliefs_added > 0:
-            self.spatial_mind.belief_space._rebuild_tree()
-        if memories_added > 0:
-            self.spatial_mind.memory_space._rebuild_tree()
+            self.spatial_mind.belief_space._rebuild_index()
 
-        # Compute identity center from beliefs
         self.spatial_mind._compute_identity_center()
-
-        logger.info(
-            f"Spatial mind bootstrapped: {beliefs_added} beliefs, "
-            f"{memories_added} memories"
-        )
+        logger.info(f"Spatial mind bootstrapped: {beliefs_added} beliefs (memories not spatially indexed)")
 
     # ── Persistence ───────────────────────────────────────────────────
 
     def _save_attention(self):
-        """Persist attention state via SpatialMind."""
         self.spatial_mind.save_state()
 
     def _load_attention(self):
-        """Load persisted attention state via SpatialMind."""
         self.spatial_mind.load_state()
 
     def save_all(self):
-        """Save all state (called on shutdown)."""
         self.spatial_mind.save_state()

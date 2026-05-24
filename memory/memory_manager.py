@@ -10,7 +10,8 @@ Replaces the legacy SQLite/ChromaDB architecture.
 3. CORE (functional long-term): High importance memories in the journal.
 
 Pre-conscious ONLY queries: short-term + core.
-Long-term is ONLY used by: conscious remember tool + spatial engine.
+Long-term is ONLY used by: conscious memory_recall tool.
+Beliefs are spatially indexed in the manifold; memories are NOT.
 """
 
 import logging
@@ -39,7 +40,7 @@ class MemoryManager:
         self.journal = CognitiveJournal(journal_path)
         
         self._frozen = False  # When True, store() calls are suppressed
-        self._spatial_mind = None  # Injected later for KD-Tree search
+        self._embedder = None  # Lazy-loaded for on-demand search
         
         logger.info(f"MemoryManager initialized with journal at {journal_path}")
 
@@ -54,9 +55,8 @@ class MemoryManager:
         logger.info("Memory UNFROZEN — writes resumed")
 
     def set_spatial_mind(self, spatial_mind):
-        """Inject spatial_mind so search_semantic can query the in-memory KD-Tree."""
-        self._spatial_mind = spatial_mind
-        logger.info("MemoryManager: spatial_mind injected for KD-Tree search")
+        """Legacy compatibility — spatial mind no longer needed for memory search."""
+        logger.info("MemoryManager: set_spatial_mind called (no-op in 384D mode)")
 
     def compact_journal(self) -> int:
         """Triggers compaction on the underlying journal."""
@@ -73,14 +73,15 @@ class MemoryManager:
         tags: Optional[List[str]] = None,
         lagrangian_snapshot: Optional[Dict[str, Any]] = None,
         belief_ids: Optional[List[str]] = None,
-        position_8d: Optional[List[float]] = None,
+        embedding: Optional[List[float]] = None,
+        position_8d: Optional[List[float]] = None,  # backward compat alias
     ) -> str:
         """Store a memory to the unified journal.
 
         Returns the string memory ID.
 
         EVERY memory gets a mandatory ISO 8601 timestamp with timezone.
-        Memories are stored with their 8D spatial position and the
+        Memories are stored with their 384D embedding and the
         Lagrangian state at time of encoding (somatic snapshot).
         """
         if self._frozen:
@@ -91,6 +92,9 @@ class MemoryManager:
         belief_ids = belief_ids or []
         lagrangian_snapshot = lagrangian_snapshot or {}
         now = _now_iso()
+        
+        # Accept either 'embedding' or legacy 'position_8d'
+        emb = embedding or position_8d
 
         entry = {
             "content": content,
@@ -101,7 +105,7 @@ class MemoryManager:
             "timestamp": now,
             "encoding_lagrangian": lagrangian_snapshot,
             "belief_ids": belief_ids,
-            "position_8d": position_8d,
+            "embedding": emb,
             "access_count": 0,
         }
 
@@ -115,23 +119,6 @@ class MemoryManager:
             f"Memory stored (id={entry_id}, type={memory_type}, "
             f"importance={importance:.2f}{severity_tag}): {content[:80]}..."
         )
-        
-        # If spatial_mind is loaded, directly inject this new point so it's instantly searchable!
-        if self._spatial_mind and position_8d and len(position_8d) == 8:
-            # Reformat for the memory space
-            point = {
-                "id": entry_id,
-                "content": content,
-                "type": "memory",
-                "importance": importance,
-                "mass": importance,
-                "timestamp": now,
-                "position_8d": position_8d
-            }
-            try:
-                self._spatial_mind.memory_space.add_point(point)
-            except Exception as e:
-                logger.error(f"Failed to inject new memory into KD-Tree: {e}")
 
         return entry_id
 
@@ -170,44 +157,68 @@ class MemoryManager:
         return core[:limit]
 
     def search_semantic(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Semantic search via the in-memory KD-Tree.
+        """On-demand semantic search over journal memories.
         
-        Queries self._spatial_mind.memory_space instead of ChromaDB.
+        Embeds the query and computes L2 distances against stored
+        memory embeddings. No per-pulse indexing cost — this is
+        only called by the conscious memory_recall tool.
         """
-        if not self._spatial_mind:
-            logger.warning("search_semantic called but _spatial_mind is not injected.")
-            return []
-
         try:
-            # The spatial_mind needs an embedding for the query.
-            # We use the belief_space or memory_space embedder.
-            # It's more robust to let the space handle the text embedding and search.
-            results = self._spatial_mind.memory_space.search(query, k=limit)
+            import numpy as np
+            
+            # Lazy-load embedder
+            if self._embedder is None:
+                try:
+                    from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+                    self._embedder = DefaultEmbeddingFunction()
+                except Exception as e:
+                    logger.warning(f"Embedder init failed: {e}")
+                    return []
+            
+            # Embed query
+            query_emb = np.array(self._embedder([query])[0], dtype=np.float32)
+            
+            # Load all entries and filter those with embeddings
+            entries = self.journal.load_all()
+            candidates = []
+            for e in entries:
+                emb = e.get("embedding") or e.get("position_8d")
+                if emb and len(emb) == len(query_emb):
+                    candidates.append(e)
+            
+            if not candidates:
+                return []
+            
+            # Compute distances
+            emb_matrix = np.array(
+                [c.get("embedding") or c.get("position_8d") for c in candidates],
+                dtype=np.float32
+            )
+            dists = np.sqrt(np.sum((emb_matrix - query_emb) ** 2, axis=1))
+            
+            # Sort by distance, take top K
+            top_idxs = np.argsort(dists)[:limit]
             
             memories = []
-            for res in results:
-                point = res["point"]
-                # Convert KD-Tree distance back to a 0-1 relevance score
-                distance = res.get("distance", 1.0)
-                relevance = round(max(0.0, 1.0 - (distance / 2.0)), 3)
-                
-                # Exclude completely irrelevant results
+            for idx in top_idxs:
+                c = candidates[int(idx)]
+                dist = float(dists[idx])
+                relevance = round(max(0.0, 1.0 - (dist / 2.0)), 3)
                 if relevance > 0.3:
                     memories.append({
-                        "id": point.get("id", ""),
-                        "content": point.get("content", ""),
-                        "memory_type": point.get("type", "unknown"),
-                        "importance": point.get("importance", 0.5),
-                        "created_at": point.get("timestamp", ""),
+                        "id": c.get("id", ""),
+                        "content": c.get("content", ""),
+                        "memory_type": c.get("type", "unknown"),
+                        "importance": c.get("importance", 0.5),
+                        "created_at": c.get("timestamp", ""),
                         "relevance": relevance,
+                        "encoding_lagrangian": c.get("encoding_lagrangian", {}),
                     })
             
-            # Sort by relevance
-            memories.sort(key=lambda x: x["relevance"], reverse=True)
             return memories
 
         except Exception as e:
-            logger.error(f"KD-Tree search failed: {e}")
+            logger.error(f"Semantic search failed: {e}")
             return []
 
     def touch_memory(self, memory_id: str, table: str = "short_term"):

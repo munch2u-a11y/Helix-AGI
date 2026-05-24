@@ -2,7 +2,7 @@
 Helix — Preconscious System (Concept-Based Spatial-Gravitational Memory Query)
 
 The preconscious is the bridge between the spatial mind and the
-conscious LLM. On every pulse, it queries the 8D gravitational
+conscious LLM. On every pulse, it queries the 384D gravitational
 field and returns a contextually relevant "net" of memories,
 beliefs, and state — NOT keyword matches, but the gravitational
 neighborhood around the current focus.
@@ -10,7 +10,7 @@ neighborhood around the current focus.
 How it works:
   1. Takes the trigger text (last thought + incoming events)
   2. Extracts 1-5 key concepts via RAKE-style keyphrase extraction
-  3. Embeds each concept independently into 8D cognitive space
+  3. Embeds each concept independently into 384D cognitive space
   4. Runs independent gravity queries centered on each concept:
      - Nearby beliefs scored by mass × temperature / distance²
      - No overlap between concept clusters (rolling blacklist)
@@ -91,7 +91,7 @@ class Preconscious:
         # Belief position cache — pre-embed all beliefs into 8D on first
         # call, then reuse. Rebuilds when belief count OR total mass changes
         # (catches merges, attrition, confidence decay — not just add/remove).
-        self._belief_cache = []       # list of {content, mass, category, position_8d}
+        self._belief_cache = []       # list of {content, mass, category, embedding}
         self._belief_cache_count = 0  # track belief store size for invalidation
         self._belief_cache_mass = 0.0 # track total mass for invalidation
 
@@ -632,9 +632,9 @@ class Preconscious:
             return self.NEIGHBORHOOD_K_MIN
 
     def _pull_spatial_neighborhood(self, trigger_text: str) -> str:
-        """Query the 8D gravitational field for nearby memory points.
+        """Query the 384D gravitational field for nearby belief points.
 
-        Returns the K most relevant memories scored by
+        Returns the K most relevant beliefs scored by
         mass × temperature / distance². Also pulls temporal chains
         for the top matches (what happened before/after).
 
@@ -721,7 +721,7 @@ class Preconscious:
     def _ensure_belief_cache(self):
         """Build or refresh the pre-embedded belief position cache.
 
-        Embeds all beliefs into 8D space once, then reuses the positions
+        Embeds all beliefs into 384D space once, then reuses the positions
         on every pulse. Rebuilds if belief count OR total mass changes
         (catches merges, attrition, confidence decay, content changes).
         """
@@ -750,16 +750,16 @@ class Preconscious:
                 continue
 
             try:
-                position = self.physics.embed_and_project(content)
+                position = self.physics.embed(content)
             except Exception:
-                position = np.zeros(8, dtype=np.float32)
+                position = np.zeros(384, dtype=np.float32)
 
             cache.append({
                 "id": b.get("id", ""),
                 "content": content,
                 "mass": b.get("mass", 1.0),
                 "category": b.get("_category", ""),
-                "position_8d": position,
+                "embedding": position,
             })
 
         self._belief_cache = cache
@@ -791,9 +791,9 @@ class Preconscious:
         if not seed_text or not seed_text.strip():
             return []
 
-        # Embed the seed into 8D
+        # Embed the seed into 384D
         try:
-            query_pos = self.physics.embed_and_project(seed_text[:500])
+            query_pos = self.physics.embed(seed_text[:500])
         except Exception:
             return []
 
@@ -804,7 +804,7 @@ class Preconscious:
             if content in exclude:
                 continue
 
-            dist_sq = float(np.sum((b["position_8d"] - query_pos) ** 2))
+            dist_sq = float(np.sum((b["embedding"] - query_pos) ** 2))
             gravity = b["mass"] / (dist_sq + 1e-4)
 
             scored.append({
@@ -813,7 +813,7 @@ class Preconscious:
                 "gravity": gravity,
                 "category": b["category"],
                 "mass": b["mass"],
-                "position_8d": b["position_8d"],
+                "embedding": b["embedding"],
             })
 
         # Sort by gravity descending — strongest pulls first
@@ -874,7 +874,7 @@ class Preconscious:
         that collects noise from between concept clusters), we:
 
           1. Extract 1-5 key concepts from the combined trigger text.
-          2. Embed each concept independently → 8D position.
+          2. Embed each concept independently → 384D position.
           3. Run a separate gravity query centered on each concept.
           4. Merge, deduplicate, and filter against the rolling blacklist.
 
@@ -992,7 +992,7 @@ class Preconscious:
             positions = []
             weights = []
             for b in merged:
-                pos = b.get("position_8d")
+                pos = b.get("embedding")
                 if pos is not None:
                     positions.append(pos)
                     weights.append(b.get("gravity", 1.0))

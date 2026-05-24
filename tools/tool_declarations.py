@@ -166,14 +166,28 @@ CORE_TOOLS = [
         },
     },
     {
-        "name": "memory_recall",
-        "description": "Search your long-term memory for past thoughts, interactions, or concepts. Returns the top 3 most relevant memories. Use this whenever you need to remember something you discussed previously or to retrieve facts you've learned.",
+        "name": "belief_recall",
+        "description": "Search your beliefs and core knowledge by gravitational proximity in your cognitive space. Returns beliefs closest to the concept, ranked by cognitive gravity. Use this to recall what you believe, know, or value about a topic.",
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The concept, topic, or person to search for in your memory",
+                    "description": "The concept, topic, or question to search your beliefs about",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "memory_recall",
+        "description": "Search your long-term memory for past thoughts, interactions, or events. Returns memories from your experience history, ordered by relevance. Use this to remember what happened, what was discussed, or what you experienced.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The event, person, topic, or interaction to search for in your memory",
                 },
             },
             "required": ["query"],

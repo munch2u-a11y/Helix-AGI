@@ -464,7 +464,7 @@ class PulseLoop:
                             source="physics_engine",
                             importance=trail.get("importance", 0.1),
                             lagrangian_snapshot=lagrangian,
-                            position_8d=trail.get("position", []).tolist() if hasattr(trail.get("position"), "tolist") else trail.get("position")
+                            embedding=trail.get("position", []).tolist() if hasattr(trail.get("position"), "tolist") else trail.get("position"),
                         )
                     if cooled_trails:
                         logger.debug(f"Snapshotted {len(cooled_trails)} cooled trail particles to journal.")
@@ -596,7 +596,6 @@ class PulseLoop:
             # Invalidate entropy baseline — manifold may have drifted
             # significantly since last baseline was sampled.
             self.physics.spatial_mind.belief_space.invalidate_entropy_baseline()
-            self.physics.spatial_mind.memory_space.invalidate_entropy_baseline()
             logger.info(
                 f"Context compressed ({reason}): {len(history)} → "
                 f"{len(compressed)} messages"
@@ -792,7 +791,7 @@ class PulseLoop:
                     importance=0.6,
                     tags=["pulse_event"],
                     lagrangian_snapshot=lagrangian,
-                    position_8d=position,
+                    embedding=position,
                 )
 
         thought_memory_id = self.memory.store(
@@ -803,10 +802,10 @@ class PulseLoop:
             tags=["pulse_thought"],
             lagrangian_snapshot=lagrangian,
             belief_ids=injected_belief_ids,
-            position_8d=position,
+            embedding=position,
         )
 
-        # 7. Update spatial physics (real 8D manifold)
+        # 7. Update spatial physics (384D manifold)
         incoming_text = " ".join(events) if events else None
         omega = self.sentinel.omega if self.sentinel else 0.5
         self.physics.step_pulse(
