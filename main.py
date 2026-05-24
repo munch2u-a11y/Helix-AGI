@@ -150,6 +150,7 @@ def setup_helix(data_dir: str = "data"):
     #    existing data so gravity queries are non-empty from the first pulse
     #    and the identity center x* is computed from real core beliefs.
     physics.bootstrap_from_stores(belief_store, memory_manager)
+    memory_manager.set_spatial_mind(physics.spatial_mind)
     print(f"  Spatial bootstrap: {physics.spatial_mind.belief_space.point_count} beliefs, "
           f"{physics.spatial_mind.memory_space.point_count} memories in 8D manifold")
 

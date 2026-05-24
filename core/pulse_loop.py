@@ -444,6 +444,33 @@ class PulseLoop:
             self._pulse()
             self._check_context_lifecycle()
 
+            # ── Trail Particle Snapshotting ───────────────────────
+            # Periodically (e.g. every pulse since it's cheap) check for cooled trail particles
+            # and write them to the permanent journal to free RAM.
+            try:
+                if hasattr(self.physics, "extract_cooled_trail_particles"):
+                    cooled_trails = self.physics.extract_cooled_trail_particles()
+                    for trail in cooled_trails:
+                        # Reconstruct the Lagrangian snapshot from the particle
+                        lagrangian = {
+                            "omega": trail.get("encoding_omega", 0.5),
+                            "s_total": trail.get("encoding_s_total", 0.0),
+                            "severity": "trail"
+                        }
+                        # Store in the journal
+                        self.memory.store(
+                            content=trail.get("content", ""),
+                            memory_type="trail_snapshot",
+                            source="physics_engine",
+                            importance=trail.get("importance", 0.1),
+                            lagrangian_snapshot=lagrangian,
+                            position_8d=trail.get("position", []).tolist() if hasattr(trail.get("position"), "tolist") else trail.get("position")
+                        )
+                    if cooled_trails:
+                        logger.debug(f"Snapshotted {len(cooled_trails)} cooled trail particles to journal.")
+            except Exception as e:
+                logger.error(f"Failed to snapshot cooled trail particles: {e}")
+
             # ── 3-Tier State Transitions ──────────────────────────
             if self._state == "ACTIVE":
                 if time.time() - self._last_incoming_time > self.ACTIVE_TIMEOUT:
