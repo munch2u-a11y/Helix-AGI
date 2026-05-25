@@ -135,6 +135,7 @@ class PulseLoop:
         # 3-tier activity tracking
         self._last_incoming_time = 0   # Last Telegram/audio message
         self._last_activity_time = 0   # Last outbound tool use or incoming
+        self._recent_tool_counts = []  # Counts of qualifying tool calls in recent pulses
 
         # Context window lifecycle tracking
         self._session_focus_origin = None
@@ -753,21 +754,34 @@ class PulseLoop:
                     })
 
         # 5c. Log tools used and track outbound tools for rate tier
-        # 5c. Log tools used and reset activity timer for any tool call
+        # 5c. Log tools used and reset activity timer based on escalation rules
         if hasattr(self._chat, 'get_last_tool_calls'):
             tool_calls = self._chat.get_last_tool_calls()
             if tool_calls:
                 tool_names = [tc['name'] for tc in tool_calls]
                 logger.info(f"FC tools used: {tool_names}")
-                # Reset both event and activity timers for any tool usage
+                
+                # Exclude the journal tool from acceleration counts
+                qualifying_tools = [name for name in tool_names if name != "journal"]
+                self._recent_tool_counts.append(len(qualifying_tools))
+            else:
+                self._recent_tool_counts.append(0)
+                
+            # Keep only the last 3 pulses
+            if len(self._recent_tool_counts) > 3:
+                self._recent_tool_counts.pop(0)
+                
+            # Escalate if 3 or more qualifying tool calls in the last 3 pulses
+            if sum(self._recent_tool_counts) >= 3:
+                # Reset both event and activity timers for sustained tool usage
                 self._last_event_time = time.time()
                 self._last_activity_time = time.time()
                 # If we were in RESTING, move back to REGULAR cadence
                 if self._state == "RESTING":
                     self._state = "REGULAR"
-                    logger.info("RESTING → REGULAR (tool activity)")
+                    logger.info("RESTING → REGULAR (sustained tool activity)")
 
-        # 5c. Track tokens for context window lifecycle
+        # 5d. Track tokens for context window lifecycle
         if hasattr(self._chat, 'get_last_token_count'):
             self._session_token_count = self._chat.get_last_token_count()
 
