@@ -687,8 +687,8 @@ class ToolExecutor:
         """Voluntarily drop pulse rate to 1 per hour."""
         duration_minutes = args.get("duration_minutes", 60)
         
-        # Limit to reasonable bounds (1 min to 24 hours)
-        duration_minutes = max(1, min(1440, int(duration_minutes)))
+        # Limit to reasonable bounds (1 min to 3 hours)
+        duration_minutes = max(1, min(180, int(duration_minutes)))
         
         if not self._pulse_loop:
             return "Error: pulse loop not available to coordinate nap."

@@ -339,7 +339,7 @@ CORE_TOOLS = [
             "properties": {
                 "duration_minutes": {
                     "type": "integer",
-                    "description": "How long to nap in minutes. Defaults to 60. Max is 1440 (24h).",
+                    "description": "How long to nap in minutes. Defaults to 60. Max is 180 (3h).",
                 },
             },
             "required": [],
