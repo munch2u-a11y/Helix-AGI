@@ -241,7 +241,7 @@ class PulseLoop:
 
     def wake(self, trigger: str = "external"):
         """Wake Helix — promote to ACTIVE from any non-ACTIVE state."""
-        if self._state in ("DORMANT", "RESTING"):
+        if self._state in ("DORMANT", "RESTING", "NAPPING"):
             prev = self._state
             self._state = "ACTIVE"
             self._consolidation_ran_this_idle = False  # Reset for next idle
@@ -250,6 +250,13 @@ class PulseLoop:
         elif self._state == "ACTIVE":
             # Already active, just make sure the wake event is set
             self._wake_event.set()
+
+    def request_nap(self, duration_minutes: int = 60):
+        """Voluntarily drop pulse rate to 1 per hour (or specified duration)."""
+        if self._state not in ("DORMANT", "NAPPING"):
+            self._state = "NAPPING"
+            self._nap_duration = duration_minutes * 60
+            logger.info(f"Nap requested for {duration_minutes} minutes")
 
     # ── Event Injection ──────────────────────────────────────────────
 
@@ -457,6 +464,13 @@ class PulseLoop:
                     self._state = "RESTING"
                     logger.info("REGULAR → RESTING (10 min no activity)")
 
+            elif self._state == "NAPPING":
+                # Napping only lasts for one cycle. Once we process a pulse
+                # (which we just did), we drop back to RESTING for the next interval
+                # so that if no further tools/messages occur, we stay at RESTING (15m).
+                self._state = "RESTING"
+                logger.info("NAPPING → RESTING (nap cycle complete)")
+
             # ── Idle Consolidation (Curator-Style) ───────────────
             #    When idle for 2+ hours, run lightweight belief
             #    maintenance in the background (merge/decay/archive).
@@ -480,6 +494,7 @@ class PulseLoop:
                 "ACTIVE": self.ACTIVE_INTERVAL,
                 "REGULAR": self.REGULAR_INTERVAL,
                 "RESTING": self.RESTING_INTERVAL,
+                "NAPPING": getattr(self, "_nap_duration", 3600),
             }.get(self._state, self.RESTING_INTERVAL)
             self._wake_event.wait(timeout=interval)
             if self._wake_event.is_set():

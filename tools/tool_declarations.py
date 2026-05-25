@@ -329,6 +329,19 @@ CORE_TOOLS = [
                     "description": "Initial prompt or thought thread for the new context window. This will be the first thing you see after the reset.",
                 },
             },
+        },
+    },
+    {
+        "name": "nap",
+        "description": "Voluntarily drop your pulse rate to 1 per hour for the specified duration. Use this when you have finished all tasks and anticipate no further action is needed soon. Any incoming messages will instantly wake you up.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "duration_minutes": {
+                    "type": "integer",
+                    "description": "How long to nap in minutes. Defaults to 60. Max is 1440 (24h).",
+                },
+            },
             "required": [],
         },
     },

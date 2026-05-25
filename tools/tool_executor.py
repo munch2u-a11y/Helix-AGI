@@ -152,6 +152,7 @@ class ToolExecutor:
             "ptz_look": self._fc_ptz_look,
             "camera_auto_track": self._fc_camera_auto_track,
             "reset_context": self._fc_reset_context,
+            "nap": self._fc_nap,
         }
         mgmt_handlers = {
             "enable_toolset": self._fc_enable_toolset,
@@ -681,6 +682,19 @@ class ToolExecutor:
         if prompt:
             return f"Context reset queued. New thread: {prompt[:100]}"
         return "Context reset queued. Fresh context window on next pulse."
+
+    def _fc_nap(self, args: dict) -> str:
+        """Voluntarily drop pulse rate to 1 per hour."""
+        duration_minutes = args.get("duration_minutes", 60)
+        
+        # Limit to reasonable bounds (1 min to 24 hours)
+        duration_minutes = max(1, min(1440, int(duration_minutes)))
+        
+        if not self._pulse_loop:
+            return "Error: pulse loop not available to coordinate nap."
+            
+        self._pulse_loop.request_nap(duration_minutes=duration_minutes)
+        return f"Nap initiated for {duration_minutes} minutes. I will pulse at 1/hour until then, unless woken by a message."
 
     def _fc_listen(self, args: dict) -> str:
         duration = str(args.get("duration", 5))
