@@ -80,7 +80,7 @@ class CoOccurrenceTracker:
             belief_store: BeliefStore instance for reading/writing relations
             data_dir: Directory for state persistence
             cognitive_space: Optional CognitiveSpace instance for Hebbian
-                drift (updating 8D positions of related beliefs)
+                drift (updating positions of related beliefs in the manifold)
         """
         self.belief_store = belief_store
         self.data_dir = Path(data_dir)
@@ -315,7 +315,7 @@ class CoOccurrenceTracker:
         Enforces a daily cap (MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY) to
         prevent early manifold hyper-crystallization.
         After wiring, applies Hebbian drift: related beliefs are pulled
-        slightly closer together in 8D space, proportional to their
+        slightly closer together in 384D space, proportional to their
         co-occurrence count.
 
         Returns the number of new relations added.
@@ -428,9 +428,9 @@ class CoOccurrenceTracker:
             drifted += 1
 
         if drifted > 0:
-            self.cognitive_space._tree_dirty = True
+            self.cognitive_space._index_dirty = True
             logger.info(
-                "Hebbian drift: %d pairs shifted in 8D space",
+                "Hebbian drift: %d pairs shifted in 384D space",
                 drifted,
             )
 
