@@ -184,6 +184,7 @@ class GeminiSession(ChatSession):
                 name = fc.name
                 args = dict(fc.args) if fc.args else {}
                 fc_id = getattr(fc, "id", None)
+                thought_sig = getattr(fc, "thought_signature", None)
                 
                 logger.info(f"FC: {name}({args}) id={fc_id}")
                 self._tools_used.append({"name": name, "args": args})
@@ -216,6 +217,8 @@ class GeminiSession(ChatSession):
                 }
                 if fc_id:
                     fc_dict["id"] = fc_id
+                if thought_sig:
+                    fc_dict["thought_signature"] = thought_sig
                 model_parts_dict.append({"function_call": fc_dict})
                 
             self._history.append({"role": "model", "parts": model_parts_dict})
@@ -382,6 +385,8 @@ class GeminiSession(ChatSession):
                         }
                         if "id" in fc:
                             fc_kwargs["id"] = fc["id"]
+                        if "thought_signature" in fc:
+                            fc_kwargs["thought_signature"] = fc["thought_signature"]
                         parts.append(
                             self._types.Part(
                                 function_call=self._types.FunctionCall(
