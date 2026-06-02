@@ -17,7 +17,7 @@ This design replaces keyword‑based retrieval with a **gravity‑driven, physic
 
 ---
 
-### Key Constants (lines 50‑66)
+### Key Constants (lines 53‑66)
 
 ```python
 # Neighborhood range — dynamically selected per-pulse based on
@@ -41,7 +41,7 @@ MIN_BELIEFS_PER_QUERY = 2    # Always include at least the top N
 
 ---
 
-### Initialization (`__init__`, lines 68‑105)
+### Initialization (`__init__`, lines 69‑116)
 
 - Stores references to **MemoryManager**, **BeliefStore**, **PhysicsEngine**, optional **Scratchpad**, **ChannelRouter**, and **StabilitySentinel**.
 - Shares the PulseLoop's active toolset via `self._active_toolsets`.
@@ -51,18 +51,18 @@ MIN_BELIEFS_PER_QUERY = 2    # Always include at least the top N
 
 ---
 
-### Lexicon System (`_load_lexicon` lines 107‑135, `_pull_lexicon_matches` lines 275‑328)
+### Lexicon System (`_load_lexicon` lines 119‑149, `_pull_lexicon_matches` lines 294‑347)
 
 - Reads `lexicon.json` from the belief store's data directory.
 - Builds a case‑insensitive `term → entry` mapping (includes aliases).
 - On each pulse, performs **word‑boundary regex matching** against the trigger text.
 - Matched summaries are injected **first** (before any gravity query) and **blacklisted** for the remainder of the context window.
-- `reset_lexicon_blacklist()` (line 330) is called from `PulseLoop._compress_context` and `_reset_session` to re‑enable entries after compression.
+- `reset_lexicon_blacklist()` (line 349) is called from `PulseLoop._compress_context` and `_reset_session` to re‑enable entries after compression.
 - **Fallback:** If `lexicon.json` fails to load, the system silently falls through to normal spatial + gravity queries. The lexicon is purely additive.
 
 ---
 
-### Main Injection Pipeline (`inject` lines 139‑271)
+### Main Injection Pipeline (`inject` lines 151‑291)
 
 | Step | Method | Description |
 |------|--------|-------------|
@@ -81,7 +81,7 @@ MIN_BELIEFS_PER_QUERY = 2    # Always include at least the top N
 
 ---
 
-### Dynamic Neighborhood K (`_compute_dynamic_k` lines 586‑611)
+### Dynamic Neighborhood K (`_compute_dynamic_k` lines 609‑632)
 
 ```python
 density_ratio = active_anchors / total_anchors
@@ -97,7 +97,7 @@ K = K_MIN + density_ratio × (K_MAX - K_MIN)
 
 ---
 
-### Spatial Neighborhood (`_pull_spatial_neighborhood` lines 613‑688)
+### Spatial Neighborhood (`_pull_spatial_neighborhood` lines 634‑719)
 
 - Calls `physics.query_neighborhood` with the dynamic K.
 - Formats results with relevance‑based tags (`vivid recall` > 5.0, `related` > 1.0, `faint`).
@@ -116,7 +116,7 @@ This stitches a short narrative around recalled memories, giving the LLM tempora
 
 ---
 
-### Toolset Awareness (`_toolset_awareness` lines 468‑520)
+### Toolset Awareness (`_toolset_awareness` lines 491‑549)
 
 - Queries `tools.tool_registry.get_toolset_info` for available but unloaded toolsets.
 - Extracts keywords from tool names (`github_search` → `github`, `search`).
@@ -127,7 +127,7 @@ This stitches a short narrative around recalled memories, giving the LLM tempora
 
 ---
 
-### Gravity‑Ranked Belief Injection (`_gravity_query` lines 727‑759)
+### Gravity‑Ranked Belief Injection (`_gravity_query` lines 770‑825)
 
 ```python
 gravity = mass / (dist_sq + 1e-4)
@@ -141,7 +141,7 @@ gravity = mass / (dist_sq + 1e-4)
 
 **Why:** Fixed token budgets were a crude proxy that could include low‑mass noise or exclude high‑mass verbose beliefs. Gravity ranking ensures the strongest pulls always surface, and the hard cap prevents runaway injection.
 
-### Two‑Seed Belief Pull (`_pull_relevant_beliefs` lines 835‑875)
+### Two‑Seed Belief Pull (`_pull_relevant_beliefs` lines 864‑1013)
 
 1. **Thought seed** → gravity query (max 15 results).
 2. **Events seed** → gravity query (max 15 results, excluding thought‑seed results).
@@ -151,7 +151,7 @@ gravity = mass / (dist_sq + 1e-4)
 
 ---
 
-### Belief Cache (`_ensure_belief_cache` lines 680‑726)
+### Belief Cache (`_ensure_belief_cache` lines 721‑768)
 
 - Embeds all beliefs once using `physics.embed_and_project`.
 - Rebuilds when belief count **or total mass** changes (catches merges, attrition, confidence decay).
@@ -161,8 +161,8 @@ gravity = mass / (dist_sq + 1e-4)
 
 ### Somatic & Affect Awareness
 
-- **Somatic** (`_pull_somatic_state` lines 343‑387): Reads sentinel Ω, S_total, entropy, mode; maps to qualitative label.
-- **Affect** (`_pull_affect_state` lines 391‑442): Pulls dominant Plutchik affect, intensity, novelty signal, and emotionally surfaced memories from `core.affect_hook`.
+- **Somatic** (`_pull_somatic_state` lines 363‑408): Reads sentinel Ω, S_total, entropy, mode; maps to qualitative label.
+- **Affect** (`_pull_affect_state` lines 410‑460): Pulls dominant Plutchik affect, intensity, novelty signal, and emotionally surfaced memories from `core.affect_hook`.
 
 ---
 

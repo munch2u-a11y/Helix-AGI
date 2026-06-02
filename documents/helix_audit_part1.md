@@ -19,7 +19,7 @@
 The boot order is strict and reflects real dependency chains:
 
 1. **Credentials**: Loads `~/.config/helix/credentials.env` for `GEMINI_API_KEY`, `MOLTBOOK_API_KEY`, `GITHUB_TOKEN`.
-2. **MemoryManager**: SQLite + ChromaDB three-tier memory (short-term, long-term, core).
+2. **MemoryManager**: JSONL unified storage and 384D FAISS Semantic Index.
 3. **BeliefStore**: JSON-per-category belief files in `data/beliefs/`.
 4. **PhysicsEngine**: Wraps `SpatialMind` and `CognitiveSpace` — the 8D manifold.
 5. **StabilitySentinel**: Background daemon thread monitoring system health.
@@ -139,7 +139,7 @@ Each pulse, the physics engine (verified lines 80–140):
 
 ### 3.3 Johnson-Lindenstrauss Projection
 
-The JL projection is the bridge between **semantic space** (high-dimensional embeddings from ChromaDB) and the **8D cognitive manifold**. The projection matrix is a fixed random Gaussian matrix generated at initialization (verified in `cognitive_space.py` lines 80–120):
+The JL projection is the bridge between **semantic space** (high-dimensional embeddings) and the **8D cognitive manifold**. The projection matrix is a fixed random Gaussian matrix generated at initialization (verified in `cognitive_space.py` lines 80–120):
 
 ```python
 self._projection_matrix = np.random.randn(embedding_dim, 8) / np.sqrt(8)

@@ -24,10 +24,11 @@ flowchart TD
         CJ[(CognitiveJournal JSONL)]
     end
 
-    subgraph Spatial Engine
-        CS[CognitiveSpace]
+    subgraph Spatial & Semantic Engine
+        CS[CognitiveSpace 8D]
         GF[GravityField]
         SM[SpatialMind]
+        SI[SemanticIndex 384D]
     end
 
     subgraph Somatic & Affect
@@ -39,24 +40,27 @@ flowchart TD
     subgraph User & Tools
         IO[Telegram / User I/O]
         SP[Scratchpad]
-        Tools[Tool Registry]
+        Tools[Native Tool Registry]
     end
 
     %% Flow
     IO -->|Events| PL
     PL -->|Trigger| PC
     PL -->|LLM Pulse| Gemini[Gemini LLM]
-    Gemini -->|Tool Calls| Tools
+    Gemini -->|Native FunctionCall| Tools
+    Tools -->|Native FunctionResponse| Gemini
+    Tools -.->|Pending Result Queue| PL
     Gemini -->|Thought/Events| MM
     
     %% Memory
     MM -->|Append| CJ
     CJ -.->|Nightly Compaction| CJ
     
-    %% Spatial
+    %% Spatial & Semantic
     PC -->|Gravity Query| SM
     SM --> CS
     CS --> GF
+    MM -.->|Conscious Recall| SI
     
     %% State & Somatics
     SS -->|Omega/H/S_total| CS
@@ -88,6 +92,7 @@ The following detailed module audits are available:
 #### 4. Memory & Persistence
 - **[Cognitive Journal Audit](audit_cognitive_journal.md)** (`memory/cognitive_journal.py`): The append-only, checksum-verified JSONL storage layer backing all states.
 - **[Memory Manager Audit](audit_memory_manager.md)** (`memory/memory_manager.py`): The compatibility layer bridging legacy interfaces to the new JSONL backend.
+- **[Semantic Index Audit](audit_semantic_index.md)** (`memory/semantic_index.py`): The 384D numpy/FAISS-backed exact semantic search layer for conscious episodic recall.
 - **[Scratchpad Audit](audit_scratchpad.md)** (`core/scratchpad.py`): The Markdown-based working memory buffer for tracking active and due reminders.
 
 ---

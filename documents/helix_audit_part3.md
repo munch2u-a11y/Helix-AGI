@@ -16,7 +16,7 @@ The Curator is Helix's **nightly personality crystallization engine**. It conver
 ### 9.2 The Five-Phase Pipeline (verified lines 76–158)
 
 **Phase 1 — Collect Raw Memories** (lines 411–473):
-- Queries SQLite `long_term` table for thoughts from the last 24 hours.
+- Queries the unified `CognitiveJournal` for thoughts from the last 24 hours.
 - Reads journal files modified in the last 24 hours.
 - Each memory includes its Lagrangian snapshot and associated belief_ids.
 
@@ -203,9 +203,8 @@ Non-destructive belief merging during nightly consolidation:
 
 | Tier | Storage | Capacity | Pruning | Access |
 |------|---------|----------|---------|--------|
-| Short-term | SQLite | 10,000 | Oldest + lowest access first | Preconscious |
-| Long-term | SQLite + ChromaDB | Infinite | Never | Conscious remember tool, spatial engine |
-| Core | SQLite | Infinite | Never | Preconscious |
+| **Cognitive Journal** | `cognitive_journal.jsonl` | Infinite (compacted) | Nightly ID-compaction | Preconscious (temporal), Physics Engine |
+| **Semantic Index** | 384D FAISS (`.bin` / `.npy`) | Infinite | Never | Conscious `memory_recall` tool |
 
 Every `store()` call writes to **both** short-term and long-term simultaneously. Memories are promoted from short-term → core when accessed 2+ times OR importance ≥ 0.7.
 
@@ -241,7 +240,7 @@ Hermes-style dynamic registration with TTL-cached availability checks (30s). Thr
 
 [gemini_provider.py](llm/providers/gemini_provider.py)
 
-Persistent multi-turn chat session via `google.genai` SDK. Handles the full function call cycle internally (send → execute tools → send results → repeat until text). Supports `switch_model()` for 429 fallback, `replace_history()` for context compression, and `update_tool_declarations()` for dynamic toolset changes.
+Persistent multi-turn chat session via `google.genai` SDK. Handles the full function call cycle internally using the Native SDK functionality (`FunctionDeclaration`, `FunctionResponse`). Supports `switch_model()` for 429 fallback, and `replace_history()` for context compression.
 
 ### 14.4 Scratchpad — `core/scratchpad.py` (211 lines)
 

@@ -46,7 +46,7 @@ graph TD
 | [Cognitive Space](documents/audits/audit_cognitive_space.md) | 8D projection, cognitive gravity, KD-Tree |
 | [Spatial Mind](documents/audits/audit_spatial_mind.md) | Dual-space manifold, Euler-Lagrange dynamics |
 | [Affect Field](documents/audits/audit_affect_field.md) | Plutchik emotional wave packets, anisotropic diffusion |
-| [Memory Manager](documents/audits/audit_memory_manager.md) | Three-tier episodic memory (short/long/core) |
+| [Memory Manager](documents/audits/audit_memory_manager.md) | Unified JSONL journal and 384D FAISS index |
 | [Belief Detector](documents/audits/audit_belief_detector.md) | Real-time belief extraction via Lagrangian deltas |
 | [Cognitive Journal](documents/audits/audit_cognitive_journal.md) | Append-only JSONL event sourcing |
 | [Scratchpad](documents/audits/audit_scratchpad.md) | Markdown-based working memory |
@@ -146,7 +146,7 @@ helix_agi/
 │
 ├── memory/                    # Memory systems
 │   ├── belief_store.py        #   Categorized belief graph (8 JSON files)
-│   └── memory_manager.py      #   Three-tier episodic memory (SQLite-backed)
+│   ├── memory_manager.py      #   Unified semantic memory and recall hook
 │
 ├── llm/                       # LLM abstraction layer
 │   ├── orchestrator.py        #   Thin wrapper for external message injection
@@ -184,7 +184,7 @@ helix_agi/
 │
 ├── data/                      # Runtime data (gitignored, created by setup.py)
 │   ├── beliefs/               #   8 category JSON files
-│   ├── memory/                #   SQLite episodic store
+│   ├── memory/                #   JSONL Journal and FAISS index
 │   ├── spatial/               #   Manifold state snapshots
 │   └── scratchpad/            #   Working memory file
 │
@@ -227,7 +227,7 @@ python main.py
 The setup wizard will prompt for your name, agent name, and API keys. It creates:
 - `~/.config/helix/credentials.env` — API keys and tokens (outside the repo)
 - `data/beliefs/` — 19 seed beliefs across 7 categories (identity, capabilities, skills, knowledge, preferences, people, feedback)
-- `data/memory/`, `data/spatial/` — Runtime directories for episodic memory and manifold state
+- `data/memory/`, `data/spatial/` — Runtime directories for the Cognitive Journal and manifold state
 
 ### Model Configuration
 

@@ -159,9 +159,9 @@ These raw tokens are **injected without labels** (see `_format` lines 321‑357)
 
 ---
 
-### Bootstrap (`bootstrap`) – lines 359‑408
+### Bootstrap (`bootstrap`) – lines 374‑420
 ```python
-359-408: def bootstrap(self, belief_graph=None, memory=None):
+374-420: def bootstrap(self, belief_graph=None, memory=None):
     if self.base_dir is None:
         logger.warning("SpatialMind.bootstrap called without a base_dir – cannot locate journal.")
         return 0, 0
@@ -183,7 +183,7 @@ These raw tokens are **injected without labels** (see `_format` lines 321‑357)
 
 ---
 
-### Persistence (`save_state` / `load_state`) – lines 560‑601
+### Persistence (`save_state` / `load_state`) – lines 575‑615
 These methods serialize the two `CognitiveSpace` objects and the attention vectors to disk, enabling graceful restarts.
 
 ---

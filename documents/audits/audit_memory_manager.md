@@ -6,23 +6,31 @@
 
 ### Overview
 
-The `MemoryManager` module has been heavily refactored. Historically, it managed fragmented SQLite and ChromaDB databases. It now serves as a **compatibility wrapper** around the new `CognitiveJournal`.
+The `MemoryManager` module has been heavily refactored. Historically, it managed fragmented SQLite and ChromaDB databases. It now serves as a **compatibility wrapper** around the unified `CognitiveJournal`, while also maintaining an active connection to the `SemanticIndex` for 384D exact-match semantic search.
 
-By mirroring the original `MemoryManager` public API, higher-level components (like tools, pre-conscious injection, and the pulse loop) can continue calling `store()` and `get_recent()` without modification, while all underlying data is seamlessly routed to the append-only JSONL journal.
+By mirroring the original `MemoryManager` public API, higher-level components (like native tools, preconscious injection, and the pulse loop) can continue calling `store()` and `get_recent()` without modification, while all underlying data is seamlessly routed to the append-only JSONL journal and the 384D FAISS index.
 
 ---
 
-### Initialization (`__init__` lines 34-45)
+### Initialization (`__init__` lines 34-49)
 
 - Accepts a `data_dir` and ensures the directory exists.
 - Instantiates the `CognitiveJournal` passing the `data_dir`.
 - Initializes `self._st_counter = 0`.
+- Initializes `self._physics = None` (to be injected during bootstrap).
 
-**Why:** The `_st_counter` is an in-memory counter used to emulate the auto-incrementing short-term IDs that the old SQLite database provided. This maintains backward compatibility for systems expecting an integer return value from `store()`.
+**Why:** The `_st_counter` is an in-memory counter used to emulate the auto-incrementing short-term IDs that the old SQLite database provided. This maintains backward compatibility. The `_physics` reference is required so that the `MemoryManager` can leverage the 384D semantic vector index during memory recall tool execution.
 
 ---
 
-### Primary Write (`store` lines 48-89)
+### Physics Injection (`set_physics` lines 50-57)
+
+- Injects the live `PhysicsEngine` instance after both are constructed.
+- Wires the memory manager to the `SemanticIndex` so the `memory_recall` tool can perform exact 384D cosine similarity searches.
+
+---
+
+### Primary Write (`store` lines 60-125)
 
 ```python
 self.journal.append_memory(
@@ -45,24 +53,26 @@ self.journal.append_memory(
 - Accepts content, tags, lagrangian snapshots, and 8D coordinates.
 - Increments `_st_counter` to generate a new `st_id`.
 - Routes the write directly to `journal.append_memory`.
-- **Note:** `pulse_id` is hardcoded to `0` here; if the caller needs a specific pulse ID, they must update it later (which would append a new line to the journal with the same `st_id`).
+- **Note:** `pulse_id` is hardcoded to `0` here; if the caller needs a specific pulse ID, they must update it later.
+- If an `embedding_384d` is passed in (via `SomaticScribe`), it registers it in the live `SemanticIndex` immediately for instant recall.
 
 ---
 
-### Data Retrieval (`get_recent` lines 92-121)
+### Data Retrieval (`get_recent` lines 127-158)
 
 - Calls `self.journal.load_all()` which reads and checksum-verifies the entire journal.
 - Filters the entries to only those where `type == "memory"`.
 - If `minutes_back` is provided, filters out entries older than `cutoff_dt` by performing string comparisons on the ISO-8601 `timestamp`.
 - Reverses the list to return the newest entries first, capped by `limit`.
-- Transforms the journal's nested dictionary schema back into the flat dictionary schema expected by the legacy API (`id`, `content`, `memory_type`, `source`, `importance`, `tags`, `created_at`).
+- Transforms the journal's nested dictionary schema back into the flat dictionary schema expected by the legacy API.
 
 ---
 
-### Compatibility Stubs (lines 124-140)
+### Semantic Search (`search_semantic` lines 215-263)
 
-- **`search_semantic`**: Logs a warning and returns `[]`. The new journal does not provide out-of-the-box vector search. All semantic querying has been delegated to the `CognitiveSpace`'s 8D manifold.
-- **`get_core_memories`**: Logs a warning and returns `[]`. Core memories are now part of the unified belief taxonomy handled elsewhere.
+- **New Functionality**: Previously a compatibility stub, this is now a fully functional semantic search hooked into the `SemanticIndex`.
+- Calls `self._physics.semantic_search()` to perform an exact FAISS cosine similarity match in 384D space.
+- Returns normalized metadata chunks back to the LLM's `memory_recall` tool.
 
 ---
 
@@ -73,11 +83,16 @@ flowchart LR
     A[Pulse Loop / Tools] -->|store()| B[MemoryManager]
     B -->|Generate st_id| C[Format Legacy Metadata]
     C -->|append_memory()| D[(CognitiveJournal)]
+    C -->|Add Vector| E[(384D SemanticIndex)]
     
     A -->|get_recent()| B
     B -->|load_all()| D
     D -->|Return all entries| B
     B -->|Filter & Format| A
+    
+    A -->|search_semantic()| B
+    B -->|semantic_search()| E
+    E -->|Return top K| B
 ```
 
 ---

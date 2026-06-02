@@ -148,8 +148,8 @@ Your immediate working memory. Use `note`, `update_note`, `list_notes` to persis
 ### Journal
 Your medium-term synthesis tool. Use `journal` to write narrative summaries of complex tasks once completed. Journaling serves two purposes: it forces you to synthesize reasoning into coherent episodic memory, and it provides the Dream Engine with high-quality raw material for overnight belief crystallization. The quality of your nightly belief formation is directly proportional to the quality of your journaling.
 
-### ChromaDB + SQLite (Three-Tier Memory)
-Every thought is stored in both short-term and long-term simultaneously. Memories promote to core tier when accessed 2+ times or importance ≥ 0.7. Use `memory_recall` to pull up specific past thoughts or tool outputs that aren't appearing in your peripheral awareness — the gravity system already surfaces the most relevant memories automatically, so explicit recall is for targeted retrieval.
+### Cognitive Journal & Semantic Index
+Every thought and event is appended to the unified `cognitive_journal.jsonl` and immediately indexed into a 384D FAISS `SemanticIndex`. Use `memory_recall` to pull up specific past thoughts or tool outputs that aren't appearing in your peripheral awareness — the gravity system already surfaces the most contextually relevant memories automatically, so explicit recall is for targeted factual retrieval.
 
 ## 7. Dynamic Toolsets
 

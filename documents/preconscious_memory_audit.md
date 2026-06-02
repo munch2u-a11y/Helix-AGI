@@ -50,7 +50,7 @@ graph TD
     end
 
     subgraph "Storage Layer"
-        H1["MemoryManager — 3-tier SQLite + ChromaDB"]
+        H1["MemoryManager — JSONL Journal + 384D FAISS Index"]
         H2["BeliefStore — categorized JSON files"]
         H3["lexicon.json — priority ground-truth"]
     end
@@ -247,23 +247,22 @@ These are **real spatial metrics** when the SpatialMind is connected:
 
 ## 4. Memory Storage Architecture
 
-### 4.1 Three-Tier Memory (MemoryManager)
+### 4.1 Unified Memory (MemoryManager & SemanticIndex)
 
-**Source**: [memory_manager.py](memory/memory_manager.py)
+**Source**: [memory_manager.py](memory/memory_manager.py), [cognitive_journal.py](memory/cognitive_journal.py), [semantic_index.py](memory/semantic_index.py)
 
-| Tier | Storage | Capacity | Pruning | Used By |
-|------|---------|----------|---------|---------|
-| **Short-term** | SQLite `short_term` table | 10,000 rows | Oldest + lowest access_count pruned first | Preconscious (temporal context) |
-| **Long-term** | SQLite `long_term` table + ChromaDB | Infinite | Never pruned | Conscious `remember` tool, spatial engine |
-| **Core** | SQLite `core_memories` table | Infinite | Never pruned | Preconscious (always available) |
+The legacy fragmented SQLite/ChromaDB architecture has been replaced by a **unified append-only JSONL journal** backed by a **384D FAISS index**.
 
-**Dual-write:** Every `store()` call writes to **both** short-term and long-term simultaneously. ChromaDB gets semantic vectors for long-term search.
+| Component | Storage | Capacity | Pruning | Used By |
+|-----------|---------|----------|---------|---------|
+| **Cognitive Journal** | `cognitive_journal.jsonl` | Infinite (compacted) | Nightly ID-compaction | Preconscious (temporal), Physics Engine |
+| **Semantic Index** | 384D FAISS (`.bin` / `.npy`) | Infinite | Never | Conscious `memory_recall` tool |
 
-**Promotion:** Short-term → Core when `access_count >= 2` OR `importance >= 0.7`. Before pruning, qualifying memories are promoted first so nothing important is lost.
+**Unified Write:** Every `store()` call writes to the append-only `cognitive_journal.jsonl`. If an embedding is provided, it is immediately registered in the `SemanticIndex` for instant conscious recall. The journal uses SHA-256 checksums to guarantee data integrity across restarts.
 
-**Spatial columns:** Long-term table has `pos_0` through `pos_7` (8D coordinates) and `lagrangian_snapshot` (JSON of the somatic state at encoding). This is **state-bound episodic memory** — the emotional conditions under which a memory formed are preserved alongside the memory itself.
+**Conscious Semantic Recall:** The conscious `memory_recall` tool invokes `MemoryManager.search_semantic()`, which queries the `SemanticIndex` for exact cosine-similarity matches. This operates completely independently of the 8D preconscious gravity field, providing precise factual retrieval when explicitly requested.
 
-**Somatic Echo on Recall** ([memory_manager.py](memory/memory_manager.py) L543-604): When `recall_with_somatic_echo()` retrieves a memory that was formed under stress (`severity = "warning"` or `"critical"`), it nudges the Sentinel's Ω downward by 0.02–0.05 — mildly reproducing the stress. Memories formed during flow states (`Ω > 0.7, all_clear`) nudge Ω up by 0.01. This creates visceral recall — the system doesn't just *remember* the event, it briefly *re-experiences* the emotional context.
+**Somatic Echo on Recall** ([memory_manager.py](memory/memory_manager.py)): When a memory is retrieved that was formed under stress, the system nudges the Sentinel's Ω downward, mildly reproducing the stress. This creates visceral recall — the system doesn't just *remember* the event, it briefly *re-experiences* the emotional context.
 
 ### 4.2 Categorized Belief Store
 
@@ -350,7 +349,7 @@ When Helix wakes from dormancy:
 | [physics_engine.py](core/physics_engine.py) | High-level wrapper delegating to SpatialMind |
 | [spatial_mind.py](core/spatial_mind.py) | Dual 8D space manager — attention dynamics, trail, formatting |
 | [cognitive_space.py](core/cognitive_space.py) | 8D projection, KDTree, gravity physics, temperature, entropy |
-| [memory_manager.py](memory/memory_manager.py) | Three-tier storage with somatic echo on recall |
+| [memory_manager.py](memory/memory_manager.py) | Unified JSONL storage and 384D FAISS semantic index hook |
 | [belief_store.py](memory/belief_store.py) | Categorized JSON belief management with attrition |
 | [lexicon.json](data/beliefs/lexicon.json) | 22 ground-truth entries for priority injection |
 | [stability_sentinel.py](brain/stability_sentinel.py) | Lagrangian computation, Ω lifecycle, somatic events |

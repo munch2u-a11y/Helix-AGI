@@ -62,16 +62,16 @@ entry["checksum"] = _checksum(entry)
 
 ### Data Retrieval (`load_all`, `latest_by_id`)
 
-- **`load_all` (lines 105-122):** 
+- **`load_all` (lines 112-129):** 
   - Reads the file line-by-line (oldest → newest).
   - Skips empty lines and lines that fail JSON decoding.
   - **Checksum Verification:** Pops the `checksum` key and recalculates the hash. If it doesn't match, the line is silently skipped.
-- **`latest_by_id` (lines 124-133):** 
+- **`latest_by_id` (lines 131-143):** 
   - Scans `load_all` and stores entries in a dictionary keyed by `id`. Since the file is chronological, later appearances of the same `id` naturally overwrite older ones in the dict.
 
 ---
 
-### Nightly Compaction (`compact` lines 138-152)
+### Nightly Compaction (`compact` lines 145-162)
 
 - Resolves the "latest" version of all `id`s via `latest_by_id()`.
 - Writes the compacted state to a `.tmp` file.
@@ -81,7 +81,7 @@ entry["checksum"] = _checksum(entry)
 
 ---
 
-### Convenience Helpers (lines 157-215)
+### Convenience Helpers (lines 164-222)
 
 - `append_memory`, `append_belief`, `append_thought`: Syntax sugar wrapping `append()` to automatically set the correct `type` string. 
 

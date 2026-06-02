@@ -47,7 +47,7 @@ graph TD
     E --> F[LLM Generation]
     F --> G{429 Error?}
     G -->|Yes| H[Rate‑limit Gate → Fallback Model]
-    G -->|No| I[Parse Tool Calls]
+    G -->|No| I[Native Tool Grounding]
     I --> J[Somatic Memory Encoding]
     J --> K[Physics Step (8D manifold update)]
     K --> L[Post‑Pulse Hooks]
@@ -85,13 +85,13 @@ The prompt is sent via `self._send_pulse()`.  If the provider returns **`429 RES
 
 > **Why?**  A fallback model is cheaper and more tolerant of rate limits, guaranteeing the agent stays alive during API congestion while preserving a coherent thought stream.
 
-### Step 6: Tool Execution & Parsing (Lines 667‑677)
-If the LLM returned a **function‑calling** tag, the Gemini provider executes the tool(s) synchronously.  The loop then:
-- Records the tool names for telemetry.
-- Updates `_last_event_time` to keep the system in **ACTIVE** mode (tools constitute user‑visible activity).
-- Stores the tool result as a new event for the next pulse.
+### Step 6: Native Tool Grounding (Lines 667-677)
+The system now uses a **Native Dual-Queue Tooling Architecture**. Tools are executed directly within the `GeminiProvider` via the official SDK (`FunctionResponse`). The `pulse_loop` no longer parses text-based tool tags. Instead, it:
+1. Calls `provider.get_pending_tool_results()` to drain the internal execution queue.
+2. Updates `_last_event_time` to keep the system in **ACTIVE** mode.
+3. Emits the tool results as internal events so they receive spatial/somatic grounding in the next pulse's preconscious injection.
 
-> **Why?**  Tools are side‑effects that must be reflected in the agent’s internal timeline, otherwise the pulse would think the world is static while the agent has actually acted.
+> **Why?** Native tooling eliminates syntax hallucinations. Grounding the results via the event queue ensures the agent remains consciously aware of its own side-effects without polluting the prompt with raw JSON responses.
 
 ### Step 7: Somatic Memory Encoding (Lines 684‑715)
 Both the raw events and the LLM‑generated thought are persisted via `MemoryManager.store()`.  Each entry includes:
@@ -163,7 +163,7 @@ flowchart LR
         S3 --> S4[Build Prompt]
         S4 --> S5[LLM Call]
         S5 -->|429| F[Fallback Switch]
-        S5 -->|OK| P[Parse Tools]
+        S5 -->|OK| P[Native Tool Grounding]
         P --> M[Memory Encode]
         M --> Ph[Physics Update]
         Ph --> H[Hooks]
