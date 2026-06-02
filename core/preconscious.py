@@ -820,7 +820,33 @@ class Preconscious:
         scored.sort(key=lambda x: x["gravity"], reverse=True)
 
         # Take the top N by gravity, guaranteeing at least min_results
-        selected = scored[:max(max_results, min_results)]
+        max_take = max(max_results, min_results)
+        selected = scored[:max_take]
+
+        # ── Reserve spots for feedback and skills ─────────────────
+        # Ensure that if a 'feedback' or 'skills' belief had any pull,
+        # it doesn't get entirely pushed out by heavier core beliefs.
+        selected_ids = {b["id"] for b in selected if b["id"]}
+        
+        for reserved_cat in ["feedback", "skills"]:
+            # Check if we already have one in the selected set
+            if any(b["category"] == reserved_cat for b in selected):
+                continue
+                
+            # Find the highest gravity belief in this category
+            best_reserved = next(
+                (b for b in scored if b["category"] == reserved_cat), 
+                None
+            )
+            
+            # If we found one, swap it with the lowest gravity non-reserved item
+            if best_reserved and best_reserved["id"] not in selected_ids:
+                # Find an item to drop (starting from the bottom of selected)
+                for i in range(len(selected) - 1, -1, -1):
+                    if selected[i]["category"] not in ["feedback", "skills"]:
+                        selected[i] = best_reserved
+                        selected_ids.add(best_reserved["id"])
+                        break
 
         return selected
 

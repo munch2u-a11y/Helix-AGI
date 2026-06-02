@@ -348,26 +348,12 @@ class PulseLoop:
                     logger.info(f"{self._state} → DORMANT (sleep hours)")
                     self._state = "DORMANT"
 
-                # ── Pending Belief Processing (once per night) ────
-                #    Process candidates queued by belief_detector.
-                #    Runs in a daemon thread — non-blocking.
-                if not self._pending_beliefs_ran_tonight:
-                    self._pending_beliefs_ran_tonight = True
-                    try:
-                        from core.batch_service import process_pending_beliefs
-                        logger.info("Sleep cycle: spawning pending belief processor")
-                        threading.Thread(
-                            target=process_pending_beliefs,
-                            args=(self.beliefs,),
-                            kwargs={
-                                "physics_engine": self.physics,
-                                "sentinel": self.sentinel,
-                            },
-                            daemon=True,
-                            name="helix_pending_beliefs",
-                        ).start()
-                    except Exception as e:
-                        logger.debug("Pending belief processing failed to start: %s", e)
+                # ── Pending Belief Processing ──────────────────────
+                #    Now handled by the Curator as Phase 6, after it
+                #    writes candidates in Phase 4. Previously this ran
+                #    as a parallel thread and hit a race condition —
+                #    the batch_service would start before the Curator
+                #    had written anything to pending_beliefs.json.
 
                 # ── Nightly Dream Cycle (Curator) ─────────────────
                 #    Full Phase 1-5: extraction, consolidation,
