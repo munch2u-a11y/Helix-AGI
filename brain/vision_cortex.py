@@ -2,11 +2,11 @@
 Helix — Vision Cortex
 
 Subconscious visual perception system. All camera input passes through
-this module before reaching consciousness. Uses Moondream (1B VL model)
-running locally on llama.cpp with Vulkan GPU acceleration.
+this module before reaching consciousness. Uses Gemma3 4B vision model
+running locally via Ollama.
 
 Architecture:
-    - Moondream runs as a persistent model via llama_cpp_python + Vulkan
+    - Gemma3:4b runs via Ollama's HTTP API (localhost:11434)
     - Maintains a visual memory buffer (last N scene descriptions)
     - Each look() call captures 2 frames, feeds previous scene context
       to detect changes vs stable elements
@@ -27,6 +27,7 @@ import fcntl
 import struct
 import logging
 import threading
+import requests
 import numpy as np
 from pathlib import Path
 from datetime import datetime
@@ -34,9 +35,9 @@ from typing import Optional
 
 logger = logging.getLogger("helix.brain.vision_cortex")
 
-# Model paths (symlinks to Ollama blobs)
-_MODEL_PATH = str(Path(__file__).parent.parent / "models" / "moondream-text.gguf")
-_MMPROJ_PATH = str(Path(__file__).parent.parent / "models" / "moondream-mmproj.gguf")
+# Ollama vision model
+_OLLAMA_MODEL = "gemma3:4b"
+_OLLAMA_URL = "http://localhost:11434"
 
 # How many scene descriptions to keep in the rolling buffer
 _VISUAL_MEMORY_SIZE = 10
@@ -44,7 +45,7 @@ _VISUAL_MEMORY_SIZE = 10
 
 class VisionCortex:
     """Subconscious visual perception — processes camera input through
-    a local VL model (Moondream) before it reaches consciousness.
+    a local VL model (Gemma3 4B via Ollama) before it reaches consciousness.
 
     The conscious model never sees raw pixels. It receives processed,
     contextually grounded scene descriptions.
@@ -55,14 +56,13 @@ class VisionCortex:
 
         Args:
             camera_device: V4L2 device index (default 0)
-            n_gpu_layers: GPU layers to offload (-1 = all, Vulkan)
+            n_gpu_layers: Unused (kept for API compat). Ollama manages GPU.
         """
         self.camera_device = self._auto_detect_camera(camera_device)
         self._n_gpu_layers = n_gpu_layers
 
-        # Moondream model (lazy-loaded on first use)
-        self._model = None
-        self._chat_handler = None
+        # Ollama readiness flag (checked on first use)
+        self._ollama_verified = False
         self._model_lock = threading.Lock()
 
         # Visual memory buffer — rolling window of recent observations
@@ -78,7 +78,7 @@ class VisionCortex:
 
         logger.info(
             f"Vision Cortex initialized (camera={self.camera_device}, "
-            f"gpu_layers={n_gpu_layers}, model={Path(_MODEL_PATH).name})"
+            f"model={_OLLAMA_MODEL} via Ollama)"
         )
 
     def _auto_detect_camera(self, default_index: int = 0) -> int:
@@ -107,58 +107,48 @@ class VisionCortex:
         return default_index
 
     # ══════════════════════════════════════════════════════════════════
-    # MODEL MANAGEMENT
+    # MODEL MANAGEMENT (Ollama)
     # ══════════════════════════════════════════════════════════════════
 
     def _ensure_model(self):
-        """Lazy-load Moondream + CLIP projector on first use.
+        """Verify Ollama is running and the vision model is available.
 
-        Uses llama.cpp with Vulkan backend for GPU acceleration.
-        Thread-safe — only one load at a time.
+        Thread-safe. Only checks once per session — Ollama manages
+        model lifecycle independently.
         """
-        if self._model is not None:
+        if self._ollama_verified:
             return
 
         with self._model_lock:
-            if self._model is not None:
-                return  # Double-check after acquiring lock
+            if self._ollama_verified:
+                return
 
-            logger.info("Loading Moondream VL model (Vulkan backend)...")
-            t0 = time.time()
+            logger.info(f"Verifying Ollama vision model ({_OLLAMA_MODEL})...")
 
             try:
-                from llama_cpp import Llama
-                from llama_cpp.llama_chat_format import MoondreamChatHandler
+                resp = requests.get(f"{_OLLAMA_URL}/api/tags", timeout=5)
+                if resp.status_code != 200:
+                    raise RuntimeError(f"Ollama not responding (HTTP {resp.status_code})")
 
-                self._chat_handler = MoondreamChatHandler(
-                    clip_model_path=_MMPROJ_PATH,
-                    verbose=False,
+                models = [m["name"] for m in resp.json().get("models", [])]
+                # Check for exact match or base name match
+                if _OLLAMA_MODEL not in models:
+                    raise RuntimeError(
+                        f"Model {_OLLAMA_MODEL} not found in Ollama. "
+                        f"Available: {models}. Run: ollama pull {_OLLAMA_MODEL}"
+                    )
+
+                self._ollama_verified = True
+                logger.info(f"Ollama vision model verified: {_OLLAMA_MODEL}")
+            except requests.ConnectionError:
+                raise RuntimeError(
+                    "Ollama not running. Start it with: ollama serve"
                 )
-
-                self._model = Llama(
-                    model_path=_MODEL_PATH,
-                    chat_handler=self._chat_handler,
-                    n_ctx=2048,
-                    n_gpu_layers=self._n_gpu_layers,  # -1 = offload all to Vulkan
-                    verbose=False,
-                )
-
-                elapsed = time.time() - t0
-                logger.info(f"Moondream loaded in {elapsed:.1f}s (Vulkan GPU offload)")
-            except Exception as e:
-                logger.error(f"Failed to load Moondream: {e}")
-                self._model = None
-                raise
 
     def unload(self):
-        """Explicitly free the model to reclaim memory."""
-        with self._model_lock:
-            if self._model is not None:
-                del self._model
-                self._model = None
-                del self._chat_handler
-                self._chat_handler = None
-                logger.info("Moondream unloaded — VRAM freed")
+        """Reset verification flag. Ollama manages model memory."""
+        self._ollama_verified = False
+        logger.info("Vision cortex Ollama verification reset")
 
     # ══════════════════════════════════════════════════════════════════
     # CONSCIOUS-FACING: LOOK
@@ -492,49 +482,60 @@ class VisionCortex:
             return []
 
     # ══════════════════════════════════════════════════════════════════
-    # INTERNAL: ANALYSIS (Moondream via llama.cpp)
+    # INTERNAL: ANALYSIS (Gemma3 via Ollama)
     # ══════════════════════════════════════════════════════════════════
 
     def _analyze(self, image_bytes: bytes, prompt: str) -> str:
-        """Analyze an image using Moondream via llama.cpp.
+        """Analyze an image using the Ollama vision model.
 
-        Uses the MoondreamChatHandler which handles image encoding
-        and multimodal prompt construction internally.
+        Sends the image as base64 to Ollama's chat API with the
+        configured vision model (gemma3:4b).
         """
         import base64
 
-        if self._model is None:
-            raise RuntimeError("Moondream model not loaded")
+        if not self._ollama_verified:
+            raise RuntimeError("Ollama vision model not verified")
 
-        # Encode image as data URI for the chat handler
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
-        image_url = f"data:image/jpeg;base64,{b64_image}"
 
-        # Use the chat completion API with vision message format
         t0 = time.time()
-        response = self._model.create_chat_completion(
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": image_url}},
-                        {"type": "text", "text": prompt},
+        try:
+            resp = requests.post(
+                f"{_OLLAMA_URL}/api/chat",
+                json={
+                    "model": _OLLAMA_MODEL,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": prompt,
+                            "images": [b64_image],
+                        }
                     ],
-                }
-            ],
-            max_tokens=512,
-            temperature=0.1,
-        )
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.2,
+                        "num_predict": 512,
+                    },
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+        except requests.ConnectionError:
+            raise RuntimeError("Ollama not running")
+        except requests.Timeout:
+            raise RuntimeError("Ollama vision analysis timed out (120s)")
+
         elapsed = time.time() - t0
+        data = resp.json()
+        result = data.get("message", {}).get("content", "").strip()
+        tokens = data.get("eval_count", "?")
 
-        result = response["choices"][0]["message"]["content"].strip()
-        tokens = response.get("usage", {})
         logger.info(
-            f"Moondream analysis: {len(result)} chars, "
-            f"{tokens.get('total_tokens', '?')} tokens, {elapsed:.1f}s"
+            f"Ollama vision analysis: {len(result)} chars, "
+            f"{tokens} tokens, {elapsed:.1f}s"
         )
 
-        return result
+        return result if result else "(no description generated)"
 
     # ══════════════════════════════════════════════════════════════════
     # INTERNAL: VISUAL MEMORY

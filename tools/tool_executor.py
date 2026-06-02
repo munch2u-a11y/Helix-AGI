@@ -1627,19 +1627,19 @@ class ToolExecutor:
     # ── Embodiment: Look ──────────────────────────────────────────────
 
     def _get_vision_cortex(self):
-        """Lazy-load the VisionCortex (Moondream on llama.cpp/Vulkan)."""
+        """Lazy-load the VisionCortex (Gemma3 4B via Ollama)."""
         if self._vision_cortex is None:
             from brain.vision_cortex import VisionCortex
             self._vision_cortex = VisionCortex(
                 camera_device=0,
-                n_gpu_layers=-1,  # Offload all layers to Vulkan
+                n_gpu_layers=-1,  # Unused — Ollama manages GPU
             )
         return self._vision_cortex
 
     def _exec_look(self, tag: ActionTag) -> str:
         """Camera capture + vision analysis via VisionCortex.
 
-        Routes through the local Moondream VL model (llama.cpp/Vulkan).
+        Routes through the Gemma3 4B vision model via Ollama.
         The cortex handles multi-frame capture, visual memory context,
         and scene reconciliation.
         """
