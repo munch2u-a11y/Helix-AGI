@@ -2,15 +2,15 @@
 Helix — Vision Cortex
 
 Subconscious visual perception system. All camera input passes through
-this module before reaching consciousness. Uses Gemma3 4B vision model
+this module before reaching consciousness. Uses a local vision model
 running locally via Ollama.
 
 Architecture:
-    - Gemma3:4b runs via Ollama's HTTP API (localhost:11434)
+    - Vision model runs via Ollama's HTTP API (localhost:11434)
     - Maintains a visual memory buffer (last N scene descriptions)
     - Each look() call captures 2 frames, feeds previous scene context
       to detect changes vs stable elements
-    - PTZ motor control (EMEET PIXY) for camera positioning
+    - Optional PTZ motor control for supported camera positioning
     - Sensory journal for persistent environmental model
 
 Conscious-facing tools:
@@ -42,9 +42,9 @@ except ImportError:
 
 logger = logging.getLogger("helix.brain.sensory_cortex")
 
-# Ollama vision model
-_OLLAMA_MODEL = "gemma3:4b"
-_OLLAMA_URL = "http://localhost:11434"
+# Ollama vision model configuration
+_OLLAMA_MODEL = os.getenv("HELIX_VISION_MODEL", "llama3.2-vision")
+_OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
 # How many scene descriptions to keep in the rolling buffer
 _VISUAL_MEMORY_SIZE = 10
@@ -52,7 +52,7 @@ _VISUAL_MEMORY_SIZE = 10
 
 class SensoryCortex:
     """Subconscious visual perception — processes camera input through
-    a local VL model (Gemma3 4B via Ollama) before it reaches consciousness.
+    a local VL model (via Ollama) before it reaches consciousness.
 
     The conscious model never sees raw pixels. It receives processed,
     contextually grounded scene descriptions.
@@ -443,12 +443,12 @@ class SensoryCortex:
     }
 
     def ptz_look(self, direction: str = "", pan: int = None, tilt: int = None) -> str:
-        """Move the EMEET PIXY camera head to look in a direction.
+        """Move the camera head to look in a direction.
 
         Accepts named directions or exact pan/tilt degrees.
         Disables auto-tracking when a manual direction is set.
 
-        Hardware: EMEET PIXY via V4L2 UVC
+        Hardware: PTZ via V4L2 UVC
           Pan:  ±540000 arc-sec (±150°), step 3600 (1°)
           Tilt: ±324000 arc-sec (±90°),  step 3600 (1°)
         """
@@ -468,7 +468,7 @@ class SensoryCortex:
         else:
             return "Provide a direction name or pan/tilt degrees."
 
-        # Convert degrees to EMEET arc-seconds (3600 arc-seconds per degree)
+        # Convert degrees to PTZ arc-seconds (3600 arc-seconds per degree)
         pan_arcsec = int(pan_deg * 3600)
         tilt_arcsec = int(tilt_deg * 3600)
 
@@ -482,7 +482,7 @@ class SensoryCortex:
         return f"Camera moved: looking {direction_label}. Auto-tracking disabled."
 
     def camera_auto_track(self, enabled: bool = True) -> str:
-        """Toggle the EMEET PIXY's built-in face auto-tracking."""
+        """Toggle the camera's built-in face auto-tracking (if supported)."""
         if enabled:
             self._send_ptz_command(pan_val=0, tilt_val=0)
             self._auto_tracking = True
@@ -537,7 +537,7 @@ class SensoryCortex:
             return []
 
     # ══════════════════════════════════════════════════════════════════
-    # INTERNAL: ANALYSIS (Gemma3 via Ollama)
+    # INTERNAL: ANALYSIS (Local Vision Model via Ollama)
     # ══════════════════════════════════════════════════════════════════
 
     def _analyze(self, image_bytes: bytes, prompt: str) -> str:
@@ -680,11 +680,11 @@ class SensoryCortex:
         self._save_journal()
 
     # ══════════════════════════════════════════════════════════════════
-    # INTERNAL: PTZ MOTOR CONTROL (EMEET PIXY)
+    # INTERNAL: PTZ MOTOR CONTROL
     # ══════════════════════════════════════════════════════════════════
 
     def _send_ptz_command(self, pan_val: int = None, tilt_val: int = None) -> str:
-        """Send UVC hardware commands to manually tilt/pan the EMEET PIXY.
+        """Send UVC hardware commands to manually tilt/pan the camera.
 
         V4L2_CID_PAN_ABSOLUTE  = 0x009a0908
         V4L2_CID_TILT_ABSOLUTE = 0x009a0909
@@ -712,7 +712,7 @@ class SensoryCortex:
         return f"Shifted gaze to pan={pan_val}, tilt={tilt_val}."
 
     def reset_posture(self):
-        """Reset the EMEET PIXY to center, yielding control back to hardware tracker."""
+        """Reset the camera to center, yielding control back to hardware tracker."""
         return self._send_ptz_command(pan_val=0, tilt_val=0)
 
 
@@ -792,7 +792,8 @@ class SensoryCortex:
             if rms >= 0.01:
                 try:
                     if not self._whisper_model:
-                        self._whisper_model = WhisperModel("base.en", device="cpu", compute_type="int8")
+                        whisper_size = os.getenv("HELIX_WHISPER_MODEL", "base.en")
+                        self._whisper_model = WhisperModel(whisper_size, device="cpu", compute_type="int8")
                     segments, _ = self._whisper_model.transcribe(audio_float, beam_size=1, language="en")
                     transcribed = " ".join(seg.text for seg in segments).strip()
                     if transcribed:
