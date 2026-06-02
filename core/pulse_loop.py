@@ -440,7 +440,10 @@ class PulseLoop:
                         self._provider_config.model = _FALLBACK
 
             # ── Pulse Execution ──────────────────────────────────
-            self._pulse()
+            try:
+                self._pulse()
+            except Exception as e:
+                logger.error("Pulse crashed due to an unhandled exception", exc_info=True)
             self._check_context_lifecycle()
 
             # ── 3-Tier State Transitions ──────────────────────────

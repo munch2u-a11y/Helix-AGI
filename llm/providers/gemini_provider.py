@@ -180,10 +180,14 @@ class GeminiSession(ChatSession):
             if thought_text:
                 model_parts_dict.append({"text": thought_text})
                 
-            for fc in function_calls:
+            for part in function_calls:
+                # function_calls now returns full Part objects
+                fc = part.function_call
                 name = fc.name
                 args = dict(fc.args) if fc.args else {}
                 fc_id = getattr(fc, "id", None)
+                # thought_signature lives on the Part, not the FunctionCall
+                thought_sig = getattr(part, "thought_signature", None)
                 
                 logger.info(f"FC: {name}({args}) id={fc_id}")
                 self._tools_used.append({"name": name, "args": args})
@@ -210,13 +214,18 @@ class GeminiSession(ChatSession):
                     "result": result_str or "",
                 })
                 
-                fc_dict = {
-                    "name": name,
-                    "args": args
+                fc_part_dict = {
+                    "function_call": {
+                        "name": name,
+                        "args": args,
+                    }
                 }
                 if fc_id:
-                    fc_dict["id"] = fc_id
-                model_parts_dict.append({"function_call": fc_dict})
+                    fc_part_dict["function_call"]["id"] = fc_id
+                # Store thought_signature at the part level (not inside function_call)
+                if thought_sig:
+                    fc_part_dict["thought_signature"] = thought_sig
+                model_parts_dict.append(fc_part_dict)
                 
             self._history.append({"role": "model", "parts": model_parts_dict})
             return thought_text or "[tools called, results pending]"
@@ -329,16 +338,21 @@ class GeminiSession(ChatSession):
     # ── Response Parsing ─────────────────────────────────────────────
 
     def _extract_function_calls(self, response) -> list:
-        """Extract function_call parts from a response."""
-        calls = []
+        """Extract function_call parts from a response.
+
+        Returns the full Part objects (not just FunctionCall) because
+        the Part carries thought_signature which must be preserved
+        for subsequent API calls.
+        """
+        parts_with_fc = []
         try:
             for candidate in response.candidates:
                 for part in candidate.content.parts:
                     if hasattr(part, "function_call") and part.function_call:
-                        calls.append(part.function_call)
+                        parts_with_fc.append(part)
         except (AttributeError, IndexError, TypeError):
             pass
-        return calls
+        return parts_with_fc
 
     def _extract_text(self, response) -> str:
         """Extract text content from a response."""
@@ -382,12 +396,14 @@ class GeminiSession(ChatSession):
                         }
                         if "id" in fc:
                             fc_kwargs["id"] = fc["id"]
+                        # thought_signature is a Part-level field, not a FunctionCall field
+                        part_kwargs = {
+                            "function_call": self._types.FunctionCall(**fc_kwargs)
+                        }
+                        if "thought_signature" in part_dict:
+                            part_kwargs["thought_signature"] = part_dict["thought_signature"]
                         parts.append(
-                            self._types.Part(
-                                function_call=self._types.FunctionCall(
-                                    **fc_kwargs
-                                )
-                            )
+                            self._types.Part(**part_kwargs)
                         )
                     elif "function_response" in part_dict:
                         fr = part_dict["function_response"]
