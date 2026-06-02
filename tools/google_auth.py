@@ -14,8 +14,8 @@ from pathlib import Path
 
 logger = logging.getLogger("helix.tools.google_auth")
 
-_GOOGLE_TOKEN_PATH = os.path.expanduser("~/.config/helix/google_token.json")
-_GOOGLE_CRED_PATH = os.path.expanduser("~/.config/helix/google_credentials.json")
+_GOOGLE_TOKEN_PATH = "/home/nemo/.config/helix/google_token.json"
+_GOOGLE_CRED_PATH = "/home/nemo/.config/helix/google_credentials.json"
 
 # Cached credentials (module-level singleton)
 _cached_creds = None

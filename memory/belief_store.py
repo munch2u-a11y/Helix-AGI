@@ -63,14 +63,18 @@ def _now_iso() -> str:
 
 
 # Belief category definitions
+# NOTE: capabilities and desires are kept during migration to the
+# new taxonomy. Once manual review is complete, remove them and
+# update any references.
 BELIEF_CATEGORIES = {
     "self_identity": "self_identity.json",
     "people": "people.json",
-    "capabilities": "capabilities.json",
+    "capabilities": "capabilities.json",   # Migration: split into skills + retained capabilities
+    "desires": "desires.json",              # Migration: moving to preferences
     "knowledge": "knowledge.json",
-    "skills": "skills.json",
-    "preferences": "preferences.json",
-    "feedback": "feedback.json",
+    "skills": "skills.json",                # NEW — procedural HOW-TO knowledge
+    "preferences": "preferences.json",      # NEW — replaces desires
+    "feedback": "feedback.json",            # NEW — lessons from experiences
 }
 
 # Template for a person profile entry (stored within people.json)
@@ -663,7 +667,7 @@ class BeliefStore:
         Produces minimal, scannable output like:
             • I am Helix. [0.99]
             • I am an AI. [0.99]
-            • Jean-Luc is trustworthy. [0.95]
+            • Joshua is trustworthy. [0.95]
         """
         if beliefs is None:
             beliefs = self.get_context_beliefs()

@@ -66,5 +66,5 @@ class BackgroundDaemon:
         return self.curator._run_nightly_cycle()
 
     def run_pulse(self):
-        """Deprecated interface — no-op."""
+        """Legacy interface — no-op in new architecture."""
         pass

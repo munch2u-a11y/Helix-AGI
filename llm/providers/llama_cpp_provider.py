@@ -22,7 +22,7 @@ logger = logging.getLogger("helix.llm.providers.llama_cpp")
 class LlamaCppSession(ChatSession):
     """Chat session backed by llama-cpp-python with Vulkan GPU offload.
 
-    Loads the GGUF model directly. Auto-offloads layers to local GPU
+    Loads the GGUF model directly. Auto-offloads layers to AMD 780m
     via Vulkan backend. No hardcoded timeout.
     """
 

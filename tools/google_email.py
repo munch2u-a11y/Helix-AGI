@@ -23,8 +23,8 @@ from pathlib import Path
 
 logger = logging.getLogger("helix.tools.google_email")
 
-# Reply ledger — tracks which emails the agent has already replied to
-_REPLY_LEDGER_PATH = Path(__file__).parent.parent / "data" / "email_reply_ledger.json"
+# Reply ledger — tracks which emails Helix has already replied to
+_REPLY_LEDGER_PATH = Path("/home/nemo/Helix/data/email_reply_ledger.json")
 
 
 def _load_reply_ledger() -> set:

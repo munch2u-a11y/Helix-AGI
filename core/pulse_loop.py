@@ -42,7 +42,6 @@ from core.physics_engine import PhysicsEngine
 from core.preconscious import Preconscious
 from core.scratchpad import Scratchpad
 from llm.providers.base import ChatSession, ProviderConfig, create_session, detect_available_provider
-from llm.providers.base import PRIMARY_MODEL, FALLBACK_MODEL
 from core.context_compressor import ContextCompressor
 
 logger = logging.getLogger("helix.core.pulse_loop")
@@ -135,7 +134,6 @@ class PulseLoop:
         # 3-tier activity tracking
         self._last_incoming_time = 0   # Last Telegram/audio message
         self._last_activity_time = 0   # Last outbound tool use or incoming
-        self._recent_tool_counts = []  # Counts of qualifying tool calls in recent pulses
 
         # Context window lifecycle tracking
         self._session_focus_origin = None
@@ -241,7 +239,7 @@ class PulseLoop:
 
     def wake(self, trigger: str = "external"):
         """Wake Helix — promote to ACTIVE from any non-ACTIVE state."""
-        if self._state in ("DORMANT", "RESTING", "NAPPING"):
+        if self._state in ("DORMANT", "RESTING"):
             prev = self._state
             self._state = "ACTIVE"
             self._consolidation_ran_this_idle = False  # Reset for next idle
@@ -250,13 +248,6 @@ class PulseLoop:
         elif self._state == "ACTIVE":
             # Already active, just make sure the wake event is set
             self._wake_event.set()
-
-    def request_nap(self, duration_minutes: int = 60):
-        """Voluntarily drop pulse rate to 1 per hour (or specified duration)."""
-        if self._state not in ("DORMANT", "NAPPING"):
-            self._state = "NAPPING"
-            self._nap_duration = duration_minutes * 60
-            logger.info(f"Nap requested for {duration_minutes} minutes")
 
     # ── Event Injection ──────────────────────────────────────────────
 
@@ -411,7 +402,7 @@ class PulseLoop:
                     self._fallback_successes = 0
                     self._restore_failures = 0
                     # Restore primary model
-                    _PRIMARY_MODEL = PRIMARY_MODEL
+                    _PRIMARY_MODEL = "gemini-2.5-flash"
                     if hasattr(self._chat, 'switch_model'):
                         current = getattr(self._chat, '_model', '')
                         if current != _PRIMARY_MODEL:
@@ -427,7 +418,7 @@ class PulseLoop:
             # ── Rate-Limit Gate ───────────────────────────────────
             #    When rate-limited, force fallback model but keep pulsing.
             if self._rate_limited:
-                _FALLBACK = FALLBACK_MODEL
+                _FALLBACK = "gemini-3.1-flash-lite-preview"
                 if self._chat is not None:
                     # Session exists — switch model if needed
                     if hasattr(self._chat, 'switch_model'):
@@ -464,13 +455,6 @@ class PulseLoop:
                     self._state = "RESTING"
                     logger.info("REGULAR → RESTING (10 min no activity)")
 
-            elif self._state == "NAPPING":
-                # Napping only lasts for one cycle. Once we process a pulse
-                # (which we just did), we drop back to RESTING for the next interval
-                # so that if no further tools/messages occur, we stay at RESTING (15m).
-                self._state = "RESTING"
-                logger.info("NAPPING → RESTING (nap cycle complete)")
-
             # ── Idle Consolidation (Curator-Style) ───────────────
             #    When idle for 2+ hours, run lightweight belief
             #    maintenance in the background (merge/decay/archive).
@@ -494,7 +478,6 @@ class PulseLoop:
                 "ACTIVE": self.ACTIVE_INTERVAL,
                 "REGULAR": self.REGULAR_INTERVAL,
                 "RESTING": self.RESTING_INTERVAL,
-                "NAPPING": getattr(self, "_nap_duration", 3600),
             }.get(self._state, self.RESTING_INTERVAL)
             self._wake_event.wait(timeout=interval)
             if self._wake_event.is_set():
@@ -640,8 +623,8 @@ class PulseLoop:
         thought = self._send_pulse(pulse_message)
 
         # 4b. If we got a 429, back off and optionally fallback model
-        _FALLBACK_MODEL = FALLBACK_MODEL
-        _PRIMARY_MODEL = PRIMARY_MODEL
+        _FALLBACK_MODEL = "gemini-3.1-flash-lite-preview"
+        _PRIMARY_MODEL = "gemini-2.5-flash"
         # How many consecutive successes on fallback before trying primary again.
         _FALLBACK_COOLDOWN_PULSES = 10
         # How many failed restore attempts before hard-locking to fallback
@@ -722,13 +705,8 @@ class PulseLoop:
                                 f"{_FALLBACK_COOLDOWN_PULSES} successes before "
                                 f"restoring primary"
                             )
-                        return  # Don't reset _consecutive_429s yet — still cooling down
-            else:
                 self._consecutive_429s = 0
                 self._fallback_successes = 0
-
-        # 5. Parse output for action tags
-        self._parse_output(thought)
 
         # 5b. Tool result queueing — results are now events for next pulse.
         #     This ensures every tool interaction gets full preconscious
@@ -742,35 +720,27 @@ class PulseLoop:
                         "result": tr["result"][:1000],
                     })
 
+        # 5. Parse output for action tags
+        self._parse_output(thought)
+
+
+
         # 5c. Log tools used and track outbound tools for rate tier
-        # 5c. Log tools used and reset activity timer based on escalation rules
+        # 5c. Log tools used and reset activity timer for any tool call
         if hasattr(self._chat, 'get_last_tool_calls'):
             tool_calls = self._chat.get_last_tool_calls()
             if tool_calls:
                 tool_names = [tc['name'] for tc in tool_calls]
                 logger.info(f"FC tools used: {tool_names}")
-                
-                # Exclude the journal tool from acceleration counts
-                qualifying_tools = [name for name in tool_names if name != "journal"]
-                self._recent_tool_counts.append(len(qualifying_tools))
-            else:
-                self._recent_tool_counts.append(0)
-                
-            # Keep only the last 3 pulses
-            if len(self._recent_tool_counts) > 3:
-                self._recent_tool_counts.pop(0)
-                
-            # Escalate if 3 or more qualifying tool calls in the last 3 pulses
-            if sum(self._recent_tool_counts) >= 3:
-                # Reset both event and activity timers for sustained tool usage
+                # Reset both event and activity timers for any tool usage
                 self._last_event_time = time.time()
                 self._last_activity_time = time.time()
                 # If we were in RESTING, move back to REGULAR cadence
                 if self._state == "RESTING":
                     self._state = "REGULAR"
-                    logger.info("RESTING → REGULAR (sustained tool activity)")
+                    logger.info("RESTING → REGULAR (tool activity)")
 
-        # 5d. Track tokens for context window lifecycle
+        # 5c. Track tokens for context window lifecycle
         if hasattr(self._chat, 'get_last_token_count'):
             self._session_token_count = self._chat.get_last_token_count()
 

@@ -19,7 +19,7 @@ _browser = None
 _browser_page = None
 
 # Domain whitelist
-_DOMAIN_WHITELIST_FILE = Path(__file__).parent.parent / "data" / "domain_whitelist.txt"
+_DOMAIN_WHITELIST_FILE = Path("/home/nemo/Helix/data/domain_whitelist.txt")
 
 
 def _load_domain_whitelist() -> set:
@@ -165,7 +165,7 @@ def browse_screenshot(full_page: bool = False) -> str:
 
     try:
         page = _browser_page
-        screenshot_dir = Path(__file__).parent.parent / "data" / "screenshots"
+        screenshot_dir = Path("/home/nemo/Helix/data/screenshots")
         screenshot_dir.mkdir(parents=True, exist_ok=True)
 
         from datetime import datetime

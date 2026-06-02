@@ -1,7 +1,7 @@
 """
 Helix — Moltbook API Tools
 
-Standalone Moltbook API client.
+Standalone Moltbook API client ported from Helix_main.
 Full REST API integration for the Moltbook social platform.
 
 Auth: MOLTBOOK_API_KEY from environment (loaded from credentials.env).
@@ -75,8 +75,7 @@ def _solve_captcha(verification_data: dict) -> str:
     api_key = _api_key()
     try:
         genai.configure(api_key=gemini_key)
-        from llm.providers.base import AUXILIARY_MODEL as _aux
-        model = genai.GenerativeModel(_aux)
+        model = genai.GenerativeModel("gemini-2.5-flash")
 
         prompt = (
             f"Solve this math problem:\n\n{challenge_text}\n\n"

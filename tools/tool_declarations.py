@@ -95,21 +95,13 @@ CORE_TOOLS = [
     },
     {
         "name": "read_file",
-        "description": "Read the contents of a local file in chunks. Defaults to reading the first 250 lines. Use start_line and end_line to read further chunks of large files.",
+        "description": "Read the contents of a local file.",
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
                     "description": "Absolute or home-relative path to the file",
-                },
-                "start_line": {
-                    "type": "integer",
-                    "description": "Optional. The line number to start reading from (1-indexed). Defaults to 1.",
-                },
-                "end_line": {
-                    "type": "integer",
-                    "description": "Optional. The line number to stop reading at (inclusive). Defaults to start_line + 250.",
                 },
             },
             "required": ["path"],
@@ -319,6 +311,24 @@ CORE_TOOLS = [
         },
     },
     {
+        "name": "record_video",
+        "description": "Record a short video clip from the camera. The recording is analyzed frame-by-frame through your visual cortex, producing a temporal narrative of what you observed over the duration. The video file is also saved to disk. Use this when you want to watch something unfold over time rather than a single snapshot.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "duration": {
+                    "type": "integer",
+                    "description": "Recording length in seconds. Must be 5, 10, or 15. Defaults to 5.",
+                },
+                "focus": {
+                    "type": "string",
+                    "description": "Optional focus description for analysis (e.g. 'the doorway', 'Joshua's expression')",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "reset_context",
         "description": "Reset your context window and start a fresh thought thread. Use this when you want to shift focus to a completely new topic, or when your context is getting large. You can provide an initial prompt that will be injected into the new context as your first event.",
         "parameters": {
@@ -327,19 +337,6 @@ CORE_TOOLS = [
                 "prompt": {
                     "type": "string",
                     "description": "Initial prompt or thought thread for the new context window. This will be the first thing you see after the reset.",
-                },
-            },
-        },
-    },
-    {
-        "name": "nap",
-        "description": "Voluntarily drop your pulse rate to 1 per hour for the specified duration. Use this when you have finished all tasks and anticipate no further action is needed soon. Any incoming messages will instantly wake you up.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "duration_minutes": {
-                    "type": "integer",
-                    "description": "How long to nap in minutes. Defaults to 60. Max is 180 (3h).",
                 },
             },
             "required": [],
@@ -1343,7 +1340,7 @@ def get_toolset_info() -> dict:
     return info
 
 
-# ── All Declarations Combined (backward compat) ─────────────
+# ── Legacy: All Declarations Combined (backward compat) ─────────────
 # This is still available for any code that imports TOOL_DECLARATIONS directly.
 # New code should use get_active_declarations() instead.
 

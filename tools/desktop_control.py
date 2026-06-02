@@ -26,7 +26,7 @@ from pathlib import Path
 logger = logging.getLogger("helix.tools.desktop_control")
 
 # Screenshot storage
-_SCREENSHOT_DIR = Path(__file__).parent.parent / "data" / "screenshots"
+_SCREENSHOT_DIR = Path("/home/nemo/Helix/data/screenshots")
 
 
 def _get_gui_env() -> dict:

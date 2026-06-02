@@ -4,22 +4,21 @@ Helix — Channel Router
 Routes outbound messages to the correct communication channel.
 Two routing modes:
 
-  [REPLY:name] → Routes to the channel that person LAST contacted the agent on.
+  [REPLY:name] → Routes to the channel that person LAST contacted Helix on.
                  Tracks last_inbound_channel per person, updated on every
                  incoming event. Falls back to default_channel if no recent
                  inbound exists.
 
   [MESSAGE:name] → Routes to the person's DEFAULT channel from contacts.json.
-                   For proactive outreach — when the agent initiates contact.
+                   For proactive outreach — when Helix initiates contact.
 
   [TELEGRAM:name] / [DISCORD:name] → Explicit channel override.
                    Extended tools, injected by preconscious when relevant.
 
 Channels supported:
   - telegram: python-telegram-bot async send
-  - discord: discord.py async send
-  - dashboard: file-based web UI chat
   - local_speech: SPEAK tag (handled by tool_executor, not here)
+  - discord: placeholder (future)
   - email: placeholder (future)
 """
 
@@ -46,8 +45,6 @@ class ChannelRouter:
         self.data_dir = data_dir
         self.contacts: Dict[str, dict] = {}
         self._telegram_bot = None
-        self._discord_bot = None
-        self._dashboard_comms = None
         self._last_inbound: Dict[str, dict] = {}  # name_lower → {channel, chat_id, time}
         self._load_contacts()
 
@@ -79,16 +76,6 @@ class ChannelRouter:
         self._telegram_bot = bot
         logger.info("Telegram bot wired to channel router")
 
-    def set_discord_bot(self, bot):
-        """Wire the Discord bot instance."""
-        self._discord_bot = bot
-        logger.info("Discord bot wired to channel router")
-
-    def set_dashboard_comms(self, comms):
-        """Wire the Dashboard comms bridge."""
-        self._dashboard_comms = comms
-        logger.info("Dashboard comms wired to channel router")
-
     # ── Contact Resolution ────────────────────────────────────────────
 
     def resolve_contact(self, name: str) -> Optional[dict]:
@@ -110,13 +97,13 @@ class ChannelRouter:
     # ── Inbound Tracking ──────────────────────────────────────────────
 
     def track_inbound(self, sender: str, channel: str, **kwargs):
-        """Record the channel a person last contacted the agent on.
+        """Record the channel a person last contacted Helix on.
 
         Called by the pulse loop when processing incoming events.
         This drives reply() routing.
 
         If the sender is not in contacts.json, auto-creates a minimal
-        contact entry so the agent can always reply to and message them.
+        contact entry so Helix can always reply to and message them.
 
         Args:
             sender: Display name of the sender.
@@ -151,9 +138,6 @@ class ChannelRouter:
                     "channel_id": kwargs["channel_id"],
                 }
                 new_contact["default_channel"] = "discord"
-            elif channel == "dashboard":
-                new_contact["channels"]["dashboard"] = {}
-                new_contact["default_channel"] = "dashboard"
 
             self.contacts[name_lower] = new_contact
             self._save_contacts()
@@ -223,7 +207,7 @@ class ChannelRouter:
                 channel_data=channels[default],
             )
 
-        # Otherwise, priority: telegram > discord > dashboard > email
+        # Otherwise, priority: telegram > discord > email
         if "telegram" in channels and channels["telegram"].get("chat_id"):
             return self._send_via_channel(
                 recipient=recipient,
@@ -232,21 +216,9 @@ class ChannelRouter:
                 channel_data=channels["telegram"],
             )
 
-        if "discord" in channels and channels["discord"].get("channel_id"):
-            return self._send_via_channel(
-                recipient=recipient,
-                message=message,
-                channel="discord",
-                channel_data=channels["discord"],
-            )
-
-        if "dashboard" in channels:
-            return self._send_via_channel(
-                recipient=recipient,
-                message=message,
-                channel="dashboard",
-                channel_data=channels.get("dashboard", {}),
-            )
+        if "discord" in channels:
+            logger.info(f"Discord for {display} — not yet implemented")
+            return False
 
         if "email" in channels:
             logger.info(f"Email for {display} — not yet implemented")
@@ -287,19 +259,13 @@ class ChannelRouter:
                 return False
             return self._send_telegram(message, chat_id, recipient)
 
-        if channel == "discord":
-            channel_id = channel_data.get("channel_id")
-            if not channel_id:
-                logger.warning(f"No channel_id for {recipient} on Discord")
-                return False
-            return self._send_discord(message, channel_id, recipient)
-
-        if channel == "dashboard":
-            return self._send_dashboard(message, recipient)
-
         if channel == "local_speech":
             # Handled by tool_executor [SPEAK:], not here
             logger.info(f"Local speech for {recipient} — use [SPEAK:] tag instead")
+            return False
+
+        if channel == "discord":
+            logger.info(f"Discord send not yet implemented")
             return False
 
         if channel == "email":
@@ -321,33 +287,6 @@ class ChannelRouter:
             return success
         except Exception as e:
             logger.error(f"Telegram send failed: {e}")
-            return False
-
-    def _send_discord(self, message: str, channel_id: int, display_name: str) -> bool:
-        """Send via Discord bot."""
-        if not self._discord_bot:
-            logger.warning("Discord bot not initialized")
-            return False
-        try:
-            success = self._discord_bot.send_message(text=message, channel_id=channel_id)
-            if success:
-                logger.info(f"Discord → {display_name} ({channel_id}): {message[:80]}")
-            return success
-        except Exception as e:
-            logger.error(f"Discord send failed: {e}")
-            return False
-
-    def _send_dashboard(self, message: str, display_name: str) -> bool:
-        """Send via Dashboard comms bridge."""
-        if not self._dashboard_comms:
-            logger.warning("Dashboard comms not initialized")
-            return False
-        try:
-            self._dashboard_comms.push_outbound(display_name, message)
-            logger.info(f"Dashboard → {display_name}: {message[:80]}")
-            return True
-        except Exception as e:
-            logger.error(f"Dashboard send failed: {e}")
             return False
 
     # ── Contact Metadata ──────────────────────────────────────────────

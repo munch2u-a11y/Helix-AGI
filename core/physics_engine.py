@@ -20,12 +20,13 @@ import time
 import math
 import logging
 from pathlib import Path
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Callable
 
 import numpy as np
 
 from core.cognitive_space import CognitiveSpace, CognitiveProjection, PROJECTION_DIM
 from core.spatial_mind import SpatialMind
+from memory.semantic_index import SemanticIndex
 
 logger = logging.getLogger("helix.core.physics_engine")
 
@@ -66,6 +67,14 @@ class PhysicsEngine:
             base_dir=self.data_dir,
         )
 
+        # ── 384D Semantic Index (conscious recall) ──
+        self.semantic_index = SemanticIndex(dim=EMBEDDING_DIM)
+        if self.data_dir:
+            idx_path = self.data_dir / "semantic_index"
+            loaded = self.semantic_index.load(idx_path)
+            if loaded > 0:
+                logger.info(f"SemanticIndex loaded: {loaded} vectors")
+
         # ── Embedder (lazy-loaded, shared with SpatialMind) ──
         self._embedder = None
 
@@ -78,7 +87,7 @@ class PhysicsEngine:
         # ── Load persisted attention state ──
         self._load_attention()
 
-        logger.info("PhysicsEngine initialized (dual 8D spatial manifold via SpatialMind)")
+        logger.info("PhysicsEngine initialized (dual 8D manifold + 384D semantic index)")
 
     # ── Properties delegated to SpatialMind ───────────────────────────
 
@@ -217,6 +226,8 @@ class PhysicsEngine:
         # Periodic save
         if self._pulse_count % 10 == 0:
             self._save_attention()
+            if self.data_dir:
+                self.semantic_index.save(self.data_dir / "semantic_index")
 
         logger.debug(
             f"Pulse {self._pulse_count}: "
@@ -344,26 +355,134 @@ class PhysicsEngine:
         chain.sort(key=lambda x: x["creation_pulse"])
         return chain
 
-    # ── Point Registration ────────────────────────────────────────────
+    # ── Dual Registration (single source of truth) ─────────────────────
+
+    def _register_point(
+        self,
+        point_id: str,
+        emb: np.ndarray,
+        point_type: str,
+        spatial_kwargs: dict,
+        semantic_metadata: dict,
+    ) -> None:
+        """Register a point in BOTH the 8D manifold and 384D semantic index.
+
+        This is the single place where dual-registration happens.
+        All public add methods and bootstrap logic delegate here.
+
+        Args:
+            point_id: Unique ID (e.g., "bel_42", "mem_17")
+            emb: Raw 384D embedding (pre-projected for 8D internally)
+            point_type: "belief" or "memory"
+            spatial_kwargs: Extra kwargs for the SpatialMind add
+                            (confidence, importance, content, etc.)
+            semantic_metadata: Metadata dict for the 384D index
+                               (content, type, importance, etc.)
+        """
+        # 8D manifold
+        if point_type == "belief":
+            self.spatial_mind.add_belief(point_id, emb, **spatial_kwargs)
+        elif point_type == "memory":
+            self.spatial_mind.add_memory(point_id, emb, **spatial_kwargs)
+        else:
+            logger.warning(f"Unknown point_type '{point_type}' for {point_id}")
+
+        # 384D semantic index
+        self.semantic_index.add(
+            id=point_id,
+            embedding=emb,
+            metadata=semantic_metadata,
+        )
+
+    # ── Public Add Methods (deprecated — use _register_point) ────────
+    # Kept for backward compatibility with existing callers.
+    # Will be removed once all call sites are verified.
 
     def add_belief_point(self, belief_id: str, text: str, **metadata):
-        """Add a belief to the belief space."""
+        """Add a belief to both the 8D manifold and 384D semantic index.
+
+        .. deprecated:: Use _register_point() directly for new code.
+        """
         emb = self.embed_text(text)
-        self.spatial_mind.add_belief(belief_id, emb, **metadata)
+        self._register_point(
+            point_id=belief_id,
+            emb=emb,
+            point_type="belief",
+            spatial_kwargs=metadata,
+            semantic_metadata={
+                "content": text[:500],
+                "type": "belief",
+                "confidence": metadata.get("confidence", 0.5),
+                "importance": metadata.get("mass", 1.0),
+            },
+        )
 
     def add_memory_point(self, memory_id: str, text: str, **metadata):
-        """Add a memory to the memory space."""
+        """Add a memory to both the 8D manifold and 384D semantic index.
+
+        .. deprecated:: Use _register_point() directly for new code.
+        """
         emb = self.embed_text(text)
-        self.spatial_mind.add_memory(memory_id, emb, **metadata)
+        self._register_point(
+            point_id=memory_id,
+            emb=emb,
+            point_type="memory",
+            spatial_kwargs=metadata,
+            semantic_metadata={
+                "content": text[:500],
+                "type": "memory",
+                "importance": metadata.get("importance", 0.5),
+            },
+        )
+
+    # ── Semantic Search (384D, for conscious recall) ──────────────────
+
+    def semantic_search(
+        self,
+        query_text: str,
+        k: int = 10,
+        filter_fn: Optional[Callable] = None,
+        return_embeddings: bool = False,
+    ) -> list:
+        """Search the 384D semantic index for conscious recall.
+
+        Used by the memory_recall tool and Curator deep search.
+        Returns results sorted by cosine similarity (most similar first).
+
+        Args:
+            query_text: Natural language query string
+            k: Maximum number of results
+            filter_fn: Optional predicate (id, metadata) → bool to filter
+                       results before ranking
+            return_embeddings: If True, include the normalized 384D embedding
+                               in each result dict under key "embedding"
+        """
+        emb = self.embed_text(query_text)
+        results = self.semantic_index.search(emb, k=k, filter_fn=filter_fn)
+
+        if return_embeddings:
+            for r in results:
+                vid = r["id"]
+                if self.semantic_index.contains(vid):
+                    idx = self.semantic_index._id_to_idx[vid]
+                    r["embedding"] = self.semantic_index._embeddings[idx].tolist()
+
+        return results
 
     # ── Bootstrap from existing stores ────────────────────────────────
 
     def bootstrap_from_stores(self, belief_store, memory_manager):
-        """Populate both spaces from existing belief store and memory DB.
+        """Populate both 8D spaces and the 384D index from existing stores.
 
         Called once during initialization to hydrate the manifold with
         existing data so gravity fields are non-empty from the start.
+        Every entry is registered via _register_point() to ensure both
+        the 8D manifold and 384D semantic index stay in sync.
         """
+        if self.semantic_index.count > 0:
+            logger.info("SemanticIndex already loaded from disk — skipping heavy embedding bootstrap")
+            return
+
         beliefs_added = 0
         memories_added = 0
 
@@ -375,38 +494,98 @@ class PhysicsEngine:
                 if not content or len(content) < 5:
                     continue
                 emb = self.embed_text(content)
-                self.spatial_mind.belief_space.add_point(
-                    point_id=b.get("id", f"belief_{beliefs_added}"),
-                    embedding=emb,
+                bid = b.get("id", f"belief_{beliefs_added}")
+
+                # Extract encoding Lagrangian components
+                lag = b.get("encoding_lagrangian", {})
+                if not isinstance(lag, dict):
+                    lag = {}
+
+                self._register_point(
+                    point_id=bid,
+                    emb=emb,
                     point_type="belief",
-                    confidence=b.get("confidence", 0.5),
-                    importance=b.get("mass", 1.0),
-                    content=content,
+                    spatial_kwargs={
+                        "confidence": b.get("confidence", 0.5),
+                        "importance": b.get("mass", 1.0),
+                        "content": content,
+                        "encoding_omega": lag.get("omega", 0.5),
+                        "encoding_s_total": lag.get("s_total", 0.15),
+                        "relations_count": len(b.get("relations", [])),
+                        "metadata": {
+                            "verifications": b.get("verifications", 0),
+                            "stability_index": b.get("stability_index", 0.5),
+                            "memory_refs": b.get("memory_refs", []),
+                            "created_at": b.get("created_at", ""),
+                            "last_verified": b.get("last_verified", ""),
+                            "formation_type": b.get("formation_type", ""),
+                            "encoding_lagrangian": lag,
+                        },
+                    },
+                    semantic_metadata={
+                        "content": content[:500],
+                        "type": "belief",
+                        "confidence": b.get("confidence", 0.5),
+                        "importance": b.get("mass", 1.0),
+                        "category": b.get("_category", ""),
+                        "verifications": b.get("verifications", 0),
+                        "memory_refs_count": len(b.get("memory_refs", [])),
+                        "encoding_omega": lag.get("omega", 0.5),
+                    },
                 )
                 beliefs_added += 1
         except Exception as e:
             logger.warning(f"Belief bootstrap failed: {e}")
 
-        # Bootstrap memories
+        # Bootstrap memories — load broadly so historical episodic
+        # memories (people, places, events) are present in the manifold.
+        # No time cutoff: the whole journal is Helix's lived experience.
         try:
-            recent = memory_manager.get_recent(limit=500, minutes_back=60*24*7)
+            recent = memory_manager.get_historical_sample(limit=2000)
             for m in recent:
                 content = m.get("content", "")
                 if not content or len(content) < 10:
                     continue
                 emb = self.embed_text(content)
-                self.spatial_mind.memory_space.add_point(
-                    point_id=m.get("id", f"mem_{memories_added}"),
-                    embedding=emb,
+                mid = m.get("id", f"mem_{memories_added}")
+
+                # Extract encoding Lagrangian if available
+                mem_lag = m.get("lagrangian_snapshot", {})
+                if isinstance(mem_lag, str):
+                    try:
+                        import json as _json
+                        mem_lag = _json.loads(mem_lag)
+                    except Exception:
+                        mem_lag = {}
+                if not isinstance(mem_lag, dict):
+                    mem_lag = {}
+
+                self._register_point(
+                    point_id=mid,
+                    emb=emb,
                     point_type="memory",
-                    importance=m.get("importance", 0.5),
-                    content=content[:200],
+                    spatial_kwargs={
+                        "importance": m.get("importance", 0.5),
+                        "content": content[:200],
+                        "encoding_omega": mem_lag.get("omega",
+                                            m.get("encoding_omega", 0.5)),
+                        "encoding_s_total": mem_lag.get("s_total", 0.15),
+                    },
+                    semantic_metadata={
+                        "content": content[:500],
+                        "type": "memory",
+                        "importance": m.get("importance", 0.5),
+                        "memory_type": m.get("memory_type", ""),
+                        "created_at": m.get("created_at", ""),
+                        "encoding_omega": mem_lag.get("omega",
+                                            m.get("encoding_omega", 0.5)),
+                    },
                 )
                 memories_added += 1
         except Exception as e:
             logger.warning(f"Memory bootstrap failed: {e}")
 
-        # Rebuild trees
+        # Rebuild 8D trees
         if beliefs_added > 0:
             self.spatial_mind.belief_space._rebuild_tree()
         if memories_added > 0:
@@ -415,9 +594,14 @@ class PhysicsEngine:
         # Compute identity center from beliefs
         self.spatial_mind._compute_identity_center()
 
+        # Save the fully hydrated semantic index to disk so we don't re-embed on next boot
+        if self.data_dir:
+            self.semantic_index.save(self.data_dir / "semantic_index")
+
         logger.info(
             f"Spatial mind bootstrapped: {beliefs_added} beliefs, "
-            f"{memories_added} memories"
+            f"{memories_added} memories, "
+            f"{self.semantic_index.count} vectors in 384D index"
         )
 
     # ── Persistence ───────────────────────────────────────────────────
@@ -433,3 +617,6 @@ class PhysicsEngine:
     def save_all(self):
         """Save all state (called on shutdown)."""
         self.spatial_mind.save_state()
+        if self.data_dir:
+            self.semantic_index.save(self.data_dir / "semantic_index")
+            logger.info("PhysicsEngine: all state saved (8D manifold + 384D index)")

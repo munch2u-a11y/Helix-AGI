@@ -3,7 +3,7 @@ Helix — Ollama Chat Session Provider
 
 Wraps Ollama's /api/chat with persistent message history.
 Supports BOTH the Python package and direct REST API.
-Vulkan auto-offload on local GPU. No hardcoded timeout.
+Vulkan auto-offload on AMD 780m iGPU. No hardcoded timeout.
 Thinking mode disabled for faster pulse responses.
 
 Extracted from pulse_loop.py into the provider abstraction layer.

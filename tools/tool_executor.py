@@ -148,11 +148,10 @@ class ToolExecutor:
             "journal": self._fc_journal,
             "listen": self._fc_listen,
             "look": self._fc_look,
-            "record_video": self._fc_record_video,
             "ptz_look": self._fc_ptz_look,
             "camera_auto_track": self._fc_camera_auto_track,
+            "record_video": self._fc_record_video,
             "reset_context": self._fc_reset_context,
-            "nap": self._fc_nap,
         }
         mgmt_handlers = {
             "enable_toolset": self._fc_enable_toolset,
@@ -317,7 +316,7 @@ class ToolExecutor:
         """Execute a Gemini native function call by name with structured args.
 
         Primary path: use the ToolRegistry for dispatch (check_fn aware).
-        Fallback: use the _FC_DISPATCH dict.
+        Fallback: use the legacy _FC_DISPATCH dict.
 
         Returns:
             Result string from the tool execution.
@@ -327,46 +326,20 @@ class ToolExecutor:
             entry = self._registry.get_entry(name)
             if entry:
                 try:
-                    result = entry.handler(args)
-                    self._store_action_memory(name, args)
-                    return result
+                    return entry.handler(args)
                 except Exception as e:
                     logger.error(f"Tool {name} failed: {e}")
                     return f"Tool error ({name}): {e}"
 
-        # Fallback: dispatch dict
-        handler = self._FC_DISPATCH.get(name)
+        # Fallback: legacy dispatch dict
+        handler = getattr(self, "_FC_DISPATCH", {}).get(name)
         if handler is None:
             return f"Unknown tool: {name}"
         try:
-            result = handler(self, args)
-            self._store_action_memory(name, args)
-            return result
+            return handler(self, args)
         except Exception as e:
             logger.error(f"Tool {name} failed: {e}")
             return f"Tool error ({name}): {e}"
-
-    def _store_action_memory(self, name: str, args: dict):
-        """Store a semantic memory that the agent used a tool."""
-        # Don't store communication tools that already log their own memory
-        if name in {"reply", "send_message", "verbalize", "memory_store"}:
-            return
-            
-        if getattr(self, "memory_manager", None):
-            try:
-                # Truncate args so we don't blow up memory with giant strings
-                args_str = str(args)
-                if len(args_str) > 200:
-                    args_str = args_str[:200] + "...[truncated]"
-                    
-                self.memory_manager.store(
-                    content=f"I used the '{name}' tool with arguments: {args_str}",
-                    memory_type="action",
-                    source="tool_executor",
-                    importance=0.6,
-                )
-            except Exception as e:
-                logger.debug(f"Failed to store action memory: {e}")
 
     # ── FC Handlers (structured args) ────────────────────────────────
 
@@ -477,9 +450,6 @@ class ToolExecutor:
 
     def _fc_read_file(self, args: dict) -> str:
         path = args.get("path", "")
-        start_line = args.get("start_line", 1)
-        end_line = args.get("end_line", start_line + 249)
-
         if not path:
             return "No path provided."
         try:
@@ -489,23 +459,8 @@ class ToolExecutor:
             size = os.path.getsize(p)
             if size > MAX_FILE_READ:
                 return f"File too large ({size} bytes, max {MAX_FILE_READ})."
-            
             with open(p, 'r', errors='replace') as f:
-                lines = f.readlines()
-            
-            total_lines = len(lines)
-            start_idx = max(0, start_line - 1)
-            end_idx = min(total_lines, end_line)
-            
-            if start_idx >= total_lines:
-                return f"Error: start_line ({start_line}) is beyond end of file (total lines: {total_lines})."
-
-            chunk = "".join(lines[start_idx:end_idx])
-            
-            if end_idx < total_lines:
-                chunk += f"\n\n[FILE TRUNCATED: Showing lines {start_idx + 1} to {end_idx} of {total_lines}. Use start_line={end_idx + 1} to read more.]"
-                
-            return chunk
+                return f.read()
         except Exception as e:
             return f"Read failed: {e}"
 
@@ -683,19 +638,6 @@ class ToolExecutor:
             return f"Context reset queued. New thread: {prompt[:100]}"
         return "Context reset queued. Fresh context window on next pulse."
 
-    def _fc_nap(self, args: dict) -> str:
-        """Voluntarily drop pulse rate to 1 per hour."""
-        duration_minutes = args.get("duration_minutes", 60)
-        
-        # Limit to reasonable bounds (1 min to 3 hours)
-        duration_minutes = max(1, min(180, int(duration_minutes)))
-        
-        if not self._pulse_loop:
-            return "Error: pulse loop not available to coordinate nap."
-            
-        self._pulse_loop.request_nap(duration_minutes=duration_minutes)
-        return f"Nap initiated for {duration_minutes} minutes. I will pulse at 1/hour until then, unless woken by a message."
-
     def _fc_listen(self, args: dict) -> str:
         duration = str(args.get("duration", 5))
         tag = ActionTag(tag="LISTEN", param="", content=duration)
@@ -705,6 +647,14 @@ class ToolExecutor:
         tag = ActionTag(tag="LOOK", param="", content=args.get("focus", ""))
         return self._exec_look(tag)
 
+    def _fc_ptz_look(self, args: dict) -> str:
+        tag = ActionTag(tag="PTZ_LOOK", param="", content=args.get("direction", ""))
+        return self._exec_ptz_look(tag)
+
+    def _fc_camera_auto_track(self, args: dict) -> str:
+        tag = ActionTag(tag="CAMERA_AUTO_TRACK", param="", content=args.get("enabled", "on"))
+        return self._exec_camera_auto_track(tag)
+
     def _fc_record_video(self, args: dict) -> str:
         duration = args.get("duration", 5)
         focus = args.get("focus", "")
@@ -713,14 +663,6 @@ class ToolExecutor:
             return cortex.record_video(duration=duration, focus=focus)
         except Exception as e:
             return f"Video recording failed: {e}"
-
-    def _fc_ptz_look(self, args: dict) -> str:
-        tag = ActionTag(tag="PTZ_LOOK", param="", content=args.get("direction", ""))
-        return self._exec_ptz_look(tag)
-
-    def _fc_camera_auto_track(self, args: dict) -> str:
-        tag = ActionTag(tag="CAMERA_AUTO_TRACK", param="", content=args.get("enabled", "on"))
-        return self._exec_camera_auto_track(tag)
 
     # Browser
     def _fc_browse(self, args: dict) -> str:
@@ -741,27 +683,27 @@ class ToolExecutor:
     # Git
     def _fc_git_status(self, args: dict) -> str:
         from tools import github_api as gh
-        return gh.git_status(args.get("path", "."))
+        return gh.git_status(args.get("path", os.path.expanduser("~/Helix")))
 
     def _fc_git_diff(self, args: dict) -> str:
         from tools import github_api as gh
-        return gh.git_diff(args.get("path", "."))
+        return gh.git_diff(args.get("path", os.path.expanduser("~/Helix")))
 
     def _fc_git_commit(self, args: dict) -> str:
         from tools import github_api as gh
-        return gh.git_commit(args.get("path", "."), args.get("message", "Auto-commit"))
+        return gh.git_commit(args.get("path", os.path.expanduser("~/Helix")), args.get("message", "Auto-commit by Helix"))
 
     def _fc_git_push(self, args: dict) -> str:
         from tools import github_api as gh
-        return gh.git_push(args.get("path", "."))
+        return gh.git_push(args.get("path", os.path.expanduser("~/Helix")))
 
     def _fc_git_pull(self, args: dict) -> str:
         from tools import github_api as gh
-        return gh.git_pull(args.get("path", "."))
+        return gh.git_pull(args.get("path", os.path.expanduser("~/Helix")))
 
     def _fc_git_log(self, args: dict) -> str:
         from tools import github_api as gh
-        return gh.git_log(args.get("path", "."), args.get("count", 10))
+        return gh.git_log(args.get("path", os.path.expanduser("~/Helix")), args.get("count", 10))
 
     def _fc_git_clone(self, args: dict) -> str:
         from tools import github_api as gh
@@ -1101,7 +1043,7 @@ class ToolExecutor:
 
 
 
-    # ── Fallback Text-Tag Parsing (for local models) ────────────────────
+    # ── Legacy Text-Tag Parsing (for local models) ────────────────────
 
     def parse_tags(self, thought: str) -> List[ActionTag]:
         """Extract action tags from thought text.
@@ -1111,7 +1053,7 @@ class ToolExecutor:
           [SEARCH:] python asyncio tutorial
           [WRITE_FILE:/tmp/test.txt] content here (multi-line)
           [SPEAK:] Hello world
-          [READ_FILE:] /path/to/file.txt
+          [READ_FILE:] /home/nemo/file.txt
           [READ_URL:] https://example.com
         """
         if not thought:
@@ -1390,7 +1332,7 @@ class ToolExecutor:
 
     # ── TTS (Speak) ───────────────────────────────────────────────────
 
-    VOICE_MODEL = "en-US-GuyNeural"
+    VOICE_MODEL = "en-US-GuyNeural"  # Same as Helix_main
 
     def _exec_speak(self, tag: ActionTag) -> str:
         """Speak text aloud via edge-tts (or espeak-ng fallback)."""
@@ -1485,7 +1427,7 @@ class ToolExecutor:
         from tools import github_api as gh
 
         op = tag.tag  # GIT_STATUS, GIT_DIFF, etc.
-        path = tag.param.strip() or "."
+        path = tag.param.strip() or os.path.expanduser("~/Helix")
         content = tag.content.strip()
 
         if op == "GIT_STATUS":
@@ -1493,7 +1435,7 @@ class ToolExecutor:
         elif op == "GIT_DIFF":
             return gh.git_diff(path)
         elif op == "GIT_COMMIT":
-            message = content or "Auto-commit"
+            message = content or "Auto-commit by Helix"
             return gh.git_commit(path, message)
         elif op == "GIT_PUSH":
             return gh.git_push(path)

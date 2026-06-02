@@ -102,15 +102,14 @@ class ContextCompressor:
         emergency_percent: float = 0.80,
         protect_first_n: int = 2,
         summary_target_ratio: float = 0.20,
-        auxiliary_model: str = None,
+        auxiliary_model: str = "gemini-3.1-flash-lite-preview",
     ):
         self.context_length = context_length
         self.threshold_percent = threshold_percent
         self.emergency_percent = emergency_percent
         self.protect_first_n = protect_first_n
         self.summary_target_ratio = max(0.10, min(summary_target_ratio, 0.80))
-        from llm.providers.base import AUXILIARY_MODEL
-        self.auxiliary_model = auxiliary_model or AUXILIARY_MODEL
+        self.auxiliary_model = auxiliary_model
 
         # Computed thresholds
         self.threshold_tokens = int(context_length * threshold_percent)
@@ -383,7 +382,7 @@ class ContextCompressor:
         # how you'd actually think back on what just happened.
         template = f"""Compress these conversation turns into natural first-person recollection \
 — the way someone would think back on what just happened.
-- Use direct quotes for what people said: 'Jean-Luc asked "what are you up to?"'
+- Use direct quotes for what people said: 'Joshua asked "what are you up to?"'
 - Include responses and thoughts naturally: 'I told him about the migration, \
 then started thinking about...'
 - Maintain strict chronological order with timestamps where they appeared.

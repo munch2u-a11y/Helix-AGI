@@ -27,8 +27,7 @@ logger = logging.getLogger("helix.core.belief_consolidator")
 
 # ── Configuration ────────────────────────────────────────────────────
 
-from llm.providers.base import AUXILIARY_MODEL
-_MODEL = AUXILIARY_MODEL
+_MODEL = "gemini-3.1-flash-lite-preview"
 _MAX_MATCH_CANDIDATES = 6   # Top N existing beliefs to send for comparison
 _MAX_WORKERS = 4             # Parallel Gemini calls
 _LEXICON_MAX_LENGTH = 500    # Lexicon entries can hold more text than beliefs
@@ -114,7 +113,7 @@ def _load_lexicon_terms(lexicon_path: Path) -> Dict[str, str]:
     Returns dict mapping each matchable term (lowercased) to
     the lexicon entry's primary term (for logging/identification).
 
-    Example: {"jean-luc": "Jean-Luc", "picard": "Jean-Luc", "locutus": "Captain"}
+    Example: {"joshua": "Joshua", "nemo": "Joshua", "n3m0": "Joshua"}
     """
     terms = {}
     try:

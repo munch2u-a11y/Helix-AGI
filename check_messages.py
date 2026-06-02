@@ -1,7 +1,7 @@
 import sqlite3
 import os
 
-db_path = os.path.join(os.path.dirname(__file__), "data", "memory", "helix_memory.db")
+db_path = os.path.expanduser("~/Helix/data/memory/helix_memory.db")
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 

@@ -1,41 +1,40 @@
 """
-Helix — Co-Occurrence Hook (Real-Time Hebbian Belief Wiring)
+Helix — Co-Occurrence Hook (Passive Belief Co-Injection Tracker)
 
 A post-pulse hook that tracks which beliefs are co-injected into the
-context window and strengthens their relational links automatically.
-Inspired by Hebbian learning: "beliefs that fire together wire together."
+context window. Accumulates pairwise co-occurrence statistics that the
+nightly Curator reads to discover natural synthesis clusters.
 
-Architecture:
-  - Every pulse: accumulate co-occurrence counts for all pairs of
-    injected beliefs in a sparse in-memory dict.
-  - Every N pulses (or on state transition to RESTING): run HDBSCAN
-    on co-occurring beliefs to discover natural clusters, then wire
-    bidirectional relations between cluster members.
-  - Persist co-occurrence state to disk for crash recovery.
+This hook is a PASSIVE OBSERVER. It:
+  ✓ Counts pairwise co-injection frequency
+  ✓ Provides clusters to the Curator via get_current_clusters()
+  ✓ Persists co-occurrence state for crash recovery
+  ✗ Does NOT write relations to the belief store
+  ✗ Does NOT move belief positions in 8D space
+  ✗ Does NOT modify any belief properties
 
-The nightly Curator can then read pre-built relational clusters instead
-of running raw UMAP/HDBSCAN from scratch on position vectors.
+The Curator's Phase 3 (compound synthesis) calls get_current_clusters()
+during the sleep cycle to find genuine convergence points for LLM-based
+insight generation. The co-occurrence data tells the Curator "these
+beliefs keep appearing together in the attention field" — the Curator
+decides whether that convergence is meaningful.
 
 No LLM calls. CPU-only. Non-blocking.
 """
 
 import json
 import logging
-import os
 import time
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger("helix.core.co_occurrence_hook")
 
 # ── Configuration ────────────────────────────────────────────────────
 
-# How many pulses between clustering passes (default trigger)
-CLUSTER_INTERVAL = 10
-
-# Minimum co-occurrence count before a relation is considered real
+# Minimum co-occurrence count before a pair is considered significant
 CO_OCCURRENCE_THRESHOLD = 3
 
 # Minimum cluster size for HDBSCAN
@@ -44,54 +43,41 @@ MIN_CLUSTER_SIZE = 3
 # Daily decay factor for co-occurrence counts (0.95 = 5% decay per day)
 DAILY_DECAY_FACTOR = 0.95
 
-# Maximum new relations a single belief can gain per day.
-# Prevents early manifold hyper-crystallization when only a few beliefs
-# exist and they all get co-injected on every pulse.
-MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY = 2
-
 # State file for persistence across restarts
 STATE_FILENAME = "co_occurrence_state.json"
 
+# How often to persist state (in accumulation calls)
+PERSIST_INTERVAL = 50
+
 
 class CoOccurrenceTracker:
-    """Tracks belief co-injection patterns and wires relations.
+    """Passively tracks belief co-injection patterns.
 
-    Accumulates pairwise co-occurrence counts every pulse, then
-    periodically clusters them and updates the belief store's
-    relation fields.
+    Accumulates pairwise co-occurrence counts every pulse. The nightly
+    Curator reads clusters via get_current_clusters() for compound
+    synthesis. This tracker never writes to the belief store or
+    modifies the cognitive manifold.
 
     Attributes:
         co_counts: Sparse dict mapping frozenset({id_a, id_b}) → count
-        belief_store: Reference to the BeliefStore for writing relations
         data_dir: Path to data directory for state persistence
-        _pulses_since_cluster: Counter for triggering cluster passes
+        _accumulations_since_persist: Counter for periodic state saves
         _last_decay_day: Day number of last decay application
     """
 
     def __init__(
         self,
-        belief_store,
         data_dir: str = "data",
-        cognitive_space=None,
     ):
         """Initialize the co-occurrence tracker.
 
         Args:
-            belief_store: BeliefStore instance for reading/writing relations
             data_dir: Directory for state persistence
-            cognitive_space: Optional CognitiveSpace instance for Hebbian
-                drift (updating 8D positions of related beliefs)
         """
-        self.belief_store = belief_store
         self.data_dir = Path(data_dir)
-        self.cognitive_space = cognitive_space
         self.co_counts: Dict[frozenset, float] = defaultdict(float)
-        self._pulses_since_cluster = 0
+        self._accumulations_since_persist = 0
         self._last_decay_day = time.localtime().tm_yday
-        self._last_cluster_time = 0.0
-        # Daily relation wiring cap: {belief_id: count_wired_today}
-        self._wired_today: Dict[str, int] = defaultdict(int)
-        self._wired_today_day = time.localtime().tm_yday
 
         # Load persisted state if available
         self._load_state()
@@ -118,45 +104,26 @@ class CoOccurrenceTracker:
             pair = frozenset({id_a, id_b})
             self.co_counts[pair] += 1.0
 
-        self._pulses_since_cluster += 1
+        self._accumulations_since_persist += 1
 
-    def should_cluster(self, pulse_state: str = "REGULAR") -> bool:
-        """Check if it's time to run a clustering pass.
+        # Periodic state persistence
+        if self._accumulations_since_persist >= PERSIST_INTERVAL:
+            self._maybe_decay()
+            self._save_state()
+            self._accumulations_since_persist = 0
 
-        Triggers on:
-          1. Every CLUSTER_INTERVAL pulses (default 10), OR
-          2. When the system transitions to RESTING state
+    # ── Clustering (on-demand, for Curator) ──────────────────────────
 
-        Args:
-            pulse_state: Current pulse loop state (ACTIVE/REGULAR/RESTING)
+    def get_current_clusters(self) -> List[List[str]]:
+        """Return current belief clusters for the nightly Curator.
+
+        The Curator's Phase 3 calls this to discover natural convergence
+        points for compound synthesis. Clusters are built from the
+        accumulated co-occurrence data using HDBSCAN.
 
         Returns:
-            True if a clustering pass should run
+            List of clusters, each a list of belief IDs
         """
-        # Trigger on state transition to RESTING
-        if pulse_state == "RESTING" and self._pulses_since_cluster > 0:
-            return True
-
-        # Trigger on interval
-        if self._pulses_since_cluster >= CLUSTER_INTERVAL:
-            return True
-
-        return False
-
-    # ── Clustering Pass ──────────────────────────────────────────────
-
-    def run_cluster_pass(self) -> Dict[str, Any]:
-        """Run HDBSCAN on co-occurring beliefs and wire relations.
-
-        Returns stats about what was discovered and wired.
-        """
-        self._pulses_since_cluster = 0
-        self._last_cluster_time = time.time()
-
-        # Apply daily decay if needed
-        self._maybe_decay()
-
-        # Filter to pairs above threshold
         strong_pairs = {
             pair: count
             for pair, count in self.co_counts.items()
@@ -164,38 +131,9 @@ class CoOccurrenceTracker:
         }
 
         if len(strong_pairs) < 3:
-            logger.debug(
-                "Co-occurrence: %d strong pairs (need 3+), skipping cluster",
-                len(strong_pairs),
-            )
-            self._save_state()
-            return {"clusters": 0, "relations_added": 0, "strong_pairs": len(strong_pairs)}
+            return []
 
-        # Build adjacency for HDBSCAN
-        clusters = self._cluster_pairs(strong_pairs)
-
-        # Wire relations for each cluster
-        relations_added = 0
-        for cluster_ids in clusters:
-            added = self._wire_cluster_relations(cluster_ids)
-            relations_added += added
-
-        logger.info(
-            "Co-occurrence clustering: %d clusters, %d relations wired "
-            "from %d strong pairs (threshold=%d)",
-            len(clusters), relations_added,
-            len(strong_pairs), CO_OCCURRENCE_THRESHOLD,
-        )
-
-        # Persist state
-        self._save_state()
-
-        return {
-            "clusters": len(clusters),
-            "relations_added": relations_added,
-            "strong_pairs": len(strong_pairs),
-            "cluster_sizes": [len(c) for c in clusters],
-        }
+        return self._cluster_pairs(strong_pairs)
 
     def _cluster_pairs(
         self, strong_pairs: Dict[frozenset, float]
@@ -306,134 +244,6 @@ class CoOccurrenceTracker:
 
         return clusters
 
-    # ── Relation Wiring ──────────────────────────────────────────────
-
-    def _wire_cluster_relations(self, cluster_ids: List[str]) -> int:
-        """Add bidirectional relations between all beliefs in a cluster.
-
-        Only adds new relations — existing relations are preserved.
-        Enforces a daily cap (MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY) to
-        prevent early manifold hyper-crystallization.
-        After wiring, applies Hebbian drift: related beliefs are pulled
-        slightly closer together in 8D space, proportional to their
-        co-occurrence count.
-
-        Returns the number of new relations added.
-
-        Args:
-            cluster_ids: List of belief IDs in this cluster
-        """
-        # Reset daily cap if the day has changed
-        today = time.localtime().tm_yday
-        if today != self._wired_today_day:
-            self._wired_today.clear()
-            self._wired_today_day = today
-
-        added = 0
-
-        for bid in cluster_ids:
-            # Check daily cap for this belief
-            if self._wired_today[bid] >= MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY:
-                logger.debug(
-                    "Daily relation cap reached for %s (%d/%d) — skipping",
-                    bid, self._wired_today[bid],
-                    MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY,
-                )
-                continue
-
-            belief = self.belief_store.get_belief(bid)
-            if not belief:
-                continue
-
-            existing_relations = set(belief.get("relations", []))
-            new_relations = set(cluster_ids) - {bid} - existing_relations
-
-            if new_relations:
-                # Enforce cap: only wire up to remaining daily budget
-                remaining = MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY - self._wired_today[bid]
-                if len(new_relations) > remaining:
-                    new_relations = set(list(new_relations)[:remaining])
-
-                merged = list(existing_relations | new_relations)
-                self.belief_store.update_belief(bid, relations=merged)
-                added += len(new_relations)
-                self._wired_today[bid] += len(new_relations)
-                logger.debug(
-                    "Wired %d new relations for %s (total: %d, today: %d/%d)",
-                    len(new_relations), bid, len(merged),
-                    self._wired_today[bid],
-                    MAX_NEW_RELATIONS_PER_BELIEF_PER_DAY,
-                )
-
-        # Apply Hebbian drift: pull related beliefs closer in 8D space
-        if self.cognitive_space and added > 0:
-            self._apply_hebbian_drift(cluster_ids)
-
-        return added
-
-    def _apply_hebbian_drift(self, cluster_ids: List[str]) -> None:
-        """Apply positional drift to pull co-occurring beliefs closer in 8D.
-
-        For each pair in the cluster, compute a small attractive displacement
-        proportional to the pair's co-occurrence count. This makes the manifold
-        self-organizing: beliefs that genuinely co-occur drift together over
-        time, improving gravity query accuracy.
-
-        The drift is localized and relative:
-          - Proportional to the specific pair's co-occurrence strength
-          - Normalized by current distance (closer pairs drift less)
-          - No arbitrary global cap — manifold degeneration is prevented
-            by the concept extractor (independent queries) and mass
-            decoupling (no self-reinforcing inflation)
-        """
-        import numpy as np
-
-        # Base drift fraction per unit of co-occurrence
-        # At co_count=3 (threshold), drift = 0.3%
-        # At co_count=10, drift = 1.0%
-        # At co_count=30, drift = 3.0%
-        DRIFT_PER_COCOUNT = 0.001  # 0.1% per co-occurrence count
-
-        drifted = 0
-        for id_a, id_b in combinations(cluster_ids, 2):
-            pair = frozenset({id_a, id_b})
-            co_count = self.co_counts.get(pair, 0)
-
-            if co_count < CO_OCCURRENCE_THRESHOLD:
-                continue  # Only drift for genuinely co-occurring pairs
-
-            pt_a = self.cognitive_space.get_point(id_a)
-            pt_b = self.cognitive_space.get_point(id_b)
-
-            if pt_a is None or pt_b is None:
-                continue
-
-            pos_a = pt_a["position"]
-            pos_b = pt_b["position"]
-
-            # Vector from A to B
-            delta = pos_b - pos_a
-            dist = float(np.linalg.norm(delta))
-
-            if dist < 1e-6:
-                continue  # Already co-located
-
-            # Drift fraction scales with co-occurrence count
-            drift_frac = DRIFT_PER_COCOUNT * co_count
-
-            # Apply symmetric drift: both beliefs move toward each other
-            displacement = delta * (drift_frac / 2.0)
-            pt_a["position"] = (pos_a + displacement).astype(np.float32)
-            pt_b["position"] = (pos_b - displacement).astype(np.float32)
-            drifted += 1
-
-        if drifted > 0:
-            self.cognitive_space._tree_dirty = True
-            logger.info(
-                "Hebbian drift: %d pairs shifted in 8D space",
-                drifted,
-            )
-
     # ── Decay ────────────────────────────────────────────────────────
 
     def _maybe_decay(self) -> None:
@@ -485,10 +295,8 @@ class CoOccurrenceTracker:
                     for pair, count in self.co_counts.items()
                 },
                 "last_decay_day": self._last_decay_day,
-                "last_cluster_time": self._last_cluster_time,
-                "wired_today": dict(self._wired_today),
-                "wired_today_day": self._wired_today_day,
             }
+            state_path.parent.mkdir(parents=True, exist_ok=True)
             with open(state_path, "w", encoding="utf-8") as f:
                 json.dump(serializable, f, indent=2)
         except Exception as e:
@@ -511,12 +319,6 @@ class CoOccurrenceTracker:
                     self.co_counts[frozenset(ids)] = float(count)
 
             self._last_decay_day = data.get("last_decay_day", time.localtime().tm_yday)
-            self._last_cluster_time = data.get("last_cluster_time", 0.0)
-
-            # Restore daily wiring cap state
-            wired = data.get("wired_today", {})
-            self._wired_today = defaultdict(int, {k: int(v) for k, v in wired.items()})
-            self._wired_today_day = data.get("wired_today_day", time.localtime().tm_yday)
 
             logger.info(
                 "Co-occurrence state loaded: %d pairs from %s",
@@ -525,45 +327,36 @@ class CoOccurrenceTracker:
         except Exception as e:
             logger.warning("Failed to load co-occurrence state: %s", e)
 
-    # ── Cluster Data for Nightly Curator ──────────────────────────────
+    # ── Stats ────────────────────────────────────────────────────────
 
-    def get_current_clusters(self) -> List[List[str]]:
-        """Return current belief clusters for the nightly Curator.
-
-        The Curator's Phase 3 calls this instead of running UMAP/HDBSCAN
-        from scratch. Returns clusters from the latest co-occurrence data.
-        """
-        strong_pairs = {
-            pair: count
-            for pair, count in self.co_counts.items()
-            if count >= CO_OCCURRENCE_THRESHOLD
+    def get_stats(self) -> dict:
+        """Get tracker statistics for diagnostics."""
+        strong = sum(1 for c in self.co_counts.values() if c >= CO_OCCURRENCE_THRESHOLD)
+        return {
+            "total_pairs": len(self.co_counts),
+            "strong_pairs": strong,
+            "max_count": max(self.co_counts.values()) if self.co_counts else 0,
+            "accumulations_since_persist": self._accumulations_since_persist,
         }
 
-        if len(strong_pairs) < 3:
-            return []
 
-        return self._cluster_pairs(strong_pairs)
-
-
-# ── Hook Function (registered in main.py / daemon.py) ────────────────
+# ── Hook Function (registered in main.py) ────────────────────────────
 
 # Module-level tracker instance (set during registration)
 _tracker: Optional[CoOccurrenceTracker] = None
 
 
 def register_co_occurrence_hook(
-    belief_store,
     data_dir: str = "data",
-    cognitive_space=None,
 ) -> CoOccurrenceTracker:
     """Create and register the co-occurrence post-pulse hook.
 
     Call this during startup to wire the hook into the pulse loop.
+    The hook is a passive observer — it only accumulates co-occurrence
+    counts and never modifies beliefs or manifold positions.
 
     Args:
-        belief_store: BeliefStore instance
         data_dir: Directory for state persistence
-        cognitive_space: Optional CognitiveSpace instance for Hebbian drift
 
     Returns:
         The CoOccurrenceTracker instance (for Curator access)
@@ -572,32 +365,16 @@ def register_co_occurrence_hook(
 
     from core.post_pulse_hooks import register_hook
 
-    _tracker = CoOccurrenceTracker(
-        belief_store=belief_store,
-        data_dir=data_dir,
-        cognitive_space=cognitive_space,
-    )
+    _tracker = CoOccurrenceTracker(data_dir=data_dir)
 
     def _co_occurrence_hook(ctx) -> None:
-        """Post-pulse hook: accumulate co-occurrences, cluster periodically."""
+        """Post-pulse hook: accumulate co-occurrence counts (observe only)."""
         if not ctx.injected_belief_ids:
             return
-
         _tracker.accumulate(ctx.injected_belief_ids)
 
-        # Determine current state from spatial_state or pulse cadence
-        pulse_state = ctx.spatial_state.get("pulse_state", "REGULAR")
-
-        if _tracker.should_cluster(pulse_state):
-            stats = _tracker.run_cluster_pass()
-            if stats.get("relations_added", 0) > 0:
-                logger.info(
-                    "Hebbian wiring pass: %d relations added across %d clusters",
-                    stats["relations_added"], stats["clusters"],
-                )
-
     register_hook(_co_occurrence_hook, name="co_occurrence_tracker")
-    logger.info("Co-occurrence hook registered (interval=%d pulses)", CLUSTER_INTERVAL)
+    logger.info("Co-occurrence hook registered (passive observer)")
 
     return _tracker
 
