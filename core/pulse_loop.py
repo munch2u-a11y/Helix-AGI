@@ -91,6 +91,7 @@ class PulseLoop:
         thought_callback: Optional[Callable] = None,
         delivery_callback: Optional[Callable] = None,
         sentinel=None,
+        sensory_cortex=None,
     ):
         self.memory = memory_manager
         self.beliefs = belief_store
@@ -100,6 +101,7 @@ class PulseLoop:
         self.scratchpad = scratchpad
         self.tool_executor = tool_executor
         self.channel_router = channel_router
+        self.sensory_cortex = sensory_cortex
 
         # Tool schemas path — all tools loaded into system prompt
         self._tool_modes_path = Path(os.path.join("data", "tool_modes.json"))
@@ -600,6 +602,12 @@ class PulseLoop:
             incoming_events=events if events else None,
             trigger_type="user_message" if events else "llm_output",
         )
+        
+        # 2b. Sensory Cortex Tick
+        if getattr(self, "sensory_cortex", None):
+            sensory_data = self.sensory_cortex.pulse_tick()
+            if sensory_data:
+                events.append(sensory_data["content"])
 
         # 3. Assemble pulse message
         pulse_message = self._build_pulse_message(

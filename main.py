@@ -95,6 +95,7 @@ from tools.tool_executor import ToolExecutor
 from tools.channel_router import ChannelRouter
 from comms.telegram_bot import HelixTelegramBot
 from brain.stability_sentinel import StabilitySentinel
+from brain.sensory_cortex import SensoryCortex
 
 
 def on_thought(pulse_number: int, thought: str, events: list):
@@ -159,6 +160,12 @@ def setup_helix(data_dir: str = "data"):
     tool_executor = ToolExecutor(channel_router=channel_router)
     tool_executor.memory_manager = memory_manager
     tool_executor.scratchpad = scratchpad
+    
+    # Sensory Cortex (Passive Background Vision/Audio)
+    sensory_cortex = SensoryCortex(camera_device=0)
+    sensory_cortex.start_passive_sensing()
+    tool_executor._vision_cortex = sensory_cortex
+    
     print(f"  Contacts: {len(channel_router.contacts)} known")
     print(f"  Tools: executor ready")
 
@@ -201,6 +208,7 @@ def setup_helix(data_dir: str = "data"):
         thought_callback=on_thought,
         delivery_callback=on_delivery,
         sentinel=sentinel,
+        sensory_cortex=sensory_cortex,
     )
 
     # Wire telegram to pulse loop for inbound messages
