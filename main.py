@@ -443,7 +443,7 @@ def main_loop():
                     continue
                 else:
                     # Inject as user message event
-                    orchestrator.send_user_message(user_input, sender="Joshua")
+                    orchestrator.send_user_message(user_input, sender="User")
 
                 # Wait briefly for the pulse to process
                 time.sleep(0.5)

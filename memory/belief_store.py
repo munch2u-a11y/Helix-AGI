@@ -695,7 +695,7 @@ class BeliefStore:
         Produces minimal, scannable output like:
             • I am Helix. [0.99]
             • I am an AI. [0.99]
-            • Joshua is trustworthy. [0.95]
+            • User is trustworthy. [0.95]
         """
         if beliefs is None:
             beliefs = self.get_context_beliefs()

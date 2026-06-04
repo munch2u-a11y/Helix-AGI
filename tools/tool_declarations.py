@@ -322,7 +322,7 @@ CORE_TOOLS = [
                 },
                 "focus": {
                     "type": "string",
-                    "description": "Optional focus description for analysis (e.g. 'the doorway', 'Joshua's expression')",
+                    "description": "Optional focus description for analysis (e.g. 'the doorway', 'User\\'s expression')",
                 },
             },
             "required": [],

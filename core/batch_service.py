@@ -79,8 +79,8 @@ _FORMAT_SPEC = (
 
     "propositions (max 250 chars):\n"
     "  Template: '[Subject] [predicate]' or '[If/When X], [then Y]'\n"
-    "  Example: 'Joshua values sovereignty in AI design.'\n"
-    "  Example: 'A delayed reply from Joshua is normal.'\n"
+    "  Example: 'User values sovereignty in AI design.'\n"
+    "  Example: 'A delayed reply from User is normal.'\n"
     "  Rule: Learned or derived facts about the world, people, or systems.\n\n"
 
     "preferences (max 250 chars):\n"
