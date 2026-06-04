@@ -84,18 +84,24 @@ Most AI applications retrieve context by embedding a user's query and running a 
 
 - **Continuous Consciousness** — A three-state pulse loop (ACTIVE / RESTING / DORMANT) that thinks, perceives, and acts without waiting for human prompts.
 - **Multi-Provider LLM Abstraction** — The conscious mind supports **Gemini** (primary), **Ollama**, and **llama.cpp** backends. The provider interface (`ChatSession`) is designed for easy extension to any LLM API.
-- **Categorized Belief Store** — Eight partitioned belief categories stored as JSON files with per-belief mass, confidence, stability index, and Lagrangian encoding metadata:
+- **Categorized Belief Store** — Seven partitioned belief categories in a two-tier epistemic topology, stored as JSON files with per-belief mass, confidence, stability index, and Lagrangian encoding metadata:
+
+  **Outer tier** — formed in real-time during pulse loop:
 
   | Category | Template | Purpose |
   |----------|----------|---------|
-  | `self_identity` | "I am..." | Core personality |
-  | `people` | "[Name]..." | Relational knowledge |
-  | `knowledge` | "[Subject] [predicate]" | World facts |
-  | `capabilities` | "I can..." | Demonstrable abilities |
-  | `skills` | "To [goal]: [steps]" | Procedural HOW-TO |
-  | `preferences` | "I want/prefer/value..." | Normative desires |
-  | `feedback` | "[Lesson]. [Why]. [How]" | Experiential lessons |
-  | `lexicon` | (curated summaries) | Authoritative context anchors |
+  | `premises` | "I am..." / "[X] is true" | Foundational truths, axioms, self-observations |
+  | `propositions` | "[Subject] [predicate]" | Learned/derived facts, conditional rules |
+  | `preferences` | "I want/prefer/value..." | Values, likes, behavioral norms |
+
+  **Inner tier** — consolidated nightly by curator:
+
+  | Category | Template | Purpose |
+  |----------|----------|---------|
+  | `people` | "[Name]..." | Entity profiles and relational knowledge |
+  | `skills` | "To [goal]: [steps]" | Proven tool-backed workflows |
+  | `desires` | "I want to [goal]" | Long-term goals and aspirations |
+  | `concepts` | (consolidated summaries) | Dense conceptual understanding |
 
 ### Stability & Affect
 
@@ -145,7 +151,7 @@ helix_agi/
 │   └── friction_damper.py     #   Cognitive momentum regulation
 │
 ├── memory/                    # Memory systems
-│   ├── belief_store.py        #   Categorized belief graph (8 JSON files)
+│   ├── belief_store.py        #   Categorized belief graph (7 JSON files)
 │   ├── memory_manager.py      #   Unified semantic memory and recall hook
 │
 ├── llm/                       # LLM abstraction layer
@@ -183,7 +189,7 @@ helix_agi/
 ├── scripts/                   # Agent utility scripts
 │
 ├── data/                      # Runtime data (gitignored, created by setup.py)
-│   ├── beliefs/               #   8 category JSON files
+│   ├── beliefs/               #   7 category JSON files
 │   ├── memory/                #   JSONL Journal and FAISS index
 │   ├── spatial/               #   Manifold state snapshots
 │   └── scratchpad/            #   Working memory file
@@ -226,7 +232,7 @@ python main.py
 
 The setup wizard will prompt for your name, agent name, and API keys. It creates:
 - `~/.config/helix/credentials.env` — API keys and tokens (outside the repo)
-- `data/beliefs/` — 19 seed beliefs across 7 categories (identity, capabilities, skills, knowledge, preferences, people, feedback)
+- `data/beliefs/` — Seed beliefs across 7 categories (premises, propositions, preferences, people, skills, desires, concepts)
 - `data/memory/`, `data/spatial/` — Runtime directories for the Cognitive Journal and manifold state
 
 ### Model Configuration
