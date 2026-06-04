@@ -39,6 +39,10 @@ logging.basicConfig(
     handlers=[_file_handler],
 )
 
+# Silence noisy libraries (e.g. Telegram polling httpx requests)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 
 def _load_credentials():
     """Load API keys from ~/.config/helix/credentials.env into os.environ.
@@ -287,6 +291,11 @@ def setup_helix(data_dir: str = "data"):
     # Wire dream engine to pulse loop for rollover snapshots
     pulse_loop.set_dream_engine(daemon)
 
+    # ── 7b. GGUF Manager (Micro-Models) ──────────────────────────────
+    from core.gguf_manager import GGUFManager
+    gguf_manager = GGUFManager(models_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "models"))
+    gguf_manager.load_model("fast_classifier", "granite-4.1-3b-Q4_K_M.gguf", n_ctx=2048)
+
     # ── 8. Post-Pulse Hooks (Subconscious Background Tasks) ──────────
     from core.post_pulse_hooks import register_hook
     from core.workflow_detector import workflow_pattern_hook, set_dependencies
@@ -299,7 +308,7 @@ def setup_helix(data_dir: str = "data"):
         belief_detector_hook,
         set_dependencies as set_belief_deps,
     )
-    set_belief_deps(belief_store, physics, sentinel=sentinel)
+    set_belief_deps(belief_store, physics, sentinel=sentinel, gguf_manager=gguf_manager)
     register_hook(belief_detector_hook, name="belief_detector")
 
     # Engagement hook: tracks thought stagnation and tool activity → Ω

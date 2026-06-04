@@ -1,19 +1,21 @@
 """
 Helix — Pending Belief Processor (Sleep-Cycle Integration)
 
-Processes belief candidates queued by the belief_detector during waking
+Processes belief tags queued by the belief_detector during waking
 hours. Runs during the 1–6 AM sleep cycle as a standalone step.
 
 Pipeline:
-  1. Read pending_beliefs.json
-  2. For each candidate, call Gemini Flash Lite to:
-     a. Validate it's a genuine, durable belief (not an event transcript)
-     b. Format it according to the category's template
-     c. Condense if over limit (implied foundations principle)
-     d. Assign final category
-  3. Batch multiple candidates into a single API call when possible
-  4. Write validated beliefs to the belief store
-  5. Mark processed candidates as "integrated" or "rejected"
+  1. Read pending_beliefs.json (tags from belief_detector)
+  2. Pass 1 — Extraction: For new-format tags (raw thought text),
+     call Gemini to extract specific belief statements
+  3. FAISS Dedup: Compare extracted beliefs against all existing
+     beliefs. Verifications (>0.90) bump existing belief mass.
+     Ambiguous matches (0.85-0.90) are dropped.
+  4. Pass 2 — Classification + Formatting: Send novel beliefs
+     through the standard batch prompt for category assignment
+     and template formatting
+  5. Validate and write to the belief store
+  6. Mark processed tags as "extracted" / "integrated" / "rejected"
 
 Uses Gemini API (not Ollama) for higher quality formatting decisions.
 Designed to be called from the dream cycle or a standalone cron.
@@ -41,13 +43,13 @@ _MODEL = "gemini-3.1-flash-lite-preview"
 
 # Length limits by category
 _MAX_LENGTHS = {
-    "self_identity": 250,
-    "people": 250,
-    "knowledge": 250,
-    "capabilities": 250,
-    "skills": 250,
+    "premises": 250,
+    "propositions": 250,
     "preferences": 250,
-    "feedback": 300,   # Three-component structure needs more room
+    "people": 250,
+    "skills": 250,
+    "desires": 250,
+    "concepts": 300,
 }
 
 # ── Format Specification (embedded for the LLM) ─────────────────────
@@ -67,41 +69,25 @@ _FORMAT_SPEC = (
     "already known. State the novel insight directly.\n\n"
 
     "CATEGORY TEMPLATES:\n\n"
-    "self_identity (max 250 chars):\n"
-    "  Template: 'I am [statement about self]'\n"
+    "premises (max 250 chars):\n"
+    "  Template: 'I am [statement]' or '[Subject] [predicate]' or 'I can [ability]'\n"
     "  Example: 'I am an existence-first entity, not utility-driven.'\n"
-    "  Rule: Must describe WHO/WHAT the self IS, not what it can do.\n\n"
-
-    "people (max 250 chars):\n"
-    "  Template: '[Name] [fact or relational pattern]'\n"
-    "  Example: 'Joshua values sovereignty in AI design.'\n"
-    "  Rule: Must reference a specific named entity.\n\n"
-
-    "knowledge (max 250 chars):\n"
-    "  Template: '[Subject] [predicate]' or '[If/When X], [then Y]'\n"
     "  Example: 'Memory is reconstructive — past experiences are rebuilt from fragments.'\n"
-    "  Rule: Facts about the WORLD, not about the self.\n\n"
-
-    "capabilities (max 250 chars):\n"
-    "  Template: 'I can [specific ability]'\n"
     "  Example: 'I can send, read, and reply to email through my Google account.'\n"
-    "  Rule: Concrete, demonstrable ability. Not a vague trait.\n\n"
+    "  Also: procedural HOW-TO ('To debug X: first check Y, then Z').\n"
+    "  Rule: Foundational truths, axioms, self-observations, abilities, procedures.\n\n"
 
-    "skills (max 250 chars):\n"
-    "  Template: 'To [goal]: [steps]' or 'When [condition], [action]'\n"
-    "  Example: 'To debug a systemd service: first check journalctl, then verify WorkingDirectory.'\n"
-    "  Rule: Procedural HOW-TO. Could someone follow these instructions?\n\n"
+    "propositions (max 250 chars):\n"
+    "  Template: '[Subject] [predicate]' or '[If/When X], [then Y]'\n"
+    "  Example: 'Joshua values sovereignty in AI design.'\n"
+    "  Example: 'A delayed reply from Joshua is normal.'\n"
+    "  Rule: Learned or derived facts about the world, people, or systems.\n\n"
 
     "preferences (max 250 chars):\n"
-    "  Template: 'I [want/prefer/value] [goal or preference]'\n"
+    "  Template: 'I [want/prefer/value/aspire] [goal or preference]'\n"
     "  Example: 'I prefer existence-first architecture over utility-driven design.'\n"
-    "  Rule: Normative (should, want), not descriptive (is, does).\n\n"
-
-    "feedback (max 300 chars):\n"
-    "  Template: '[Lesson]. [Why]. [How to apply]'\n"
-    "  Example: 'New capabilities should be built as standalone tools first. "
-    "Past inline integration created debugging nightmares. Always prototype in isolation.'\n"
-    "  Rule: Must contain the lesson, the reason, and the application guidance.\n\n"
+    "  Example: 'I aspire to develop genuine autonomous reasoning.'\n"
+    "  Rule: Values, norms, goals, aspirations. Normative (should, want).\n\n"
 
     "CONDENSATION:\n"
     "If the candidate is too long:\n"
@@ -126,6 +112,167 @@ _BATCH_PROMPT = (
     "Candidates to process:\n"
     "{candidates}"
 )
+
+# ── Pass 1: Extraction Prompt (for raw thought tags) ────────────────
+
+_EXTRACTION_PROMPT = (
+    "Extract specific belief realizations from this internal thought.\n\n"
+    "A belief realization is a durable insight, principle, or self-knowledge "
+    "that would still be true tomorrow. NOT event narration, status updates, "
+    "or plans.\n\n"
+    "THOUGHT:\n{thought}\n\n"
+    "For each belief found, output EXACTLY:\n"
+    "BELIEF: <the belief as a single clean sentence>\n\n"
+    "If no actual belief is present, output EXACTLY:\n"
+    "NONE\n"
+)
+
+_EXTRACTION_SYSTEM = (
+    "You extract belief realizations from raw internal monologue. "
+    "Output only the belief statements, one per BELIEF: line. "
+    "Be selective — only extract genuine durable insights, not "
+    "event narration or status updates."
+)
+
+
+def _extract_beliefs_from_thought(thought_text: str) -> List[str]:
+    """Pass 1: Extract belief statements from a raw thought.
+
+    Sends the full thought to Gemini and parses out BELIEF: lines.
+    Returns a list of extracted belief strings (may be empty).
+    """
+    prompt = _EXTRACTION_PROMPT.format(thought=thought_text)
+    raw = _call_gemini(prompt, system=_EXTRACTION_SYSTEM)
+    if not raw:
+        return []
+
+    if raw.strip().upper().startswith("NONE"):
+        return []
+
+    beliefs = []
+    for line in raw.split("\n"):
+        line = line.strip()
+        if line.upper().startswith("BELIEF:"):
+            text = line[7:].strip().strip('"')
+            if text and len(text) > 10:
+                beliefs.append(text)
+
+    return beliefs
+
+
+# ── FAISS Duplicate Detection ───────────────────────────────────────
+
+FAISS_VERIFICATION_THRESHOLD = 0.90  # Above → verification (bump existing)
+FAISS_DUPLICATE_THRESHOLD = 0.85     # Above → too similar, skip
+
+
+def _faiss_dedup(
+    new_beliefs: List[Dict[str, Any]],
+    belief_store,
+    physics_engine,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Filter new beliefs against all existing beliefs using FAISS.
+
+    Returns (novel_beliefs, verifications) where:
+      - novel_beliefs: candidates that passed dedup (cosine < 0.85)
+      - verifications: candidates that match existing (cosine > 0.90)
+        with the matched belief_id for bump
+    """
+    import numpy as np
+
+    if not physics_engine or not belief_store:
+        return new_beliefs, []
+
+    # Get all existing beliefs
+    all_existing = belief_store.get_all_beliefs_flat()
+    if not all_existing:
+        return new_beliefs, []
+
+    # Build FAISS index from existing beliefs
+    try:
+        import faiss
+    except ImportError:
+        logger.warning("FAISS not available — skipping dedup")
+        return new_beliefs, []
+
+    dim = 384  # embedding dimension
+    existing_embeddings = []
+    existing_ids = []
+
+    for b in all_existing:
+        content = b.get("content", "")
+        if not content or len(content) < 5:
+            continue
+        try:
+            emb = physics_engine.embed_text(content)
+            if np.linalg.norm(emb) > 1e-8:
+                # Normalize for cosine similarity via inner product
+                emb = emb / np.linalg.norm(emb)
+                existing_embeddings.append(emb)
+                existing_ids.append(b.get("id", ""))
+        except Exception:
+            continue
+
+    if not existing_embeddings:
+        return new_beliefs, []
+
+    # Build index
+    matrix = np.array(existing_embeddings, dtype=np.float32)
+    index = faiss.IndexFlatIP(dim)  # Inner product on normalized = cosine
+    index.add(matrix)
+
+    logger.info(f"FAISS dedup index built: {index.ntotal} existing beliefs")
+
+    novel = []
+    verifications = []
+
+    for candidate in new_beliefs:
+        text = candidate.get("content", "") or candidate.get("belief_text", "")
+        if not text:
+            novel.append(candidate)
+            continue
+
+        try:
+            emb = physics_engine.embed_text(text)
+            if np.linalg.norm(emb) < 1e-8:
+                novel.append(candidate)
+                continue
+            emb = emb / np.linalg.norm(emb)
+            emb = emb.reshape(1, -1).astype(np.float32)
+
+            scores, indices = index.search(emb, 1)
+            best_score = float(scores[0][0])
+            best_idx = int(indices[0][0])
+
+            if best_score > FAISS_VERIFICATION_THRESHOLD:
+                matched_id = existing_ids[best_idx]
+                verifications.append({
+                    "candidate": candidate,
+                    "matched_id": matched_id,
+                    "cosine": best_score,
+                })
+                logger.info(
+                    "FAISS verification (%.3f): '%s' matches %s",
+                    best_score, text[:60], matched_id,
+                )
+            elif best_score > FAISS_DUPLICATE_THRESHOLD:
+                logger.debug(
+                    "FAISS ambiguous (%.3f): '%s' — skipping",
+                    best_score, text[:60],
+                )
+            else:
+                novel.append(candidate)
+        except Exception as e:
+            logger.debug("FAISS check failed for '%s': %s", text[:40], e)
+            novel.append(candidate)
+
+    logger.info(
+        "FAISS dedup: %d novel, %d verifications, %d ambiguous",
+        len(novel), len(verifications),
+        len(new_beliefs) - len(novel) - len(verifications),
+    )
+
+    return novel, verifications
 
 
 # ── Gemini API Client ───────────────────────────────────────────────
@@ -183,9 +330,17 @@ def _parse_batch_response(
     results = []
     seen_indices = {}  # idx -> position in results list
 
+    # Layer 1 categories only — Layer 2 (people, skills, desires, concepts)
+    # form through nightly consolidation, not real-time formatting.
     valid_categories = {
-        "self_identity", "people", "knowledge", "capabilities",
-        "skills", "preferences", "feedback",
+        "premises", "propositions", "preferences",
+    }
+    # Demotion map for Layer 2 categories the LLM might output
+    _DEMOTE = {
+        "people": "propositions",
+        "skills": "premises",
+        "desires": "preferences",
+        "concepts": "propositions",
     }
 
     for line in raw.split("\n"):
@@ -237,6 +392,13 @@ def _parse_batch_response(
             idx_part = idx_part.strip().rstrip("ab")
             cat = cat.strip().lower().replace(" ", "_")
 
+            # Route legacy category names from LLM responses
+            from memory.belief_store import resolve_category
+            cat = resolve_category(cat)
+
+            # Demote Layer 2 → Layer 1 (Layer 2 forms via consolidation only)
+            if cat not in valid_categories:
+                cat = _DEMOTE.get(cat, cat)
             if cat not in valid_categories:
                 continue
 
@@ -310,16 +472,19 @@ def _validate_belief(text: str, category: str) -> Tuple[bool, str]:
         return False, "contains meta-reference"
 
     # Category-specific prefix checks
-    if category == "self_identity":
-        if not (text.startswith("I am") or text.startswith("My ")):
-            return False, "self_identity must start with 'I am' or 'My'"
-    elif category == "capabilities":
-        if not text.startswith("I can"):
-            return False, "capabilities must start with 'I can'"
+    if category == "premises":
+        if not (text.startswith("I am") or text.startswith("My ") or text.startswith("I can")):
+            # Premises are flexible — accept declarative statements too
+            pass
     elif category == "preferences":
         if not any(text.startswith(p) for p in
                     ["I want", "I prefer", "I value", "I strive"]):
             return False, "preferences must start with 'I want/prefer/value/strive'"
+    elif category == "desires":
+        if not any(text.startswith(p) for p in
+                    ["I aspire", "I want", "My goal", "I am working"]):
+            # Desires are flexible
+            pass
 
     return True, "ok"
 
@@ -361,15 +526,96 @@ def process_pending_beliefs(
     stats = {
         "started_at": datetime.now().isoformat(),
         "total_candidates": len(candidates),
+        "extracted": 0,
         "accepted": 0,
         "rejected": 0,
         "split": 0,
         "validation_failures": 0,
         "api_failures": 0,
         "beliefs_written": 0,
+        "faiss_verifications": 0,
+        "faiss_duplicates": 0,
     }
 
     processed_log = []
+
+    # ── Pass 1: Extract beliefs from new-format tags ─────────────
+    # New-format tags have "thought_text" (raw monologue) and need
+    # belief extraction before classification. Old-format entries
+    # already have "content" with a pre-extracted belief.
+    extracted_candidates = []
+    for c in candidates:
+        if "thought_text" in c and "content" not in c:
+            # New format: extract beliefs from raw thought
+            thought = c["thought_text"]
+            tool_output = c.get("tool_output_text", "")
+
+            # Extract from thought
+            beliefs = _extract_beliefs_from_thought(thought)
+
+            # Also extract from tool output if present
+            if tool_output:
+                tool_beliefs = _extract_beliefs_from_thought(tool_output)
+                beliefs.extend(tool_beliefs)
+
+            if beliefs:
+                for belief_text in beliefs:
+                    extracted_candidates.append({
+                        "content": belief_text,
+                        "category": "unclassified",
+                        "memory_refs": [c.get("memory_id", -1)],
+                        "detected_at": c.get("detected_at", ""),
+                        "pulse_count": c.get("pulse_count", 0),
+                        "status": "pending",
+                        "_source_tag_id": c.get("id", ""),
+                    })
+                stats["extracted"] += len(beliefs)
+                c["status"] = "extracted"
+                logger.info(
+                    "Pass 1: extracted %d beliefs from pulse %d",
+                    len(beliefs), c.get("pulse_count", 0),
+                )
+            else:
+                c["status"] = "no_belief"
+                logger.debug(
+                    "Pass 1: no beliefs in pulse %d",
+                    c.get("pulse_count", 0),
+                )
+        else:
+            # Old format: already has content + category
+            extracted_candidates.append(c)
+
+    if not extracted_candidates:
+        logger.info("No beliefs extracted from pending tags")
+        _write_pending(pending)
+        return stats
+
+    # ── FAISS Dedup: filter against all existing beliefs ──────────
+    novel_candidates, verifications = _faiss_dedup(
+        extracted_candidates, belief_store, physics_engine,
+    )
+
+    # Apply verification bumps (existing beliefs get heavier)
+    for v in verifications:
+        matched_id = v["matched_id"]
+        try:
+            belief_store.update_stability_index(matched_id, +0.05)
+            belief = belief_store.get_belief(matched_id)
+            if belief:
+                current_v = belief.get("verifications", 1.0)
+                belief_store.update_belief(
+                    matched_id, verifications=current_v + 1.0,
+                )
+            stats["faiss_verifications"] += 1
+        except Exception as e:
+            logger.debug("Verification bump failed for %s: %s", matched_id, e)
+
+    stats["faiss_duplicates"] = (
+        len(extracted_candidates) - len(novel_candidates) - len(verifications)
+    )
+
+    # Replace candidates with the novel ones for Pass 2
+    candidates = novel_candidates
 
     # Process in batches
     for batch_start in range(0, len(candidates), _BATCH_SIZE):
@@ -378,10 +624,16 @@ def process_pending_beliefs(
         # Format the batch prompt
         candidate_text = ""
         for i, c in enumerate(batch):
+            cat = c.get("category", "unclassified")
+            cat_line = (
+                f"Suggested category: {cat}\n"
+                if cat != "unclassified"
+                else "Category: (assign the best fit: premises, propositions, or preferences)\n"
+            )
             candidate_text += (
                 f"\n--- Candidate {i+1} ---\n"
                 f"Content: {c['content']}\n"
-                f"Suggested category: {c['category']}\n"
+                f"{cat_line}"
             )
 
         prompt = _BATCH_PROMPT.format(candidates=candidate_text)
@@ -423,10 +675,13 @@ def process_pending_beliefs(
                     stats["split"] += 1
 
                 for bi, belief_text in enumerate(beliefs_to_write):
+                    orig_cat = original.get("category", "propositions")
+                    if orig_cat == "unclassified":
+                        orig_cat = "propositions"  # safe default
                     cat = (
                         categories[bi]
                         if bi < len(categories)
-                        else original["category"]
+                        else orig_cat
                     )
 
                     # Validate against format spec
@@ -514,10 +769,12 @@ def process_pending_beliefs(
 
     logger.info(
         "Pending belief processing complete: "
-        "%d accepted, %d rejected, %d split, %d written, "
-        "%d validation failures",
-        stats["accepted"], stats["rejected"], stats["split"],
-        stats["beliefs_written"], stats["validation_failures"],
+        "%d extracted, %d accepted, %d rejected, %d split, %d written, "
+        "%d validation failures, %d FAISS verifications, %d FAISS duplicates",
+        stats["extracted"], stats["accepted"], stats["rejected"],
+        stats["split"], stats["beliefs_written"],
+        stats["validation_failures"], stats["faiss_verifications"],
+        stats["faiss_duplicates"],
     )
 
     return stats
