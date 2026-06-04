@@ -6,15 +6,22 @@ pre-conscious injection. Each category is its own file, allowing the
 subconscious/pre-conscious to pull exactly the right type of belief
 context for the current moment without scanning a monolithic list.
 
-Categories:
-  - self_identity.json    → Who Helix is, core personality traits
-  - people.json           → Profiles and relational knowledge about individuals
-  - capabilities.json     → Learned abilities, problem-solving patterns, multi-tool chains
-  - knowledge.json        → Deeply verified objective facts (high-mass, high-confidence)
-  - skills.json           → Procedural knowledge: HOW to do things (workflows, tool chains)
-  - preferences.json      → Desires, likes, goals, motivations (replaces desires.json)
-  - preferences.json      → Persistent preferences and values
-  - desires.json          → [MIGRATION] Legacy — being migrated to preferences.json
+Categories (layered epistemic topology):
+
+  Outer tier — formed in real-time during pulse loop:
+    - premises.json       → Foundational truths, axioms, self-observations
+    - propositions.json   → Learned/derived facts, conditional rules
+    - preferences.json    → Values, likes, behavioral norms
+
+  Inner tier — consolidated nightly by curator:
+    - people.json         → Entity profiles and relational knowledge
+    - skills.json         → Proven tool-backed workflows
+    - desires.json        → Long-term goals and aspirations
+    - concepts.json       → Consolidated conceptual understanding
+
+  Legacy categories (auto-routed via resolve_category()):
+    self_identity, capabilities → premises
+    knowledge, feedback         → propositions
 
 Each belief entry includes:
   - id: unique identifier
