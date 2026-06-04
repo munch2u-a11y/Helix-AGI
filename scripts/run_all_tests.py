@@ -1,5 +1,4 @@
-"""
-Master Test Runner
+"""Master Test Runner
 
 Orchestrates and runs all test suites in the comprehensive test framework.
 Provides centralized coordination, reporting, and result aggregation.
