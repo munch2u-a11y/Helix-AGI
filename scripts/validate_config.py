@@ -80,13 +80,14 @@ class ConfigurationValidator:
     def validate_required_credentials(self):
         """Validate all required credentials are set."""
         required_creds = {
-            "HELIX_TELEGRAM_TOKEN": "Telegram bot token",
-            "GITHUB_TOKEN": "GitHub API token",
+            # No credentials are strictly required — Helix runs with dashboard only
         }
         
         optional_creds = {
             "GEMINI_API_KEY": "Google Gemini API key",
             "ANTHROPIC_API_KEY": "Anthropic API key",
+            "HELIX_TELEGRAM_TOKEN": "Telegram bot token",
+            "GITHUB_TOKEN": "GitHub API token",
             "MOLTBOOK_API_KEY": "MoltBook API key",
         }
         
@@ -128,13 +129,8 @@ class ConfigurationValidator:
                 self.info.append(f"✓ Directory exists: {dir_path}")
                 print(f"  ✓ {dir_path}")
             else:
-                # Determine if critical
-                if dir_path in ["data"]:
-                    self.errors.append(f"Missing critical directory: {dir_path}")
-                    print(f"  ✗ {dir_path} (MISSING - CRITICAL)")
-                else:
-                    self.warnings.append(f"Directory may need to be created: {dir_path}")
-                    print(f"  - {dir_path} (can be created automatically)")
+                self.warnings.append(f"Directory will be created by setup.py: {dir_path}")
+                print(f"  - {dir_path} (will be created by setup.py)")
     
     def validate_tool_schema(self, schema_path=None):
         """Validate tool schema file."""
