@@ -145,6 +145,22 @@ class Curator:
                 stats["lexicon_updated"] = lexicon_updates.get("updated", 0)
             except Exception as e:
                 logger.error(f"Lexicon sync failed (continuing): {e}")
+
+            # Phase 6: Process Pending Beliefs
+            #   The Curator writes candidates to pending_beliefs.json in Phase 4.
+            #   The batch_service formats, validates, and commits them to the
+            #   belief store. Must run AFTER Phase 4 — not as a parallel thread.
+            logger.info("Curator Phase 6: Pending Belief Integration")
+            try:
+                from core.batch_service import process_pending_beliefs
+                batch_stats = process_pending_beliefs(
+                    self.beliefs,
+                    physics_engine=self.physics,
+                )
+                stats["beliefs_integrated"] = batch_stats.get("beliefs_written", 0)
+                stats["beliefs_rejected"] = batch_stats.get("rejected", 0)
+            except Exception as e:
+                logger.error(f"Pending belief integration failed: {e}")
             
         except Exception as e:
             logger.error(f"Curator cycle failed: {e}")
@@ -513,11 +529,10 @@ class Curator:
         4. Must fall into one of these categories:
            - self_identity: (I am...)
            - people: ([Name]...)
-           - knowledge: Facts about the world
+           - knowledge: Facts about the world, lessons learned
            - capabilities: (I can...)
            - skills: (To [goal]: [step sequence])
            - preferences: (I want/prefer/value...)
-           - feedback: [Lesson]. [Why]. [How to apply]
            
         Output ONLY a raw JSON list: [{"category": "...", "content": "..."}]
         No markdown, no code fences, no explanation. Just the JSON array.
@@ -610,7 +625,7 @@ class Curator:
                 content = raw_text.strip().replace("**", "")
                 if content and 15 <= len(content) <= 300:
                     compounds.append({
-                        "category": "feedback",
+                        "category": "propositions",
                         "content": content,
                         "source": "co_occurrence_synthesis",
                     })
@@ -632,9 +647,7 @@ class Curator:
                 content = content[3:].strip()
                 
             # Rule 3: Length
-            # Allow up to 300 for feedback
-            max_len = 300 if b.get('category') == 'feedback' else 250
-            if len(content) < 15 or len(content) > max_len:
+            if len(content) < 15 or len(content) > 250:
                 continue
                 
             b['content'] = content

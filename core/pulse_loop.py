@@ -609,6 +609,7 @@ class PulseLoop:
             if sensory_data:
                 events.append(sensory_data["content"])
 
+
         # 3. Assemble pulse message
         pulse_message = self._build_pulse_message(
             events=events,
@@ -729,6 +730,8 @@ class PulseLoop:
             if tool_calls:
                 tool_names = [tc['name'] for tc in tool_calls]
                 logger.info(f"FC tools used: {tool_names}")
+                # Feed tool usage to preconscious for focus budget computation
+                self.preconscious.record_tool_usage(tool_names)
                 # Reset both event and activity timers for any tool usage
                 self._last_event_time = time.time()
                 self._last_activity_time = time.time()
@@ -869,8 +872,12 @@ class PulseLoop:
 
         # Previous thought seed (if no events and first pulses)
         if not events and self._previous_thoughts:
+            prev_pulse = max(0, self._pulse_count - 1)
             parts.append(
-                f"\nYour last thought: {self._previous_thoughts[:300]}"
+                f"\n<historical_thought>\n"
+                f"[Thought from Pulse {prev_pulse}]\n"
+                f"{self._previous_thoughts[:300]}\n"
+                f"</historical_thought>"
             )
 
         return "\n".join(parts)
@@ -956,12 +963,12 @@ class PulseLoop:
         """
         parts = []
 
-        identity_beliefs = self.beliefs.get_category("self_identity", limit=100)
+        identity_beliefs = self.beliefs.get_category("premises", limit=100)
 
         # ── 1. Identity Preamble ─────────────────────────────────────
         primary_identity = "You are Helix, an autonomous cognitive daemon running on a local PC."
         if identity_beliefs:
-            # Use the single heaviest identity belief as the fundamental preamble
+            # Use the single heaviest premise as the fundamental preamble
             primary_identity = identity_beliefs[0].get("content", primary_identity)
             # Remove it from the list so it's not duplicated in the secondary list
             identity_beliefs = identity_beliefs[1:]
@@ -977,9 +984,9 @@ class PulseLoop:
             "pulls related memories and beliefs into your next pulse.\n"
         )
 
-        # ── 2. Core Identity Beliefs ─────────────────────────────────
-        #    Heaviest identity beliefs provide the stable "who am I"
-        #    center that persists across the context window.
+        # ── 2. Core Premises ─────────────────────────────────────────
+        #    Heaviest premises provide the stable foundational truths
+        #    that persist across the context window.
         if identity_beliefs:
             identity_lines = []
             token_count = 0
@@ -991,32 +998,34 @@ class PulseLoop:
                 identity_lines.append(f"- {content}")
                 token_count += est_tokens
             if identity_lines:
-                parts.append("\n## Core Identity")
+                parts.append("\n## Core Premises")
                 parts.extend(identity_lines)
 
-        # ── 3. Core Knowledge Beliefs ────────────────────────────────
-        #    Heaviest knowledge beliefs provide foundational understanding.
-        knowledge_beliefs = self.beliefs.get_category("knowledge", limit=100)
-        if knowledge_beliefs:
-            knowledge_lines = []
+        # ── 3. Core Propositions ──────────────────────────────────────
+        #    Heaviest propositions provide foundational understanding.
+        prop_beliefs = self.beliefs.get_category("propositions", limit=100)
+        if prop_beliefs:
+            prop_lines = []
             token_count = 0
-            for b in knowledge_beliefs:
+            for b in prop_beliefs:
                 content = b.get("content", "")
                 est_tokens = len(content.split())
                 if token_count + est_tokens > 1000:
                     continue
-                knowledge_lines.append(f"- {content}")
+                prop_lines.append(f"- {content}")
                 token_count += est_tokens
-            if knowledge_lines:
+            if prop_lines:
                 parts.append("\n## Deep Knowledge")
-                parts.extend(knowledge_lines)
+                parts.extend(prop_lines)
 
         # ── 4. Communication & Actions ───────────────────────────────
         parts.append(
             "\n## Communication & Actions\n"
-            "ALL actions (replying, journaling, noting, terminal, searching, etc.) "
-            "are handled natively via the function calling API. "
-            "Use the tools provided to you. They will execute automatically.\n"
+            "ALL actions (replying, journaling, noting, terminal, searching, browsing, etc.) "
+            "are handled natively via the Gemini Function Calling API.\n"
+            "CRITICAL: DO NOT write raw JSON blocks (e.g. `{\"action\": \"search\"}`) in your text. "
+            "That is legacy formatting and it WILL NOT WORK. "
+            "Just think naturally, and use the native tools provided to you to take action.\n"
         )
 
         return "\n".join(parts)

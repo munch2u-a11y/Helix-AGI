@@ -13,7 +13,7 @@ Categories:
   - knowledge.json        → Deeply verified objective facts (high-mass, high-confidence)
   - skills.json           → Procedural knowledge: HOW to do things (workflows, tool chains)
   - preferences.json      → Desires, likes, goals, motivations (replaces desires.json)
-  - feedback.json         → Lessons from experiences: rule + why + how to apply
+  - preferences.json      → Persistent preferences and values
   - desires.json          → [MIGRATION] Legacy — being migrated to preferences.json
 
 Each belief entry includes:
@@ -62,20 +62,39 @@ def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-# Belief category definitions
-# NOTE: capabilities and desires are kept during migration to the
-# new taxonomy. Once manual review is complete, remove them and
-# update any references.
+# ── Category Definitions ─────────────────────────────────────────────
+# Layered epistemic topology. Outer tier beliefs form in real-time.
+# Inner tier beliefs consolidate nightly from outer tier clusters.
+# See core/belief_cosmology.py for spatial mechanics.
+
 BELIEF_CATEGORIES = {
-    "self_identity": "self_identity.json",
-    "people": "people.json",
-    "capabilities": "capabilities.json",   # Migration: split into skills + retained capabilities
-    "desires": "desires.json",              # Migration: moving to preferences
-    "knowledge": "knowledge.json",
-    "skills": "skills.json",                # NEW — procedural HOW-TO knowledge
-    "preferences": "preferences.json",      # NEW — replaces desires
-    "feedback": "feedback.json",            # NEW — lessons from experiences
+    # Outer tier (simple observations, formed in real-time)
+    "premises": "premises.json",            # Foundational truths, axioms, self-observations
+    "propositions": "propositions.json",    # Learned/derived facts, conditional rules
+    "preferences": "preferences.json",      # Values, likes, behavioral norms
+    # Inner tier (dense consolidated, formed nightly by curator)
+    "people": "people.json",                # Entity profiles (includes Helix)
+    "skills": "skills.json",                # Proven tool-backed workflows
+    "desires": "desires.json",              # Long-term goals and aspirations
+    "concepts": "concepts.json",            # Consolidated conceptual understanding
 }
+
+# Legacy category → new category routing. Components that receive
+# old category names (from pending beliefs, batch service, etc.)
+# should use resolve_category() to map to the new taxonomy.
+_LEGACY_CATEGORY_MAP = {
+    "self_identity": "premises",
+    "capabilities": "premises",
+    "knowledge": "propositions",
+    "feedback": "propositions",
+}
+
+def resolve_category(category: str) -> str:
+    """Map legacy category names to new taxonomy.
+
+    Returns the input unchanged if already a valid new category.
+    """
+    return _LEGACY_CATEGORY_MAP.get(category, category)
 
 # Template for a person profile entry (stored within people.json)
 PERSON_PROFILE_TEMPLATE = {
@@ -106,14 +125,21 @@ class BeliefStore:
 
     def generate_id(self, category: str) -> str:
         """Generate a uniform belief ID: {prefix}_{YYYYMMDD}_{sequence}.
-        
-        Example: kno_20260515_001
+
+        Example: pre_20260515_001
         """
-        prefix = category[:3].lower()
-        if category == "knowledge":
-            prefix = "kno"
+        _PREFIXES = {
+            "premises": "pre",
+            "propositions": "pro",
+            "preferences": "prf",
+            "people": "ppl",
+            "skills": "skl",
+            "desires": "des",
+            "concepts": "con",
+        }
+        prefix = _PREFIXES.get(category, category[:3].lower())
         date_str = datetime.now().strftime("%Y%m%d")
-        
+
         # Determine sequence by counting today's beliefs in this category
         beliefs = self._read_category(category)
         today_prefix = f"{prefix}_{date_str}_"
@@ -121,7 +147,7 @@ class BeliefStore:
         for b in beliefs:
             if b.get("id", "").startswith(today_prefix):
                 seq += 1
-                
+
         return f"{today_prefix}{seq:03d}"
 
     def _ensure_files(self):
@@ -134,6 +160,7 @@ class BeliefStore:
 
     def _read_category(self, category: str) -> List[Dict[str, Any]]:
         """Read all beliefs from a category file."""
+        category = resolve_category(category)  # route legacy names
         filename = BELIEF_CATEGORIES.get(category)
         if not filename:
             logger.warning(f"Unknown belief category: {category}")
@@ -182,7 +209,7 @@ class BeliefStore:
         Returns True if added, False if duplicate id exists.
 
         Args:
-            category: Belief category (self_identity, people, etc.)
+            category: Belief category (premises, propositions, etc.)
             belief_id: Unique identifier
             content: The belief text
             mass: Gravitational weight (computed from cognitive mass eq)
@@ -197,6 +224,7 @@ class BeliefStore:
             position_8d: 8D manifold coordinates [x0..x7]
             encoding_lagrangian: Somatic state at encoding {omega, s_total, H, D_KL}
         """
+        category = resolve_category(category)  # route legacy names
         beliefs = self._read_category(category)
 
         # Check for duplicate
@@ -989,9 +1017,9 @@ class BeliefStore:
         # amplified by the belief's stability index.
         # Higher stability → stronger affective charge → more mass.
         enc = belief.get("encoding_lagrangian", {})
-        omega_enc = enc.get("omega", 0.5)
-        s_total_enc = enc.get("s_total", 0.15)
-        stability = float(belief.get("stability_index", 0.5))
+        omega_enc = max(0.0, min(1.0, enc.get("omega", 0.5)))
+        s_total_enc = max(0.0, min(1.0, enc.get("s_total", 0.15)))
+        stability = max(0.0, min(1.0, float(belief.get("stability_index", 0.5))))
         m_a = omega_enc * (1.0 - s_total_enc) * (0.5 + stability)
 
         return max(0.01, m_s + m_a)

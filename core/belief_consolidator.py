@@ -58,13 +58,13 @@ _STOPWORDS = frozenset({
 
 # Max lengths by category (matches batch_service.py)
 _MAX_LENGTHS = {
-    "self_identity": 250,
-    "people": 250,
-    "knowledge": 250,
-    "capabilities": 250,
-    "skills": 250,
+    "premises": 250,
+    "propositions": 250,
     "preferences": 250,
-    "feedback": 300,
+    "people": 250,
+    "skills": 250,
+    "desires": 250,
+    "concepts": 300,
 }
 
 # ── System Prompt ────────────────────────────────────────────────────
@@ -86,16 +86,16 @@ _SYSTEM_PROMPT = (
 
     "Rules for merged output:\n"
     "- Same category format:\n"
-    "    self_identity: 'I am...' or 'My...'\n"
-    "    capabilities: 'I can...'\n"
+    "    premises: 'I am...' or 'My...' or declarative statement\n"
+    "    propositions: declarative statement or 'If X, then Y'\n"
     "    people: '[Name]...'\n"
-    "    knowledge: declarative statement or 'If X, then Y'\n"
-    "    skills: 'To [goal]: [steps]' or 'When [condition], [action]'\n"
+    "    skills: 'To [goal]: [steps with tool refs]'\n"
     "    preferences: 'I want/prefer/value...'\n"
-    "    feedback: '[Lesson]. [Why]. [How to apply]'\n"
+    "    desires: 'I aspire to...' or 'My goal is...'\n"
+    "    concepts: '[Concept]: [consolidated understanding]'\n"
     "- Combine naturally: 'X is A' + 'X can B' → 'X is A that can B'\n"
     "- Do NOT invent new information — only merge what exists\n"
-    "- Max 250 chars (300 for feedback category)\n"
+    "- Max 250 chars\n"
     "- Plain text only, no markdown, no bullets, no numbering\n\n"
 
     "Output format (strict, exactly 3 lines):\n"
@@ -352,7 +352,7 @@ def _build_review_prompt(
     candidates: List[Tuple[float, Dict[str, Any]]],
 ) -> str:
     """Build the per-belief review prompt."""
-    category = new_belief.get("category", "knowledge")
+    category = new_belief.get("category", "propositions")
     content = new_belief.get("content", "")
 
     lines = [
@@ -437,7 +437,7 @@ def _apply_merge(
         logger.warning("Merge target %s not found — skipping", merge_with_id)
         return False
 
-    category = existing.get("category", new_belief.get("category", "knowledge"))
+    category = existing.get("category", new_belief.get("category", "propositions"))
 
     # Compute merged metadata: take the better of the two values
     new_mass = new_belief.get("mass", 1.0)
@@ -537,7 +537,7 @@ def _process_one_belief(
 
     Returns a result dict: {action, belief, merge_with, content}
     """
-    category = new_belief.get("category", "knowledge")
+    category = new_belief.get("category", "propositions")
     content = new_belief.get("content", "")
 
     # Load existing beliefs from the same category

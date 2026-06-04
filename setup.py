@@ -157,11 +157,16 @@ def main():
                     elif key == "GITHUB_TOKEN" and val:
                         available["github"] = True
 
-    # Check for TTS capability (piper)
+    # Check for TTS capability (piper + audio player)
     try:
         import subprocess
-        subprocess.run(["which", "piper"], capture_output=True, check=True)
-        available["audio_tts"] = True
+        import importlib
+        importlib.import_module("piper")
+        # Also need an audio player to actually hear it
+        import shutil
+        has_player = any(shutil.which(p) for p in ["ffplay", "gst-play-1.0", "mpv", "gst-launch-1.0"])
+        if has_player:
+            available["audio_tts"] = True
     except Exception:
         pass
 

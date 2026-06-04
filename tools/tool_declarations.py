@@ -869,11 +869,12 @@ EMAIL_TOOLS = [
     },
     {
         "name": "email_get",
-        "description": "Read a full email by its message ID.",
+        "description": "Read a full email by its message ID. Long emails are returned in 4000-character chunks. If the output says TRUNCATED, call again with the provided offset to continue reading.",
         "parameters": {
             "type": "object",
             "properties": {
                 "message_id": {"type": "string", "description": "Gmail message ID"},
+                "offset": {"type": "integer", "description": "Character offset to start reading from (default 0). Use the offset value from a TRUNCATED response to continue reading."},
             },
             "required": ["message_id"],
         },

@@ -139,7 +139,7 @@ def email_send(to: str, subject: str, body: str) -> str:
         ).execute()
 
         logger.info(f"Email sent to {to}: {subject}")
-        return f"Email sent successfully to {to}."
+        return f"[You emailed {to}]\nSubject: {subject}\n\n{body}"
     except Exception as e:
         return f"Email send failed: {e}"
 
@@ -240,9 +240,19 @@ def email_search(query: str, count: int = 5) -> str:
         return f"Email search failed: {e}"
 
 
-def email_get(message_id: str) -> str:
-    """Read the full content of a specific email by message ID."""
+def email_get(message_id: str, offset: int = 0) -> str:
+    """Read the full content of a specific email by message ID.
+
+    Args:
+        message_id: Gmail message ID.
+        offset: Character offset into the email body for pagination.
+                Use 0 (default) to read from the start. If the body is
+                truncated, the output will tell you the offset to use
+                for the next chunk.
+    """
     from tools.google_auth import get_gmail_service
+
+    CHUNK_SIZE = 20000
 
     service = get_gmail_service()
     if not service:
@@ -270,26 +280,48 @@ def email_get(message_id: str) -> str:
             status += " [REPLIED] ⚠️ You have already responded to this email."
 
         body_text = _extract_email_body(msg["payload"])
+        total_len = len(body_text)
 
         attachments = []
         _find_attachments(msg["payload"], attachments)
 
-        result = (
-            f"{status} Email Details:\n"
-            f"From: {sender}\n"
-            f"To: {to}\n"
-        )
-        if cc:
-            result += f"Cc: {cc}\n"
-        result += (
-            f"Date: {date}\n"
-            f"Subject: {subject}\n"
-            f"Thread ID: {msg.get('threadId', 'N/A')}\n"
-            f"Message ID: {message_id}\n"
-        )
-        if attachments:
-            result += f"Attachments: {', '.join(attachments)}\n"
-        result += f"\n--- Email Body ---\n{body_text[:4000]}"
+        # Build header section (only on first chunk)
+        if offset == 0:
+            result = (
+                f"{status} Email Details:\n"
+                f"From: {sender}\n"
+                f"To: {to}\n"
+            )
+            if cc:
+                result += f"Cc: {cc}\n"
+            result += (
+                f"Date: {date}\n"
+                f"Subject: {subject}\n"
+                f"Thread ID: {msg.get('threadId', 'N/A')}\n"
+                f"Message ID: {message_id}\n"
+            )
+            if attachments:
+                result += f"Attachments: {', '.join(attachments)}\n"
+            result += f"Body length: {total_len} characters\n"
+            result += f"\n--- Email Body ---\n"
+        else:
+            result = f"--- Email Body (continued from offset {offset}) ---\n"
+
+        # Slice the body
+        chunk = body_text[offset:offset + CHUNK_SIZE]
+        result += chunk
+        end_offset = offset + len(chunk)
+
+        # Truncation notice with pagination hint
+        if end_offset < total_len:
+            remaining = total_len - end_offset
+            result += (
+                f"\n\n⚠️ TRUNCATED — showing characters {offset}–{end_offset} of {total_len} "
+                f"({remaining} remaining).\n"
+                f"💡 To read more, call email_get again with message_id=\"{message_id}\" and offset={end_offset}"
+            )
+        else:
+            result += f"\n\n— End of email ({total_len} characters total) —"
 
         # Auto-mark as read
         if "UNREAD" in labels:
@@ -382,7 +414,7 @@ def email_reply(message_id: str, body: str, reply_all: bool = False) -> str:
         _record_reply(message_id)
 
         logger.info(f"Email reply sent to {recipient_str}: {reply_subject}")
-        return f"Reply sent to {recipient_str}.\nSubject: {reply_subject}"
+        return f"[You replied to {recipient_str}]\nSubject: {reply_subject}\n\n{body}"
     except Exception as e:
         return f"Reply failed: {e}"
 
@@ -422,8 +454,10 @@ def email_forward(message_id: str, to: str, note: str = "") -> str:
             f"From: {original_from}\n"
             f"Date: {original_date}\n"
             f"Subject: {original_subject}\n\n"
-            f"{original_body[:4000]}"
+            f"{original_body[:8000]}"
         )
+        if len(original_body) > 8000:
+            fwd_body += f"\n\n[Note: Original email was {len(original_body)} chars; forwarded body was trimmed.]"
 
         msg = MIMEText(fwd_body)
         msg["To"] = to
@@ -435,7 +469,7 @@ def email_forward(message_id: str, to: str, note: str = "") -> str:
         ).execute()
 
         logger.info(f"Email forwarded to {to}: {fwd_subject}")
-        return f"Email forwarded to {to}.\nSubject: {fwd_subject}"
+        return f"[You forwarded to {to}]\nSubject: {fwd_subject}\n\n{note if note else '(no note)'}"
     except Exception as e:
         return f"Forward failed: {e}"
 

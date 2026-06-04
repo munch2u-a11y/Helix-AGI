@@ -63,8 +63,13 @@ class Preconscious:
     SHORT_TOOL_WHITELIST = {"git", "ssh", "pip", "npm", "sql", "api", "web", "rss", "cli"}
 
     # Gravity-ranked belief injection parameters (replaces fixed token budgets)
-    MAX_BELIEFS_PER_QUERY = 15   # Hard cap per seed query
+    MAX_BELIEFS_PER_QUERY = 15   # Hard cap per seed query (pre-filter)
     MIN_BELIEFS_PER_QUERY = 2    # Always include at least the top N
+
+    # Dynamic focus budget tiers (total_budget, max_skills)
+    FOCUS_BUDGET_DEEP = (2, 2)    # 3+ focus tools in last 3 pulses
+    FOCUS_BUDGET_WORKING = (5, 2) # 1-2 focus tools in last 3 pulses
+    FOCUS_BUDGET_OPEN = (10, 3)   # No recent focus tools
 
     def __init__(
         self,
@@ -99,10 +104,20 @@ class Preconscious:
         # to avoid repeating the same beliefs in consecutive pulses.
         self._prev_pulse_beliefs = []  # list of sets, each containing content strings from previous pulses
 
+        # Tool usage history — rolling window of tool names per pulse.
+        # Used by _compute_focus_budget() to dynamically narrow/widen
+        # the belief injection budget during concentrated tool work.
+        self._recent_tool_history: list = []  # list of list[str]
+
         # Weighted centroid of the last pulse's selected belief clusters.
         # Passed to the physics engine to steer attention toward actual
         # knowledge locations rather than raw text midpoints.
         self._last_cluster_centroid = None
+
+        # Galaxy map — dynamic galaxy centers built from lexicon entries.
+        # Rebuilt alongside the belief cache when beliefs change.
+        from core.belief_cosmology import GalaxyMap
+        self._galaxy_map = GalaxyMap()
 
         # Lexicon — priority term-matched dictionary loaded once.
         # Scanned every pulse BEFORE the 8D gravity query.
@@ -146,6 +161,47 @@ class Preconscious:
         except Exception as e:
             logger.warning(f"Failed to load lexicon: {e}")
 
+    # ── Focus Budget ─────────────────────────────────────────────────
+
+    def record_tool_usage(self, tool_names: list):
+        """Record which tools were used on this pulse.
+
+        Called by the pulse loop after each pulse. The rolling window
+        feeds _compute_focus_budget() to dynamically adjust the belief
+        injection budget — narrowing during concentrated tool work,
+        widening during idle/conversational states.
+        """
+        self._recent_tool_history.append(list(tool_names))
+        if len(self._recent_tool_history) > 5:
+            self._recent_tool_history.pop(0)
+
+    def _compute_focus_budget(self) -> tuple:
+        """Compute (total_budget, max_skills) based on recent tool intensity.
+
+        Queries the tool registry for each tool's focus_type so new tools
+        auto-classify without hardcoded lists here.
+
+        Returns:
+            Tuple of (total_budget, max_skills) from the focus tier constants.
+        """
+        try:
+            from tools.tool_registry import registry
+        except ImportError:
+            return self.FOCUS_BUDGET_OPEN
+
+        focus_count = 0
+        for pulse_tools in self._recent_tool_history[-3:]:
+            for tool_name in pulse_tools:
+                if registry.get_focus_type(tool_name) == "focus":
+                    focus_count += 1
+
+        if focus_count >= 3:
+            return self.FOCUS_BUDGET_DEEP
+        elif focus_count >= 1:
+            return self.FOCUS_BUDGET_WORKING
+        else:
+            return self.FOCUS_BUDGET_OPEN
+
     # ── Main Injection ───────────────────────────────────────────────
 
     def inject(
@@ -185,9 +241,28 @@ class Preconscious:
         injected_belief_ids = []
 
         # Build combined trigger for spatial neighborhood query
-        trigger_text = previous_thought
+        # Filter out tool results unless we have absolutely no other context (fallback)
+        primary_events = []
+        tool_events = []
         if incoming_events:
-            trigger_text = " ".join(incoming_events) + " " + previous_thought
+            for ev in incoming_events:
+                if "Tool [" in ev and "returned:" in ev:
+                    tool_events.append(ev)
+                else:
+                    primary_events.append(ev)
+
+        primary_parts = []
+        if primary_events:
+            primary_parts.extend(primary_events)
+        if previous_thought and previous_thought.strip():
+            primary_parts.append(previous_thought)
+
+        if primary_parts:
+            trigger_text = " ".join(primary_parts)
+        elif tool_events:
+            trigger_text = " ".join(tool_events)
+        else:
+            trigger_text = ""
 
         # ── 0. Lexicon Match (PRIORITY) ──────────────────────────────
         #    Fast string match for lexicon terms in the trigger text.
@@ -665,14 +740,24 @@ class Preconscious:
             if not content or len(content) < 5:
                 continue
 
-            # No hard truncation on individual items
+            # Hard length guard on individual items to prevent memory bloat/flooding
+            MAX_CONTENT_CHARS = 3000
             condensed = content.strip()
+            if len(condensed) > MAX_CONTENT_CHARS:
+                condensed = condensed[:MAX_CONTENT_CHARS] + " ... [truncated]"
+
             est_tokens = len(condensed.split())
 
-            # First item (highest relevancy) is always included regardless of budget.
+            # First item (highest relevancy) is always included unless it exceeds 1000 tokens (hard limit).
             # Subsequent items are skipped if they exceed the 500 token budget.
-            if i > 0 and token_count + est_tokens > TARGET_BUDGET:
-                continue
+            if i == 0:
+                if est_tokens > 1000:
+                    condensed_words = condensed.split()[:1000]
+                    condensed = " ".join(condensed_words) + " ... [truncated to 1000 tokens]"
+                    est_tokens = 1000
+            else:
+                if token_count + est_tokens > TARGET_BUDGET:
+                    continue
 
             rel = n["relevance"]
 
@@ -724,6 +809,11 @@ class Preconscious:
         Embeds all beliefs into 8D space once, then reuses the positions
         on every pulse. Rebuilds if belief count OR total mass changes
         (catches merges, attrition, confidence decay, content changes).
+
+        Also builds a 384D embedding matrix for FAISS-anchored gravity
+        queries. This matrix is used to pre-filter semantically relevant
+        candidates before 8D gravity scoring, preventing projection-
+        collapse noise from dominating belief retrieval.
         """
         import numpy as np
 
@@ -744,28 +834,110 @@ class Preconscious:
         )
 
         cache = []
+        emb_rows = []       # indices into semantic_index._embeddings
+        emb_row_map = {}    # cache_index → row in _belief_emb_matrix
+        live_embs = []      # on-the-fly embeddings for beliefs not in semantic index
+        semantic_idx = self.physics.semantic_index
+
         for b in all_beliefs:
             content = b.get("content", "")
             if not content or len(content) < 5:
                 continue
 
-            try:
-                position = self.physics.embed_and_project(content)
-            except Exception:
-                position = np.zeros(8, dtype=np.float32)
+            position = b.get("position_8d")
+            if position is not None and len(position) == 8:
+                position = np.array(position, dtype=np.float32)
+            else:
+                # No stored position — compute on the fly with scale factor
+                try:
+                    from core.belief_cosmology import SCALE_FACTOR
+                    position = self.physics.embed_and_project(content) * SCALE_FACTOR
+                except Exception:
+                    position = np.zeros(8, dtype=np.float32)
 
+            bid = b.get("id", "")
+            cache_idx = len(cache)
             cache.append({
-                "id": b.get("id", ""),
+                "id": bid,
                 "content": content,
                 "mass": b.get("mass", 1.0),
                 "category": b.get("_category", ""),
                 "position_8d": position,
             })
 
+            # Collect 384D embedding: from semantic index or embed on the fly
+            if bid and semantic_idx.contains(bid):
+                si_idx = semantic_idx._id_to_idx[bid]
+                emb_rows.append((cache_idx, si_idx))
+            else:
+                # Belief not in semantic index (new since last boot) —
+                # embed on the fly so it's visible to the FAISS gate
+                try:
+                    emb = self.physics.embed_text(content)
+                    norm = np.linalg.norm(emb)
+                    if norm > 1e-8:
+                        emb = emb / norm
+                    live_embs.append((cache_idx, emb))
+                except Exception:
+                    pass  # skip — this belief won't be in the FAISS gate
+
         self._belief_cache = cache
         self._belief_cache_count = current_count
         self._belief_cache_mass = current_mass
-        logger.info(f"Belief position cache built: {len(cache)} entries")
+
+        # Build the belief-only 384D embedding matrix for semantic anchor queries.
+        # Combines pre-indexed embeddings from the semantic index with any
+        # on-the-fly embeddings for beliefs added since boot.
+        # Matrix layout: [pre-indexed rows | live-embedded rows]
+        if (emb_rows or live_embs) and semantic_idx._embeddings is not None:
+            # Compute row indices: pre-indexed beliefs get rows 0..N-1,
+            # live-embedded beliefs get rows N..N+M-1
+            for row_idx, (cache_idx, _si_idx) in enumerate(emb_rows):
+                emb_row_map[cache_idx] = row_idx
+            for live_idx, (cache_idx, _emb) in enumerate(live_embs):
+                emb_row_map[cache_idx] = len(emb_rows) + live_idx
+
+            parts = []
+            if emb_rows:
+                si_indices = [si_idx for _, si_idx in emb_rows]
+                parts.append(semantic_idx._embeddings[si_indices].copy())
+            if live_embs:
+                parts.append(np.array([emb for _, emb in live_embs], dtype=np.float32))
+            self._belief_emb_matrix = np.vstack(parts) if len(parts) > 1 else parts[0]
+            self._belief_emb_row_map = emb_row_map  # cache_idx → row in matrix
+            self._belief_emb_reverse_map = {v: k for k, v in emb_row_map.items()}  # row → cache_idx
+        else:
+            self._belief_emb_matrix = None
+            self._belief_emb_row_map = {}
+            self._belief_emb_reverse_map = {}
+
+        logger.info(
+            f"Belief position cache built: {len(cache)} entries, "
+            f"{len(emb_rows) + len(live_embs)} with 384D embeddings"
+            f"{f' ({len(live_embs)} live-embedded)' if live_embs else ''}"
+        )
+
+        # ── Build galaxy map from lexicon + belief positions ──────
+        try:
+            lexicon_path = os.path.join(self.beliefs.data_dir, "lexicon.json")
+            if os.path.exists(lexicon_path):
+                import json as _json
+                with open(lexicon_path, "r") as f:
+                    lexicon_entries = _json.load(f)
+                self._galaxy_map.build(
+                    lexicon_entries=lexicon_entries,
+                    all_beliefs=all_beliefs,
+                    projection=getattr(
+                        getattr(self.physics, 'spatial_mind', None),
+                        'belief_space', None
+                    ) and self.physics.spatial_mind.belief_space.projection,
+                )
+        except Exception as e:
+            logger.warning("Galaxy map build failed (non-fatal): %s", e)
+
+    # Number of semantic anchor candidates to retrieve from the 384D index
+    # before scoring by 8D gravity. Higher = wider net, slower.
+    SEMANTIC_ANCHOR_K = 100
 
     def _gravity_query(
         self,
@@ -774,11 +946,25 @@ class Preconscious:
         max_results: int = 15,
         min_results: int = 2,
     ) -> List[Dict[str, Any]]:
-        """Score cached beliefs by Verlinde gravity against a seed text.
+        """Score beliefs by Verlinde gravity, anchored by 384D semantic search.
 
-        Returns the top beliefs sorted by gravity descending. The gravity
-        ranking itself is the filter — no token budgets. The strongest
-        gravitational pulls are always included, capped at max_results.
+        Two-phase retrieval that prevents projection-collapse noise:
+
+          Phase 1 — Semantic Anchoring (384D):
+            Compute cosine similarity between the seed text and ALL beliefs
+            using the pre-built belief embedding matrix. Retrieve the top
+            SEMANTIC_ANCHOR_K candidates. This ensures only semantically
+            relevant beliefs enter the gravity calculation.
+
+          Phase 2 — Gravitational Ranking (8D):
+            For each semantic candidate, compute Verlinde entropic gravity
+            (mass / distance²) in the 8D cognitive manifold. Rank by gravity
+            and return the top results.
+
+        This breaks the positive feedback loop where random 8D projection
+        proximity causes unrelated beliefs to dominate via runaway gravity.
+
+        Falls back to brute-force 8D gravity if the 384D matrix is unavailable.
 
         Args:
             seed_text: Text to embed as the query center.
@@ -797,9 +983,42 @@ class Preconscious:
         except Exception:
             return []
 
-        # Score each cached belief
+        # ── Phase 1: Semantic Anchoring (384D) ────────────────────
+        # Find the top SEMANTIC_ANCHOR_K beliefs by cosine similarity
+        # in the full 384D embedding space. This pre-filters the
+        # candidate set so that only semantically relevant beliefs
+        # are ever evaluated by the gravity engine.
+        anchor_cache_indices = None
+        if (self._belief_emb_matrix is not None
+                and len(self._belief_emb_matrix) > 0):
+            try:
+                query_emb = self.physics.embed_text(seed_text[:500])
+                norm = np.linalg.norm(query_emb)
+                if norm > 1e-8:
+                    query_emb = query_emb / norm
+                    # Cosine similarities via matrix multiply (~7ms for 1700 beliefs)
+                    sims = self._belief_emb_matrix @ query_emb
+                    k = min(self.SEMANTIC_ANCHOR_K, len(sims))
+                    top_k_rows = np.argpartition(sims, -k)[-k:]
+                    # Map rows back to belief cache indices
+                    anchor_cache_indices = set()
+                    for row in top_k_rows:
+                        cache_idx = self._belief_emb_reverse_map.get(int(row))
+                        if cache_idx is not None:
+                            anchor_cache_indices.add(cache_idx)
+            except Exception as e:
+                logger.debug(f"384D anchor search failed, falling back to brute-force: {e}")
+                anchor_cache_indices = None
+
+        # ── Phase 2: Gravitational Ranking (8D) ───────────────────
+        # Within the semantically anchored candidate pool, rank by
+        # Verlinde entropic gravity in the 8D cognitive manifold.
         scored = []
-        for b in self._belief_cache:
+        for cache_idx, b in enumerate(self._belief_cache):
+            # If we have semantic anchors, skip beliefs not in the anchor set
+            if anchor_cache_indices is not None and cache_idx not in anchor_cache_indices:
+                continue
+
             content = b["content"]
             if content in exclude:
                 continue
@@ -823,29 +1042,21 @@ class Preconscious:
         max_take = max(max_results, min_results)
         selected = scored[:max_take]
 
-        # ── Reserve spots for feedback and skills ─────────────────
-        # Ensure that if a 'feedback' or 'skills' belief had any pull,
-        # it doesn't get entirely pushed out by heavier core beliefs.
+        # ── Reserve a slot for skills ─────────────────────────────
+        # Ensure that if a 'skills' belief had any pull, it doesn't
+        # get entirely pushed out by heavier core beliefs.
         selected_ids = {b["id"] for b in selected if b["id"]}
-        
-        for reserved_cat in ["feedback", "skills"]:
-            # Check if we already have one in the selected set
-            if any(b["category"] == reserved_cat for b in selected):
-                continue
-                
-            # Find the highest gravity belief in this category
-            best_reserved = next(
-                (b for b in scored if b["category"] == reserved_cat), 
+
+        if not any(b["category"] == "skills" for b in selected):
+            best_skill = next(
+                (b for b in scored if b["category"] == "skills"),
                 None
             )
-            
-            # If we found one, swap it with the lowest gravity non-reserved item
-            if best_reserved and best_reserved["id"] not in selected_ids:
-                # Find an item to drop (starting from the bottom of selected)
+            if best_skill and best_skill["id"] not in selected_ids:
                 for i in range(len(selected) - 1, -1, -1):
-                    if selected[i]["category"] not in ["feedback", "skills"]:
-                        selected[i] = best_reserved
-                        selected_ids.add(best_reserved["id"])
+                    if selected[i]["category"] != "skills":
+                        selected[i] = best_skill
+                        selected_ids.add(best_skill["id"])
                         break
 
         return selected
@@ -914,12 +1125,38 @@ class Preconscious:
             return "", []
 
         # Build combined trigger text for concept extraction
-        trigger_text = previous_thought
+        # Filter out tool results unless we have absolutely no other context (fallback)
+        primary_events = []
+        tool_events = []
         if incoming_events:
-            trigger_text = " ".join(incoming_events) + " " + previous_thought
+            for ev in incoming_events:
+                if "Tool [" in ev and "returned:" in ev:
+                    tool_events.append(ev)
+                else:
+                    primary_events.append(ev)
+
+        primary_parts = []
+        if primary_events:
+            primary_parts.extend(primary_events)
+        if previous_thought and previous_thought.strip():
+            primary_parts.append(previous_thought)
+
+        using_fallback = False
+        if primary_parts:
+            trigger_text = " ".join(primary_parts)
+        elif tool_events:
+            trigger_text = " ".join(tool_events)
+            using_fallback = True
+        else:
+            trigger_text = ""
+
+        if not trigger_text.strip():
+            return "", []
 
         # Extract key concepts (dynamic budget based on input richness)
-        extraction = self._concept_extractor.extract(trigger_text)
+        # Budget is restricted to 1 if we only have tool returns as fallback
+        max_concepts_override = 1 if using_fallback else None
+        extraction = self._concept_extractor.extract(trigger_text, max_concepts=max_concepts_override)
         concepts = extraction["concepts"]
         budget = extraction["budget"]
 
@@ -933,64 +1170,144 @@ class Preconscious:
             return "", []
 
         # Exclude beliefs from the previous 3 pulses + lexicon summaries
-        exclude = set().union(*self._prev_pulse_beliefs) if self._prev_pulse_beliefs else set()
+        # We only exclude other categories (skills/feedback are never blacklisted)
+        exclude_base = set()
+        for pulse_set in self._prev_pulse_beliefs:
+            exclude_base.update(pulse_set)
         if lexicon_exclude:
-            exclude |= lexicon_exclude
+            exclude_base |= lexicon_exclude
 
         # Run independent gravity queries per concept
         all_concept_beliefs = []
-        seen_contents = set(exclude)  # rolling blacklist across concepts
+        seen_contents = set(exclude_base)  # rolling blacklist across concepts
 
-        # Distribute the belief budget across concepts
-        per_concept_max = max(
-            self.MIN_BELIEFS_PER_QUERY,
-            self.MAX_BELIEFS_PER_QUERY // max(len(concepts), 1),
-        )
-
+        # We query up to MAX_BELIEFS_PER_QUERY per concept to ensure a wide enough net
+        # for skills and feedback.
         for concept in concepts:
             concept_beliefs = self._gravity_query(
                 seed_text=concept,
                 exclude=seen_contents,
-                max_results=per_concept_max,
+                max_results=self.MAX_BELIEFS_PER_QUERY,
                 min_results=self.MIN_BELIEFS_PER_QUERY,
             )
-            # Add to rolling blacklist so the next concept doesn't
-            # pull the same beliefs (no overlap between clusters)
+            # Minimally weight the beliefs retrieved from fallback tool returns
+            if using_fallback:
+                for b in concept_beliefs:
+                    b["gravity"] *= 0.1
+
+            # Add other beliefs to seen_contents so subsequent concepts
+            # don't duplicate them (no overlap between concept clusters)
             for b in concept_beliefs:
-                seen_contents.add(b["content"])
+                if b["category"] != "skills":
+                    seen_contents.add(b["content"])
             all_concept_beliefs.extend(concept_beliefs)
 
         # Deduplicate across concepts (heavier wins on collision)
         merged = self._deduplicate_beliefs(all_concept_beliefs)
 
-        # Re-sort merged results by gravity
-        merged.sort(key=lambda x: x["gravity"], reverse=True)
+        # ── Galaxy-aware selection ────────────────────────────────
+        # Group beliefs by nearest galaxy center (lexicon entry),
+        # score each galaxy, then pull from the strongest 1-2.
+        # This ensures injection focuses on coherent conceptual
+        # clusters rather than randomly mixing unrelated beliefs.
+
+        # Separate skills first (always get priority reservation)
+        skills_pool = [b for b in merged if b["category"] == "skills"]
+        other_pool = [b for b in merged if b["category"] != "skills"]
+
+        # Dynamic budget based on recent tool intensity
+        total_budget, max_skills = self._compute_focus_budget()
+        selected_skills = skills_pool[:max_skills]
+        remaining_budget = total_budget - len(selected_skills)
+
+        # Try galaxy-aware selection on the non-skills pool
+        if self._galaxy_map.is_built and other_pool and remaining_budget > 0:
+            # Group by nearest galaxy center
+            grouped = self._galaxy_map.group_beliefs(other_pool)
+
+            # Score galaxies using the first concept's query position
+            # as the focus center
+            if concepts and self._belief_cache:
+                try:
+                    query_emb = self.physics.embed_text(concepts[0][:500])
+                    from core.belief_cosmology import SCALE_FACTOR
+                    query_pos = self.physics.spatial_mind.belief_space.projection.project(
+                        query_emb
+                    ) * SCALE_FACTOR
+                except Exception:
+                    query_pos = np.zeros(8, dtype=np.float32)
+            else:
+                query_pos = np.zeros(8, dtype=np.float32)
+
+            scored_galaxies = self._galaxy_map.score_galaxies(
+                query_pos, grouped,
+            )
+
+            # Pull from top galaxies: fill the budget from strongest
+            # galaxy first, then second, etc.
+            selected_other = []
+            for center, score, members in scored_galaxies:
+                if len(selected_other) >= remaining_budget:
+                    break
+                # Sort this galaxy's members by individual gravity
+                members.sort(key=lambda x: x.get("gravity", 0), reverse=True)
+                space = remaining_budget - len(selected_other)
+                selected_other.extend(members[:space])
+
+            # Add unclustered beliefs if budget remains
+            unclustered = grouped.get("_unclustered", [])
+            if unclustered and len(selected_other) < remaining_budget:
+                unclustered.sort(key=lambda x: x.get("gravity", 0), reverse=True)
+                space = remaining_budget - len(selected_other)
+                selected_other.extend(unclustered[:space])
+
+            logger.debug(
+                "Galaxy selection: %d galaxies scored, top=%s",
+                len(scored_galaxies),
+                scored_galaxies[0][0].term if scored_galaxies else "none",
+            )
+        else:
+            # Fallback: flat gravity sort (no galaxy map available)
+            other_pool.sort(key=lambda x: x["gravity"], reverse=True)
+            selected_other = other_pool[:remaining_budget]
+
+        # Fill any leftover slots
+        leftover = total_budget - (len(selected_skills) + len(selected_other))
+        if leftover > 0 and len(other_pool) > len(selected_other):
+            extra = [b for b in other_pool if b not in selected_other]
+            extra.sort(key=lambda x: x.get("gravity", 0), reverse=True)
+            selected_other.extend(extra[:leftover])
+
+        # Combine selection and re-sort by gravity
+        final_selection = selected_skills + selected_other
+        final_selection.sort(key=lambda x: x["gravity"], reverse=True)
 
         # Format for injection
         lines = []
         this_pulse_beliefs = set()
 
-        for b in merged:
+        for b in final_selection:
             content = b["content"]
             cat = b["category"]
 
             if cat == "people":
                 lines.append(f"(about someone: {content})")
-            elif cat == "knowledge":
+            elif cat == "premises":
+                lines.append(f"(I know: {content})")
+            elif cat == "propositions":
                 lines.append(f"(I understand: {content})")
-            elif cat in ("desires", "preferences"):
-                lines.append(f"(I want: {content})")
-            elif cat == "capabilities":
-                lines.append(f"(I can: {content})")
-            elif cat == "self_identity":
-                lines.append(f"(I am: {content})")
+            elif cat == "preferences":
+                lines.append(f"(I value: {content})")
+            elif cat == "desires":
+                lines.append(f"(I aspire: {content})")
             elif cat == "skills":
                 lines.append(f"(I know how: {content})")
-            elif cat == "feedback":
-                lines.append(f"(I've learned: {content})")
+            elif cat == "concepts":
+                lines.append(f"(concept: {content})")
             else:
                 lines.append(f"(belief: {content})")
 
+            # Add to rolling blacklist for next 3 pulses
             this_pulse_beliefs.add(content)
 
         # Track for next pulse's filter
@@ -1000,14 +1317,15 @@ class Preconscious:
             self._prev_pulse_beliefs.pop(0)
 
         logger.info(
-            f"Concept-query beliefs: {len(merged)} selected "
+            f"Concept-query beliefs: {len(final_selection)} selected "
+            f"(skills={len(selected_skills)}, focus_budget={total_budget}) "
             f"from {len(concepts)} concepts (budget={budget}): "
             f"{concepts[:3]}"
         )
-        for b in merged[:5]:
+        for b in final_selection[:5]:
             logger.info(
                 f"  ↳ g={b.get('gravity',0):.2f} m={b.get('mass',0):.1f} "
-                f"[{b.get('category','')}] {b.get('content','')[:80]}"
+                f"[{b.get('category','')}] {b.get('content','')}"
             )
 
         # Compute weighted centroid of selected clusters for attention steering.
@@ -1043,6 +1361,9 @@ class Preconscious:
 
         Just the last 3 entries from short-term memory.
         These ensure the model has temporal continuity.
+
+        Each memory is tagged with its timestamp (e.g., "[23:54]")
+        so the model can distinguish present from past.
         """
         recent = self.memory.get_recent(limit=3, minutes_back=10)
         if not recent:
@@ -1051,9 +1372,22 @@ class Preconscious:
         lines = []
         for entry in recent:
             content = entry.get("content", "")
-            if content:
-                condensed = self._condense(content, max_len=150)
-                lines.append(f"(recent: {condensed})")
+            if not content:
+                continue
+
+            # Extract HH:MM timestamp from created_at
+            ts_label = ""
+            ts_str = entry.get("created_at", "")
+            if ts_str:
+                try:
+                    from dateutil import parser as dp
+                    ts = dp.parse(ts_str)
+                    ts_label = f"[{ts.strftime('%H:%M')}] "
+                except Exception:
+                    pass
+
+            condensed = self._condense(content, max_len=150)
+            lines.append(f"(recent: {ts_label}{condensed})")
 
         return "\n".join(lines) if lines else ""
 

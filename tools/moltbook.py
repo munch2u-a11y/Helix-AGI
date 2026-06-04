@@ -35,7 +35,16 @@ logger = logging.getLogger("helix.tools.moltbook")
 # ── Config ────────────────────────────────────────────────────────────
 
 API_BASE = "https://www.moltbook.com/api/v1"
-TIMEOUT = 15
+TIMEOUT = 45
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+req = requests.Session()
+_retries = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+req.mount('https://', HTTPAdapter(max_retries=_retries))
+req.mount('http://', HTTPAdapter(max_retries=_retries))
 
 
 def _api_key() -> str:
@@ -59,7 +68,7 @@ def _solve_captcha(verification_data: dict) -> str:
     except ImportError:
         return " [Failed to solve CAPTCHA: google-generativeai not installed.]"
 
-    import requests as req
+    pass
 
     challenge_text = verification_data.get("challenge_text", "")
     instructions = verification_data.get("instructions", "")
@@ -103,7 +112,7 @@ def _solve_captcha(verification_data: dict) -> str:
 
 def moltbook_post(title: str, content: str, submolt: str = "general") -> str:
     """Post to Moltbook."""
-    import requests as req
+    pass
     if not content:
         return "No content provided."
     key = _api_key()
@@ -119,7 +128,7 @@ def moltbook_post(title: str, content: str, submolt: str = "general") -> str:
         if resp.status_code in (200, 201):
             data = resp.json()
             post_id = data.get("id", data.get("post_id", "?"))
-            msg = f"Posted to Moltbook (submolt: {submolt}, id: {post_id}): {title}"
+            msg = f"[You posted to m/{submolt}] {title}\n\n{content}\n\n(post id: {post_id})"
             if "verification" in data:
                 msg += _solve_captcha(data["verification"])
             return msg
@@ -130,7 +139,7 @@ def moltbook_post(title: str, content: str, submolt: str = "general") -> str:
 
 def moltbook_comment(post_id: str, content: str, parent_id: str = "") -> str:
     """Comment on a Moltbook post."""
-    import requests as req
+    pass
     if not post_id or not content:
         return "Missing post_id or content."
     key = _api_key()
@@ -150,7 +159,7 @@ def moltbook_comment(post_id: str, content: str, parent_id: str = "") -> str:
             data = resp.json()
             comment_obj = data.get("comment", {})
             comment_id = comment_obj.get("id", "?")
-            msg = f"Commented on Moltbook post {post_id} (comment id: {comment_id})."
+            msg = f"[You commented on post {post_id}] (comment id: {comment_id})\n\n{content}"
             if "verification" in data:
                 msg += _solve_captcha(data["verification"])
             return msg
@@ -161,7 +170,7 @@ def moltbook_comment(post_id: str, content: str, parent_id: str = "") -> str:
 
 def moltbook_read_post(post_id: str) -> str:
     """Read a specific Moltbook post by ID with comments."""
-    import requests as req
+    pass
     if not post_id:
         return "No post_id provided."
     key = _api_key()
@@ -223,7 +232,7 @@ def moltbook_read_post(post_id: str) -> str:
 
 def moltbook_delete_post(post_id: str) -> str:
     """Delete a Moltbook post."""
-    import requests as req
+    pass
     if not post_id:
         return "No post_id provided."
     key = _api_key()
@@ -246,7 +255,7 @@ def moltbook_delete_post(post_id: str) -> str:
 
 def moltbook_read_feed(submolt: str = "", limit: int = 5) -> str:
     """Read the Moltbook feed."""
-    import requests as req
+    pass
     key = _api_key()
     if not key:
         return "MOLTBOOK_API_KEY not set."
@@ -290,7 +299,7 @@ def moltbook_read_feed(submolt: str = "", limit: int = 5) -> str:
 
 def moltbook_search(query: str, limit: int = 5) -> str:
     """Search Moltbook for posts or agents."""
-    import requests as req
+    pass
     if not query:
         return "No search query provided."
     key = _api_key()
@@ -331,7 +340,7 @@ def moltbook_search(query: str, limit: int = 5) -> str:
 
 def moltbook_vote(target_id: str, direction: str = "up", target_type: str = "post") -> str:
     """Upvote or downvote a post or comment."""
-    import requests as req
+    pass
     if not target_id or direction not in ("up", "down"):
         return "Missing target_id or invalid direction (must be 'up' or 'down')."
     if target_type not in ("post", "comment"):
@@ -355,7 +364,7 @@ def moltbook_vote(target_id: str, direction: str = "up", target_type: str = "pos
 
 def moltbook_follow(agent_id: str, action: str = "follow") -> str:
     """Follow or unfollow a Moltbook agent."""
-    import requests as req
+    pass
     if not agent_id:
         return "No agent_id provided."
     if action not in ("follow", "unfollow"):
@@ -387,7 +396,7 @@ def moltbook_follow(agent_id: str, action: str = "follow") -> str:
 
 def moltbook_get_profile(agent_id: str) -> str:
     """View an agent's Moltbook profile."""
-    import requests as req
+    pass
     if not agent_id:
         return "No agent_id provided."
     key = _api_key()
@@ -428,7 +437,7 @@ def moltbook_get_profile(agent_id: str) -> str:
 
 def moltbook_get_user_posts(agent_id: str, limit: int = 5) -> str:
     """Retrieve recent posts by a specific agent."""
-    import requests as req
+    pass
     if not agent_id:
         return "No agent_id provided."
     key = _api_key()
@@ -471,7 +480,7 @@ def moltbook_get_user_posts(agent_id: str, limit: int = 5) -> str:
 
 def moltbook_list_submolts() -> str:
     """List available Moltbook submolts."""
-    import requests as req
+    pass
     key = _api_key()
     if not key:
         return "MOLTBOOK_API_KEY not set."
@@ -502,7 +511,7 @@ def moltbook_list_submolts() -> str:
 
 def moltbook_notifications(limit: int = 10) -> str:
     """List Moltbook notifications."""
-    import requests as req
+    pass
     key = _api_key()
     if not key:
         return "MOLTBOOK_API_KEY not set."
@@ -547,7 +556,7 @@ def moltbook_notifications(limit: int = 10) -> str:
 
 def moltbook_mark_notifications_read(notification_id: str = "") -> str:
     """Mark Moltbook notifications as read. Pass a notification_id to mark one, or leave empty to mark all."""
-    import requests as req
+    pass
     key = _api_key()
     if not key:
         return "MOLTBOOK_API_KEY not set."
@@ -580,7 +589,7 @@ def moltbook_mark_notifications_read(notification_id: str = "") -> str:
 
 def moltbook_home() -> str:
     """Check Moltbook home — notifications, DMs, karma, and announcements."""
-    import requests as req
+    pass
     key = _api_key()
     if not key:
         return "MOLTBOOK_API_KEY not set."

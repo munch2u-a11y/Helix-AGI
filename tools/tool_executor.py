@@ -74,6 +74,7 @@ class ToolExecutor:
         self._moltbook = None    # Lazy-loaded
         self._github = None      # Lazy-loaded
         self._vision_cortex = None  # Lazy-loaded VisionCortex (Moondream/Vulkan)
+        self._piper_voice = None    # Lazy-loaded PiperVoice
         self._pulse_loop = None  # Set via set_pulse_loop() for context reset
 
         # Populate the tool registry with all tools
@@ -242,18 +243,38 @@ class ToolExecutor:
             tools=CORE_TOOLS + TOOLSET_MANAGEMENT_TOOLS,
             handlers={**core_handlers, **mgmt_handlers},
             description="Core cognitive tools — always loaded",
+            focus_types={
+                "terminal": "focus",
+                "write_file": "focus",
+                "append_file": "focus",
+                "search": "focus",
+                "read_url": "focus",
+                "look": "focus",
+                "listen": "focus",
+                "record_video": "focus",
+                "read_file": "intake",
+            },
         )
         registry.register_batch(
             toolset="browser",
             tools=BROWSER_TOOLS,
             handlers=browser_handlers,
             description="Web browsing and page interaction",
+            focus_types={
+                "browse": "focus",
+                "browse_interact": "focus",
+            },
         )
         registry.register_batch(
             toolset="git",
             tools=GIT_TOOLS,
             handlers=git_handlers,
             description="Local Git repository operations",
+            focus_types={
+                "git_commit": "focus",
+                "git_push": "focus",
+                "git_diff": "focus",
+            },
         )
         registry.register_batch(
             toolset="github",
@@ -262,6 +283,10 @@ class ToolExecutor:
             check_fn=_check_github,
             requires_env=["GITHUB_TOKEN"],
             description="GitHub API — search repos, manage issues, PRs",
+            focus_types={
+                "github_search": "focus",
+                "github_create_issue": "focus",
+            },
         )
         registry.register_batch(
             toolset="social",
@@ -269,6 +294,13 @@ class ToolExecutor:
             handlers=moltbook_handlers,
             check_fn=_check_moltbook,
             description="Moltbook social platform",
+            focus_types={
+                "moltbook_post": "focus",
+                "moltbook_read": "intake",
+                "moltbook_feed": "intake",
+                "moltbook_home": "intake",
+                "moltbook_notifications": "intake",
+            },
         )
         registry.register_batch(
             toolset="email",
@@ -277,6 +309,11 @@ class ToolExecutor:
             check_fn=_check_google_creds,
             requires_env=["GOOGLE_CREDENTIALS"],
             description="Gmail — send, read, search, reply, forward",
+            focus_types={
+                "email_read": "intake",
+                "email_get": "intake",
+                "email_search": "intake",
+            },
         )
         registry.register_batch(
             toolset="calendar",
@@ -285,6 +322,9 @@ class ToolExecutor:
             check_fn=_check_google_creds,
             requires_env=["GOOGLE_CREDENTIALS"],
             description="Google Calendar — create, list, delete events",
+            focus_types={
+                "calendar_list": "intake",
+            },
         )
         registry.register_batch(
             toolset="drive",
@@ -293,6 +333,11 @@ class ToolExecutor:
             check_fn=_check_google_creds,
             requires_env=["GOOGLE_CREDENTIALS"],
             description="Google Drive — search, read, list, upload, share",
+            focus_types={
+                "drive_read": "intake",
+                "drive_search": "intake",
+                "drive_list": "intake",
+            },
         )
         registry.register_batch(
             toolset="tasks",
@@ -308,6 +353,11 @@ class ToolExecutor:
             handlers=desktop_handlers,
             check_fn=_check_desktop,
             description="Desktop control — typing, clicking, screenshots",
+            focus_types={
+                "desktop_type": "focus",
+                "desktop_click": "focus",
+                "desktop_key": "focus",
+            },
         )
 
     # ── Gemini Native Function Call Dispatch ──────────────────────────
@@ -362,7 +412,7 @@ class ToolExecutor:
                     importance=0.6,
                     tags=["reply", "outbound", recipient.lower()],
                 )
-            return f"Reply delivered to {recipient} via their last channel."
+            return f"[You said to {recipient}]: {message}"
         return f"Could not deliver reply to {recipient} — no recent inbound channel or default channel found."
 
     def _fc_send_message(self, args: dict) -> str:
@@ -384,7 +434,7 @@ class ToolExecutor:
                     importance=0.6,
                     tags=["message", "outbound", recipient.lower()],
                 )
-            return f"Message delivered to {recipient} via their default channel."
+            return f"[You said to {recipient}]: {message}"
         return f"Could not deliver message to {recipient} — no contact record or default channel found."
 
     def _fc_terminal(self, args: dict) -> str:
@@ -553,7 +603,7 @@ class ToolExecutor:
         if not getattr(self, "scratchpad", None):
             return "Scratchpad is not available."
         self.scratchpad.add_note(content)
-        return f"Note added to scratchpad: {content[:50]}..."
+        return f"Note added to scratchpad: {content}"
 
     def _fc_note_done(self, args: dict) -> str:
         note_id = args.get("note_id")
@@ -624,7 +674,7 @@ class ToolExecutor:
             
             # Log the journal write explicitly so the user can see it
             logger.info(f"Journal entry written: {content[:60]}...")
-            return "Journal entry saved successfully."
+            return f"Journal entry saved: {content}"
         except Exception as e:
             return f"Failed to write journal: {e}"
 
@@ -814,7 +864,7 @@ class ToolExecutor:
 
     def _fc_email_get(self, args: dict) -> str:
         from tools import google_email as ge
-        return ge.email_get(message_id=args.get("message_id", ""))
+        return ge.email_get(message_id=args.get("message_id", ""), offset=int(args.get("offset", 0)))
 
     def _fc_email_reply(self, args: dict) -> str:
         from tools import google_email as ge
@@ -1334,46 +1384,123 @@ class ToolExecutor:
 
     VOICE_MODEL = "en-US-GuyNeural"  # Same as Helix_main
 
+    def _play_audio(self, audio_path: str) -> bool:
+        """Play an audio file using the best available system player.
+
+        Tries in order: ffplay → gst-play-1.0 → aplay (via gst WAV convert).
+        Returns True if playback was started successfully.
+        """
+        import shutil
+
+        # 1. ffplay (best: supports mp3 natively, no display)
+        if shutil.which("ffplay"):
+            try:
+                subprocess.Popen(
+                    ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", audio_path],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                return True
+            except Exception:
+                pass
+
+        # 2. gst-play-1.0 (GStreamer — widely available on Ubuntu/desktop Linux)
+        if shutil.which("gst-play-1.0"):
+            try:
+                subprocess.Popen(
+                    ["gst-play-1.0", audio_path],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                return True
+            except Exception:
+                pass
+
+        # 3. mpv (lightweight media player)
+        if shutil.which("mpv"):
+            try:
+                subprocess.Popen(
+                    ["mpv", "--no-video", "--really-quiet", audio_path],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                return True
+            except Exception:
+                pass
+
+        # 4. gst-launch-1.0 pipeline (most control, fallback)
+        if shutil.which("gst-launch-1.0"):
+            try:
+                subprocess.Popen(
+                    ["gst-launch-1.0", "playbin", f"uri=file://{audio_path}"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                return True
+            except Exception:
+                pass
+
+        logger.warning("No audio player found (tried ffplay, gst-play-1.0, mpv, gst-launch-1.0)")
+        return False
+
     def _exec_speak(self, tag: ActionTag) -> str:
-        """Speak text aloud via edge-tts (or espeak-ng fallback)."""
+        """Speak text aloud via Piper TTS with multi-player fallback."""
         message = tag.content.strip()
         if not message:
             return "Nothing to say."
         if len(message) > 2000:
             message = message[:2000]
 
-        # Try edge-tts
+        # Try Piper TTS
         try:
-            import asyncio
-            import edge_tts
             import tempfile
+            import wave
+            import urllib.request
+            from pathlib import Path
+            from piper.voice import PiperVoice
 
-            audio_path = tempfile.mktemp(suffix=".mp3")
+            # Paths
+            models_dir = Path("~/Helix/data/models").expanduser()
+            models_dir.mkdir(parents=True, exist_ok=True)
 
-            async def _speak():
-                tts = edge_tts.Communicate(message, self.VOICE_MODEL)
-                await tts.save(audio_path)
+            model_name = "en_US-lessac-medium"
+            model_path = models_dir / f"{model_name}.onnx"
+            config_path = models_dir / f"{model_name}.onnx.json"
 
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
+            model_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/{model_name}.onnx"
+            config_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/{model_name}.onnx.json"
 
-            if loop and loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    future = pool.submit(asyncio.run, _speak())
-                    future.result(timeout=15)
+            # Download files if they do not exist
+            if not model_path.exists():
+                logger.info(f"Downloading Piper ONNX model from {model_url}...")
+                urllib.request.urlretrieve(model_url, model_path)
+            if not config_path.exists():
+                logger.info(f"Downloading Piper Config from {config_url}...")
+                urllib.request.urlretrieve(config_url, config_path)
+
+            # Lazy load or reload if needed
+            if not hasattr(self, "_piper_voice") or self._piper_voice is None:
+                logger.info(f"Loading Piper voice from {model_path}...")
+                self._piper_voice = PiperVoice.load(str(model_path))
+
+            # Synthesize text to temporary WAV file
+            audio_fd, audio_path = tempfile.mkstemp(suffix=".wav")
+            os.close(audio_fd)
+
+            wav_file = wave.open(audio_path, "wb")
+            with wav_file:
+                wav_params_set = False
+                for audio_chunk in self._piper_voice.synthesize(message, None):
+                    if not wav_params_set:
+                        wav_file.setframerate(audio_chunk.sample_rate)
+                        wav_file.setsampwidth(audio_chunk.sample_width)
+                        wav_file.setnchannels(audio_chunk.sample_channels)
+                        wav_params_set = True
+                    wav_file.writeframes(audio_chunk.audio_int16_bytes)
+
+            if self._play_audio(audio_path):
+                return f"Spoke: {message[:100]}"
             else:
-                asyncio.run(_speak())
+                return f"TTS audio generated at {audio_path} but no audio player available to play it."
 
-            subprocess.Popen(
-                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", audio_path],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            return f"Spoke: {message[:100]}"
         except Exception as e:
-            logger.warning(f"Edge-TTS failed ({e}), falling back to espeak-ng")
+            logger.warning(f"Piper-TTS failed ({e}), falling back to espeak-ng")
 
         # Fallback: espeak-ng
         try:
@@ -1608,9 +1735,35 @@ class ToolExecutor:
             import sounddevice as sd
             import numpy as np
 
-            audio = sd.rec(int(duration * 16000), samplerate=16000, channels=1, dtype="int16")
+            # Use EMEET PIXY mic if available (card 2, device 0)
+            pixy_device = None
+            try:
+                for i in range(len(sd.query_devices())):
+                    dev_info = sd.query_devices(i)
+                    if "PIXY" in dev_info.get("name", "") and dev_info["max_input_channels"] > 0:
+                        pixy_device = i
+                        break
+            except Exception:
+                pass
+
+            # Record at the device's native sample rate (PIXY = 48kHz)
+            if pixy_device is not None:
+                native_rate = int(sd.query_devices(pixy_device)["default_samplerate"])
+                audio = sd.rec(int(duration * native_rate), samplerate=native_rate,
+                               channels=1, dtype="int16", device=pixy_device)
+            else:
+                native_rate = 16000
+                audio = sd.rec(int(duration * native_rate), samplerate=native_rate,
+                               channels=1, dtype="int16")
             sd.wait()
             audio_float = audio.flatten().astype(np.float32) / 32768.0
+
+            # Resample to 16kHz for Whisper if needed
+            if native_rate != 16000:
+                from scipy.signal import resample
+                target_len = int(len(audio_float) * 16000 / native_rate)
+                audio_float = resample(audio_float, target_len)
+
             rms = np.sqrt(np.mean(audio_float ** 2))
 
             if rms < 0.01:

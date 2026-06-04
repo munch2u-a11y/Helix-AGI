@@ -74,12 +74,18 @@ def invalidate_check_cache():
 
 # ── Tool Entry ───────────────────────────────────────────────────────
 
+# Focus type constants for preconscious injection budget
+FOCUS_TYPE_FOCUS = "focus"      # Narrowing tools (terminal, write_file, search)
+FOCUS_TYPE_INTAKE = "intake"    # Info-reading tools (email_read, drive_read)
+FOCUS_TYPE_NEUTRAL = "neutral"  # Default — no effect on focus budget
+
+
 class ToolEntry:
     """Metadata for a single registered tool."""
 
     __slots__ = (
         "name", "toolset", "schema", "handler", "check_fn",
-        "requires_env", "description",
+        "requires_env", "description", "focus_type",
     )
 
     def __init__(
@@ -91,6 +97,7 @@ class ToolEntry:
         check_fn: Optional[Callable] = None,
         requires_env: Optional[List[str]] = None,
         description: str = "",
+        focus_type: str = FOCUS_TYPE_NEUTRAL,
     ):
         self.name = name
         self.toolset = toolset
@@ -99,6 +106,7 @@ class ToolEntry:
         self.check_fn = check_fn
         self.requires_env = requires_env or []
         self.description = description or schema.get("description", "")
+        self.focus_type = focus_type
 
 
 # ── Tool Registry ────────────────────────────────────────────────────
@@ -137,6 +145,7 @@ class ToolRegistry:
         check_fn: Optional[Callable] = None,
         requires_env: Optional[List[str]] = None,
         description: str = "",
+        focus_type: str = FOCUS_TYPE_NEUTRAL,
     ):
         """Register a tool with its schema, handler, and optional check.
 
@@ -151,6 +160,9 @@ class ToolRegistry:
                       is running). Results are TTL-cached for 30s.
             requires_env: List of env var names required (informational).
             description: Human-readable description for list_toolsets.
+            focus_type: One of 'focus', 'intake', or 'neutral'. Controls
+                        how this tool affects the preconscious injection
+                        budget (focus narrows it, intake keeps it wide).
         """
         with self._lock:
             existing = self._tools.get(name)
@@ -167,6 +179,7 @@ class ToolRegistry:
                 check_fn=check_fn,
                 requires_env=requires_env,
                 description=description,
+                focus_type=focus_type,
             )
             # Store the first check_fn we see for a toolset as the
             # toolset-level availability check
@@ -202,6 +215,7 @@ class ToolRegistry:
         check_fn: Optional[Callable] = None,
         requires_env: Optional[List[str]] = None,
         description: str = "",
+        focus_types: Optional[Dict[str, str]] = None,
     ):
         """Register a batch of tools for a toolset at once.
 
@@ -214,9 +228,12 @@ class ToolRegistry:
             check_fn: Shared availability check for all tools in this batch.
             requires_env: Shared env var requirements.
             description: Toolset description.
+            focus_types: Optional dict mapping tool name -> focus_type.
+                        Tools not in this dict default to 'neutral'.
         """
         if description:
             self.register_toolset_description(toolset, description)
+        _ft = focus_types or {}
         for schema in tools:
             name = schema["name"]
             handler = handlers.get(name)
@@ -233,6 +250,7 @@ class ToolRegistry:
                 handler=handler,
                 check_fn=check_fn,
                 requires_env=requires_env,
+                focus_type=_ft.get(name, FOCUS_TYPE_NEUTRAL),
             )
 
     # ── Query ────────────────────────────────────────────────────────
@@ -241,6 +259,12 @@ class ToolRegistry:
         """Return a registered tool entry by name, or None."""
         with self._lock:
             return self._tools.get(name)
+
+    def get_focus_type(self, name: str) -> str:
+        """Return the focus_type for a tool ('focus', 'intake', or 'neutral')."""
+        with self._lock:
+            entry = self._tools.get(name)
+        return entry.focus_type if entry else FOCUS_TYPE_NEUTRAL
 
     def get_toolset_names(self) -> List[str]:
         """Return sorted unique toolset names in the registry."""

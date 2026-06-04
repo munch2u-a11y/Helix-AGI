@@ -25,8 +25,12 @@ class WebSearch:
 
     def __init__(self, config: dict = None):
         self.config = config or {}
+        import os
+        self._brave_api_key = os.getenv("BRAVE_API_KEY")
         self._ddg_available = False
-        self._bs4_available = False
+        
+        if not self._brave_api_key:
+            logger.warning("BRAVE_API_KEY is not set. Will fall back to DuckDuckGo.")
 
         # Check for ddgs (renamed from duckduckgo_search)
         try:
@@ -69,19 +73,24 @@ class WebSearch:
         if not query or not query.strip():
             return []
 
-        # Try DuckDuckGo first
+        if self._brave_api_key:
+            try:
+                return self._search_brave_api(query, max_results)
+            except Exception as e:
+                logger.warning(f"Brave API search failed: {e}. Falling back to DuckDuckGo.")
+                
         if self._ddg_available:
             try:
-                return self._search_ddg(query, max_results)
+                results = self._search_ddg(query, max_results)
+                if results:
+                    return results
             except Exception as e:
-                logger.warning(f"DuckDuckGo search failed: {e}")
+                logger.error(f"DuckDuckGo fallback search failed: {e}")
+                return [{"title": "Error", "snippet": f"DuckDuckGo fallback failed: {e}", "url": ""}]
 
-        # Fallback: use requests to scrape DuckDuckGo HTML
-        try:
-            return self._search_ddg_html(query, max_results)
-        except Exception as e:
-            logger.error(f"All search backends failed: {e}")
-            return []
+        msg = "Search failed: All backends unavailable or failed."
+        logger.error(msg)
+        return [{"title": "Error", "snippet": msg, "url": ""}]
 
     def read_url(self, url: str) -> Optional[str]:
         """Fetch and extract readable text from a URL.
@@ -145,68 +154,40 @@ class WebSearch:
         logger.info(f"DuckDuckGo search: '{query}' → {len(results)} results")
         return results
 
-    # ── DuckDuckGo HTML fallback ─────────────────────────────────────
+    # ── Brave Search API ─────────────────────────────────────────────
 
-    def _search_ddg_html(self, query: str, max_results: int) -> list[dict]:
-        """Fallback: scrape DuckDuckGo HTML lite."""
+    def _search_brave_api(self, query: str, max_results: int) -> list[dict]:
+        """Search via official Brave API."""
         import requests
 
         headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0 Helix/3.0"
-            ),
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "X-Subscription-Token": self._brave_api_key
         }
 
         resp = requests.get(
-            "https://html.duckduckgo.com/html/",
-            params={"q": query},
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": query, "count": min(max_results, 20)},
             headers=headers,
             timeout=15,
         )
         resp.raise_for_status()
 
+        data = resp.json()
         results = []
+        
+        if "web" in data and "results" in data["web"]:
+            for item in data["web"]["results"]:
+                results.append({
+                    "title": item.get("title", ""),
+                    "snippet": item.get("description", ""),
+                    "url": item.get("url", "")
+                })
+                if len(results) >= max_results:
+                    break
 
-        if self._bs4_available:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            for result_div in soup.select(".result")[:max_results]:
-                title_el = result_div.select_one(".result__a")
-                snippet_el = result_div.select_one(".result__snippet")
-                url_el = result_div.select_one(".result__url")
-
-                title = title_el.get_text(strip=True) if title_el else "Untitled"
-                snippet = snippet_el.get_text(strip=True) if snippet_el else ""
-                url = ""
-                if title_el and title_el.get("href"):
-                    url = title_el["href"]
-                elif url_el:
-                    url = url_el.get_text(strip=True)
-
-                if title and title != "Untitled":
-                    results.append({
-                        "title": title,
-                        "snippet": snippet,
-                        "url": url,
-                    })
-        else:
-            # Very basic parsing without BS4
-            import re
-            links = re.findall(
-                r'class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)<',
-                resp.text,
-            )
-            for url, title in links[:max_results]:
-                if title.strip():
-                    results.append({
-                        "title": title.strip(),
-                        "snippet": "",
-                        "url": url,
-                    })
-
-        logger.info(f"DuckDuckGo HTML search: '{query}' → {len(results)} results")
+        logger.info(f"Brave API search: '{query}' → {len(results)} results")
         return results
 
     # ── Text extraction ──────────────────────────────────────────────
