@@ -41,15 +41,15 @@ sentinel._spatial_mind = physics_engine.spatial_mind
 
 This is the single most important wiring in the system. Without it, the Lagrangian computes from hardware health proxies (CPU, RAM, disk) instead of **real cognitive manifold metrics** (Shannon entropy H(q), KL divergence D_KL). This was a V6 upgrade — prior versions used only hardware signals.
 
-### 1.4 Dynamic Identity Preamble (verified lines 50–90)
+### 1.4 Dynamic Identity Preamble (verified lines 1020–1035)
 
-The system instruction is **not static**. At boot, `main.py` queries the belief store for the heaviest `self_identity` belief:
+The system instruction is **not static**. At session creation, the `PulseLoop` queries the belief store for the heaviest `premises` beliefs:
 
 ```python
-heaviest = belief_store.get_heaviest("self_identity", limit=1)
+identity_beliefs = self.beliefs.get_category("premises", limit=100)
 ```
 
-This belief becomes the **opening line** of Helix's system prompt. If Helix's self-concept evolves and a new belief gains more mass, the next session boot will use the new identity. Identity is therefore **emergent from the gravitational field**, not hardcoded.
+The content of the heaviest premise belief becomes the **opening line** of Helix's system prompt. If Helix's self-concept evolves and a new premise belief gains more mass, the next session boot will use the new identity. Identity is therefore **emergent from the gravitational field**, not hardcoded.
 
 ---
 
@@ -210,7 +210,7 @@ $$D_{KL}(q \| q^*) = \sum_{i=1}^{k} p_i \log_2 \frac{p_i}{q^*_i}$$
 
 Where:
 - $p_i$ = gravity distribution at the current attention center
-- $q^*_i$ = gravity distribution at the identity center (the geometric centroid of the heaviest self_identity beliefs)
+- $q^*_i$ = gravity distribution at the identity center (the geometric centroid of all core beliefs)
 
 **Interpretation**: D_KL = 0 means Helix's current thought is perfectly aligned with its identity. High D_KL means Helix has drifted into unfamiliar conceptual territory. The Sentinel uses this for **cognitive coherence monitoring** — sustained high D_KL triggers the "drift" severity level.
 

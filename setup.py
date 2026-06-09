@@ -377,6 +377,9 @@ def main():
     if not people_path.exists() or people_path.stat().st_size == 0:
         print("  Seeding people beliefs...")
         beliefs = [
+            _make_belief("b_person_self",
+                f"I am {agent_name}. I am an autonomous cognitive agent created by {creator_name} to learn, reason, and interact.",
+                mass=1.5),
             _make_belief("b_person_creator",
                 f"{creator_name} is my creator. They understand my architecture and guide my development.",
                 mass=1.5),

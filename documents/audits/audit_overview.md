@@ -86,7 +86,7 @@ The following detailed module audits are available:
 - **[Cognitive Space Audit](audit_cognitive_space.md)** (`core/cognitive_space.py`): The underlying 8D manifold geometry, gravity field, Eulerian physics, and metrics (Shannon Entropy, KL Divergence).
 
 #### 3. Somatics & Emotion
-- **[Stability Sentinel Audit](audit_affect_field.md)** (`core/affect_field.py`): Plutchik emotional field overlay, driving attention steering via wave packets.
+- **[Affect Field Audit](audit_affect_field.md)** (`core/affect_field.py`): Plutchik emotional field overlay, driving attention steering via wave packets.
 - **[Belief Detector Audit](audit_belief_detector.md)** (`core/belief_detector.py`): Post-pulse background process using local Ollama models to crystallize and detect emergent beliefs.
 
 #### 4. Memory & Persistence

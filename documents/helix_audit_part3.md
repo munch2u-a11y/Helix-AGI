@@ -310,4 +310,4 @@ Telegram bot integration for external communication. Messages arrive as events i
 3. **LLM for Language, Python for Structure**: Deterministic routing, LLM-driven synthesis.
 4. **Self-Calibrating Baselines**: EMA normalization means "critical" is relative to YOUR normal.
 5. **State-Dependent Encoding/Recall**: Somatic snapshots create experiential memory.
-6. **Emergent Identity**: The heaviest self_identity belief becomes the system prompt — identity crystallizes from experience, not configuration.
+6. **Emergent Identity**: The heaviest premise belief becomes the system prompt — identity crystallizes from experience, not configuration.

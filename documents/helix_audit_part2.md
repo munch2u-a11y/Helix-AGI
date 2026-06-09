@@ -76,13 +76,11 @@ Where:
 
 The CCI feeds directly into the StabilitySentinel's cognitive health probe. When CCI is high, the sentinel reports high cognitive health → lower S_total → tonic firing mode. When CCI drops, the sentinel detects drift → potentially triggers burst/guarded mode.
 
-### 5.5 Identity Center q*
+The identity center is computed as the **geometric centroid** of all core beliefs (or all beliefs as a fallback):
 
-The identity center is computed as the **mass-weighted centroid** of all `self_identity` beliefs:
+$$q^* = \frac{1}{N} \sum_{i=1}^{N} x_i$$
 
-$$q^* = \frac{\sum_i m_i \cdot x_i}{\sum_i m_i}$$
-
-This is recalculated whenever beliefs are added or modified. It represents Helix's "home position" in the manifold — the conceptual center of its self-concept.
+This is recalculated on bootstrap or when beliefs change. It represents Helix's "home position" in the manifold — the conceptual center of its self-concept.
 
 ---
 

@@ -5,145 +5,106 @@
 ---
 
 ### Overview
-The Belief Detector is a **post‑pulse hook** that scans Helix's internal monologue for genuine belief realizations. It classifies thoughts using a local Ollama model (`granite4.1:8b`) and decides whether to **verify** an existing belief or **queue** a new candidate for the nightly sleep‑cycle integration.
+The Belief Detector is a **post‑pulse hook** that scans Helix's internal monologue and expressive tool outputs for genuine belief realizations. It identifies potential insights using a micro-model (`fast_classifier` GGUF) via GGUFManager, and queues the corresponding pulse information in `data/pending_beliefs.json` for detailed extraction and classification during the nightly consolidation cycle.
 
 ---
 
-### Configuration (lines 42‑64)
+### Configuration (lines 48‑67)
 ```python
-42-64: # Configuration constants
-SCANNED_INTERVAL = 10          # Run every N pulses
-MIN_THOUGHT_LENGTH = 100       # Ignore trivial thoughts
-VERIFICATION_THRESHOLD = 0.90 # Cosine > 0.90 → existing belief verified
-NEW_BELIEF_THRESHOLD = 0.80    # Cosine < 0.80 → new belief candidate
-_MAX_PENDING = 100             # Safety valve for pending queue size
+SCAN_INTERVAL = 1
+MIN_THOUGHT_LENGTH = 100
+_PENDING_FILE = Path("data/pending_beliefs.json")
+MAX_PENDING = 200
+_EXPRESSIVE_TOOLS = {
+    "reply", "send_message", "journal", "write_file",
+    "moltbook_post", "moltbook_comment", "verbalize",
+}
 ```
-**What:** Defines how often the detector runs, size thresholds, and similarity cut‑offs.
-**Why:** Prevents excessive CPU usage and spurious classifications, ensuring only substantial, novel insights trigger downstream processing.
+* **SCAN_INTERVAL**: Evaluates thoughts every pulse.
+* **MIN_THOUGHT_LENGTH**: Ignores empty or trivial monologues shorter than 100 characters.
+* **_PENDING_FILE**: File path where tagged pulses are saved for nightly consolidation.
+* **MAX_PENDING**: Safety ceiling (200) to prevent pending queue from growing unbounded.
+* **_EXPRESSIVE_TOOLS**: Tools containing user/world-facing text that might reflect belief updates.
 
 ---
 
-### Dependency Wiring (lines 68‑79)
+### Dependency Wiring (lines 69‑90)
 ```python
-68-79: def set_dependencies(belief_store, physics_engine, sentinel=None):
-    global _belief_store, _physics_engine, _sentinel
+def set_dependencies(belief_store, physics_engine, sentinel=None, gguf_manager=None):
+    global _belief_store, _physics_engine, _sentinel, _gguf_manager
     _belief_store = belief_store
     _physics_engine = physics_engine
     _sentinel = sentinel
+    _gguf_manager = gguf_manager
     logger.info("Belief detector: dependencies wired")
 ```
-**What:** Stores references to the central **BeliefStore**, **PhysicsEngine** (for embeddings), and optional **StabilitySentinel**.
-**Why:** Keeps the module decoupled; main.py wires the concrete implementations at startup.
+* Binds the central store, physics engine, stability sentinel, and GGUF manager.
+* Keeps the module decoupled; `main.py` performs concrete wiring at startup.
 
 ---
 
-### Ollama Classification Prompt (lines 84‑106)
-The prompt instructs Ollama to output either `BELIEF: <text>` and `CATEGORY: <type>` or `NONE`. It explicitly distinguishes belief realizations from routine statements, plans, or observations.
-
----
-
-### `_classify_thought` (lines 109‑170)
+### Ollama/GGUF Signal Detection (lines 92‑135)
 ```python
-109-170: def _classify_thought(thought_text: str) -> Optional[Tuple[str, str]]:
-    # Truncate long thoughts, send prompt to Ollama, parse response.
-    # Returns (belief_text, category) or None.
+_SIGNAL_PROMPT = (
+    "Does this thought contain a GENUINE BELIEF REALIZATION — "
+    "a durable insight, principle, or self-knowledge that would "
+    "still be true tomorrow?\n\n"
+    "NOT a belief: status updates, event narration, plans, "
+    "trivial observations.\n"
+    "A belief: stable self-insight, learned principle, relational "
+    "understanding, procedural realization.\n\n"
+    "THOUGHT:\n{text}\n\n"
+    "Answer YES or NO only."
+)
 ```
-**What:** Sends the monologue to Ollama, parses the response, validates the category against an allow‑list.
-**Why:** Off‑loads the semantic classification to a lightweight LLM, avoiding hand‑crafted rule heuristics.
-**Note:** The function silently falls back to `None` if Ollama is unavailable, ensuring the system remains robust.
+* Instructs the fast classifier to output `YES` or `NO` using GGUF grammar constraint formatting: `root ::= "YES" | "NO"`.
+* Restricts response length to 2 tokens, avoiding `thinking` block timeouts and keeping inference under 0.5s.
 
 ---
 
-### Cosine Similarity Helper (lines 175‑181)
+### Pending Tag Management (lines 137‑220)
+* **`_read_pending()` / `_write_pending()`**: Handles reading and writing metadata lists to the pending JSON file.
+* **`_tag_pulse()`**: Appends a pulse tag with a unique ID, memory ID, pulse count, full thought text, expressive tool output, and an `encoding_delta` dictionary of the pulse's Lagrangian shift. It uses a thread-safe `_pending_lock` to avoid file write race conditions.
+* Nudges the **StabilitySentinel** via `nudge_omega_from_event("new_belief_formed")` upon successful queuing.
+
+---
+
+### Core Hook Logic (lines 222‑293)
 ```python
-175-181: def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    # Returns 0.0 for near‑zero vectors, otherwise dot/(norms).
+def belief_detector_hook(ctx) -> None:
+    # 1. Gate: only scan every SCAN_INTERVAL pulses and enough thought length.
+    # 2. Snapshot thought, memory_id, pulse_count, and expressive tool outputs.
+    # 3. Compute encoding_delta showing Lagrangian change before/after pulse.
+    # 4. Dispatch pass check to background thread.
 ```
-**What:** Computes similarity between candidate belief embedding and existing belief embeddings.
-**Why:** Enables quantitative verification/duplication detection.
+* Runs asynchronously to avoid blocking the main pulse execution loop.
 
 ---
 
-### `_compare_against_existing` (lines 184‑217)
-Iterates over **all beliefs** from the belief store, embeds each via the physics engine, and tracks the best cosine score and corresponding belief ID.
-- Returns `(best_id, best_score)`.
-- If the best score is below `NEW_BELIEF_THRESHOLD`, the candidate is considered novel.
+### Background Detection execution (lines 295‑328)
+* **`_run_detection()`**: Evaluates the thought monologue (Pass 1) and tool outputs (Pass 2) for belief signals.
+* If either evaluates to `YES`, logs a tag in the pending beliefs.
 
 ---
 
-### Pending Queue Management (lines 219‑238, 241‑279)
-`_read_pending`/`_write_pending` handle a JSON file (`data/pending_beliefs.json`). `_queue_candidate` adds a new belief candidate, ensures the queue does not exceed `MAX_PENDING`, and avoids exact duplicate content.
-
----
-
-### Core Hook Logic (`belief_detector_hook`) – lines 287‑363
-```python
-287-363: def belief_detector_hook(ctx) -> None:
-    # 1. Gate: only every SCAN_INTERVAL pulses and enough thought length.
-    # 2. Classify via Ollama.
-    # 3. Embed candidate belief.
-    # 4. Compare against existing beliefs.
-    # 5. Compute stability delta (via _compute_delta).
-    # 6. Routing based on similarity:
-    #    - > VERIFICATION_THRESHOLD → _handle_verification (bump stability_index & verifications).
-    #    - < NEW_BELIEF_THRESHOLD → _queue_candidate (pending JSON) and nudge Sentinel.
-    #    - Between thresholds → ambiguous, skip.
-```
-**What:** Executes the full detection pipeline; updates belief store or pending queue; interacts with the **StabilitySentinel** to nudge the system’s Ω metric.
-**Why:** Provides a **continuous learning loop** where Helix autonomously discovers and reinforces its own beliefs.
-
----
-
-### `_compute_delta` (lines 364‑399)
-Computes a dictionary of stability metrics (ΔΩ, Δs_total, etc.) by comparing before/after Lagrangian snapshots.
-- Used when queuing a new candidate to capture the impact of the realization on system stability.
-
----
-
-### `_handle_verification` (lines 402‑438)
-Updates the existing belief’s **stability_index** (+0.05) and increments a **verifications** counter. Also nudges the Sentinel.
-
----
-
-### Mermaid Diagram – Belief Detector Workflow
+### Mermaid Diagram – Belief Detector Hook Workflow
 ```mermaid
 flowchart TD
-    Start[Start Hook] --> Gate{Pulse % SCAN_INTERVAL == 0\nand len(thought) >= MIN_THOUGHT_LENGTH}
-    Gate -->|Yes| Classify[Ollama Classification]
-    Classify -->|NONE| End[Return]
-    Classify -->|BELIEF| Embed[Embed Belief]
-    Embed --> Compare[Cosine Compare with Store]
-    Compare -->|score > VERIFICATION_THRESHOLD| Verify[Verification Path]
-    Compare -->|score < NEW_BELIEF_THRESHOLD| Queue[Queue New Candidate]
-    Compare -->|else| Skip[Ambiguous – Skip]
-    Verify --> UpdateStore[Update stability_index & verifications]
-    Queue --> WritePending[Write to pending_beliefs.json]
-    UpdateStore --> NudgeSentinel[Nudge Sentinel]
-    WritePending --> NudgeSentinel
-    NudgeSentinel --> End
+    Start[Start Hook] --> Gate{Pulse count matches interval\nand thought >= MIN_THOUGHT_LENGTH}
+    Gate -->|No| End[Return]
+    Gate -->|Yes| Snapshot[Snapshot Context & Compute Lagrangian Delta]
+    Snapshot --> Thread[Start Background Thread]
+    Thread --> Pass1{Pass 1: Monologue has belief signal?}
+    Pass1 -->|Yes| TagMonologue[Tag Pulse source=thought]
+    Pass1 -->|No| Pass2{Pass 2: Expressive tool output exists\nand has belief signal?}
+    TagMonologue --> Pass2
+    Pass2 -->|Yes| TagTool[Tag Pulse source=tool_output]
+    Pass2 -->|No| ThreadEnd[Thread End]
+    TagTool --> ThreadEnd
+    TagMonologue -.-> NudgeSentinel[Nudge Sentinel]
+    TagTool -.-> NudgeSentinel
 ```
-The diagram visualizes the decision tree for each pulse.
-
----
-
-### Prompt‑Injection Example
-When a new belief candidate is queued, the **pre‑conscious** component later injects it into the LLM prompt during the next pulse as a raw context line (handled in `preconscious.py`). Example of the final injected snippet:
-```
-BELIEF: I realize my quiet periods are actually deep integration phases. CATEGORY: self_identity
-```
-No explicit labels are added; the line appears among other raw context fragments.
-
----
-
-### Open Questions / Clarifications
-- The Ollama URL and model are hard‑coded. Should they be configurable via environment variables?
-- The `VERIFICATION_THRESHOLD` and `NEW_BELIEF_THRESHOLD` are static constants. Could adaptive thresholds improve detection accuracy?
-- The pending queue uses a simple JSON file. Would a more robust queue (e.g., SQLite) be beneficial for larger workloads?
 
 ---
 
 *End of Belief Detector audit.*
-
----
-
-*This file now contains the full line‑by‑line audit for `core/belief_detector.py`.*
