@@ -9,7 +9,7 @@ For each belief across all categories:
   4. Set creation_epoch = 0 (all existing beliefs are "epoch 0")
 
 Usage:
-    cd /home/nemo/Helix
+    cd /path/to/Helix
     .venv/bin/python scripts/big_bang_rescale.py [--dry-run]
 """
 
