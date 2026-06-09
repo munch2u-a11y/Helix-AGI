@@ -365,10 +365,18 @@ class CognitiveSpace:
         The embedding is projected to 8D and stored. The KDTree is
         rebuilt lazily after KDTREE_REBUILD_THRESHOLD new additions.
         """
+        creation_epoch = None
+        if metadata:
+            creation_epoch = metadata.get("creation_epoch")
+        if creation_epoch is None:
+            creation_epoch = len(self._points)
+
         position = self.projection.project(embedding)
 
         self._points[point_id] = {
             "position": position,
+            "base_position": position,
+            "creation_epoch": creation_epoch,
             "type": point_type,
             "confidence": confidence,
             "importance": importance,
@@ -384,11 +392,49 @@ class CognitiveSpace:
             "metadata": metadata or {},
         }
 
+        # Apply Hubble expansion if this is the belief space
+        if getattr(self, "space_type", None) == "belief":
+            self.apply_hubble_expansion()
+
         self._pending_additions += 1
         self._tree_dirty = True
 
         if self._pending_additions >= KDTREE_REBUILD_THRESHOLD:
             self._rebuild_tree()
+
+    def apply_hubble_expansion(self):
+        """Update the position of all belief points based on Hubble expansion."""
+        if getattr(self, "space_type", None) != "belief":
+            return
+
+        from core.belief_cosmology import get_expanded_position
+        current_epoch = len(self._points)
+
+        updated = False
+        for pid, data in self._points.items():
+            base_pos = data.get("base_position")
+            if base_pos is None:
+                base_pos = np.array(data["position"], dtype=np.float32)
+                data["base_position"] = base_pos
+
+            creation_epoch = data.get("creation_epoch")
+            if creation_epoch is None:
+                creation_epoch = data.get("metadata", {}).get("creation_epoch")
+                if creation_epoch is None:
+                    creation_epoch = 0
+                data["creation_epoch"] = creation_epoch
+
+            new_pos = get_expanded_position(
+                base_position=base_pos,
+                creation_epoch=int(creation_epoch),
+                current_epoch=current_epoch,
+            )
+            if not np.array_equal(data["position"], new_pos):
+                data["position"] = new_pos
+                updated = True
+
+        if updated:
+            self._tree_dirty = True
 
     def update_access(self, point_id: str):
         """Update last_accessed timestamp and pulse (called when a concept is surfaced)."""
@@ -473,7 +519,7 @@ class CognitiveSpace:
             # ΔS ~ mass (structural information bits)
             # Δx = distance in 8D space
             mass = self._compute_structural_mass(pt)
-            temperature = self._compute_temperature(pt)
+            temperature = self._compute_recency_temperature(pt)
 
             epsilon = 0.05
             d = max(distance, epsilon)
@@ -843,7 +889,7 @@ class CognitiveSpace:
                 continue
 
             mass = self._compute_structural_mass(point_data)
-            temperature = self._compute_temperature(point_data)
+            temperature = self._compute_recency_temperature(point_data)
             direction = point_data["position"] - position
 
             # Verlinde: F = T × mass × dir / |dir|³
@@ -940,7 +986,7 @@ class CognitiveSpace:
             positions.append(data["position"])
             # Gravity field uses entropic energy: T × mass
             m = self._compute_structural_mass(data)
-            T = self._compute_temperature(data)
+            T = self._compute_recency_temperature(data)
             masses.append(T * m)
 
         positions = np.array(positions, dtype=np.float32)
@@ -990,7 +1036,7 @@ class CognitiveSpace:
 
         return max(0.01, c)
 
-    def _compute_temperature(self, point_data: dict) -> float:
+    def _compute_recency_temperature(self, point_data: dict) -> float:
         """A point's temperature — recency heat that radiates away.
 
         From Verlinde's equipartition: E = ½ × N × k_B × T
@@ -1238,8 +1284,13 @@ class CognitiveSpace:
         """
         state = {}
         for pid, data in self._points.items():
+            base_pos = data.get("base_position", data["position"])
+            if isinstance(base_pos, np.ndarray):
+                base_pos = base_pos.tolist()
             state[pid] = {
                 "position": data["position"].tolist(),
+                "base_position": base_pos,
+                "creation_epoch": data.get("creation_epoch", 0),
                 "type": data["type"],
                 "confidence": data.get("confidence", 0.5),
                 "importance": data.get("importance", 0.5),
@@ -1269,8 +1320,11 @@ class CognitiveSpace:
                 state = json.load(f)
 
             for pid, data in state.items():
+                base_pos = data.get("base_position", data["position"])
                 self._points[pid] = {
                     "position": np.array(data["position"], dtype=np.float32),
+                    "base_position": np.array(base_pos, dtype=np.float32),
+                    "creation_epoch": data.get("creation_epoch", 0),
                     "type": data.get("type", "memory"),
                     "confidence": data.get("confidence", 0.5),
                     "importance": data.get("importance", 0.5),
@@ -1281,6 +1335,10 @@ class CognitiveSpace:
                     "created_at": data.get("created_at", 0),
                     "metadata": {},
                 }
+
+            # Apply Hubble expansion immediately after loading
+            if getattr(self, "space_type", None) == "belief":
+                self.apply_hubble_expansion()
 
             self._tree_dirty = True
             self._rebuild_tree()

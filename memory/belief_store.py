@@ -252,6 +252,14 @@ class BeliefStore:
             if key not in belief:  # Don't override core fields
                 belief[key] = val
 
+        # Ensure creation_epoch is set
+        if "creation_epoch" not in belief:
+            try:
+                total_beliefs = len(self.get_all_beliefs_flat())
+            except Exception:
+                total_beliefs = 0
+            belief["creation_epoch"] = total_beliefs
+
         beliefs.append(belief)
         self._write_category(category, beliefs)
         logger.info(f"Added belief '{belief_id}' to {category} (mass={mass}, conf={confidence:.2f})")

@@ -296,7 +296,7 @@ class PhysicsEngine:
                 "relevance": round(gravity, 4),
                 "distance": round(dist, 4),
                 "mass": round(self.spatial_mind.belief_space._compute_structural_mass(pt), 3),
-                "temperature": round(self.spatial_mind.belief_space._compute_temperature(pt), 4),
+                "temperature": round(self.spatial_mind.belief_space._compute_recency_temperature(pt), 4),
                 "type": pt.get("type", "belief"),
                 "creation_pulse": pt.get("creation_pulse", 0),
             })
@@ -313,7 +313,7 @@ class PhysicsEngine:
                 "relevance": round(gravity, 4),
                 "distance": round(dist, 4),
                 "mass": round(self.spatial_mind.memory_space._compute_structural_mass(pt), 3),
-                "temperature": round(self.spatial_mind.memory_space._compute_temperature(pt), 4),
+                "temperature": round(self.spatial_mind.memory_space._compute_recency_temperature(pt), 4),
                 "type": pt.get("type", "memory"),
                 "creation_pulse": pt.get("creation_pulse", 0),
             })
@@ -527,6 +527,7 @@ class PhysicsEngine:
                             "encoding_s_total": lag.get("s_total", 0.15),
                             "relations_count": len(b.get("relations", [])),
                             "metadata": {
+                                "creation_epoch": b.get("creation_epoch", 0),
                                 "verifications": b.get("verifications", 0),
                                 "stability_index": b.get("stability_index", 0.5),
                                 "memory_refs": b.get("memory_refs", []),
