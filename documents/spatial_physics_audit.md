@@ -27,13 +27,14 @@ This is where 90% of the real work lives. ~1527 lines.
 | **`_compute_stimulus_force()`** | 959-975 | Unit vector toward stimulus, scaled by strength. | **Real.** Pulls attention toward new thoughts/input. |
 | **`trace_cognitive_trail()`** | 1155-1206 | LERP between prev and current attention, query nearest point at each waypoint, condense to phrase fragment. | **Real.** Produces the `⟪flash⟫` fragments. Functional but could be simpler — it's basically "sample some points along the attention path." |
 | **`_condense()`** | 1208-1248 | Strip preamble, take first clause, lowercase. | **Real.** Simple string processing for trail fragments. |
+| **`decay_trail_particles()`** | 670-706 | Prunes trail particles older than `max_age_pulses` (default 200). | **Real.** Called during context compression to limit KDTree growth. |
 
 #### ⚠️ REAL BUT OVERBUILT — Works, but more complex than needed
 
 | Component | Lines | Issue |
 |---|---|---|
-| **GravityField (512-anchor grid)** | 165-299 | Splats mass onto 512 random anchor points, computes "potential" at arbitrary positions via inverse-distance interpolation. **In practice, `potential_at()` is only called by `gradient_at()`**, and `gradient_at()` is **never called by anything.** The anchor grid's `density` array feeds `update_gravity_field()` but the actual ranking uses direct point-to-point gravity, not the field. The entire GravityField class is ~135 lines that could be deleted without changing behavior. |
-| **`deposit_trail_particle()`** | 658-696 | Adds trail points to the KDTree. They persist forever. After 1000 pulses, there are thousands of trail particles in the tree, all with near-zero temperature. They slow down KDTree rebuilds and queries without contributing. `decay_trail_particles()` is explicitly a no-op (line 697-704). |
+| **GravityField (512-anchor grid)** | 165-299 | Splats mass onto 512 random anchor points, computes "potential" at arbitrary positions via inverse-distance interpolation. **In practice, `potential_at()` was only called by `gradient_at()`** (which has been deleted). The anchor grid's `density` array feeds `update_gravity_field()` but the actual ranking uses direct point-to-point gravity, not the field. The entire GravityField class is ~135 lines that could be deleted without changing behavior. |
+| **`deposit_trail_particle()`** | 658-696 | Adds trail points to the KDTree. Cleaned up periodically via `decay_trail_particles()`. | **Real.** Works as intended, with pruning now active. |
 
 #### 🎭 METAPHORICAL — Physics language, but the math doesn't match
 
@@ -45,7 +46,6 @@ This is where 90% of the real work lives. ~1527 lines.
 | **"KL divergence"** (557-610) | — | Correctly computes KL divergence between gravity distributions at two positions. **Also never called during normal operation.** Dead code path. |
 | **"Local temperature"** (612-654) | — | Computes `H_local / H_mean` — ratio of local entropy to baseline. **Never called during normal operation.** The `_compute_temperature()` function (which IS used) is a completely different function that does Lorentzian recency decay. Confusingly, two different "temperature" concepts exist in the same file. |
 | **"Phase states"** (docstring at 1069-1075) | — | "Gas", "liquid", "solid", "plasma" labels in the temperature docstring. Nothing reads or uses these labels. They're just comments. |
-| **PHI / OMEGA_PHI constants** (lines 52-53) | — | Golden ratio constants declared but **never used anywhere.** |
 
 #### 💀 DEAD CODE — Computed but never consumed
 
@@ -54,11 +54,8 @@ This is where 90% of the real work lives. ~1527 lines.
 | **`compute_shannon_entropy()`** | 528-555 | Never called in normal operation |
 | **`compute_kl_divergence()`** | 557-610 | Never called in normal operation |
 | **`compute_local_temperature()`** | 612-654 | Never called in normal operation |
-| **`invalidate_entropy_baseline()`** | 647-654 | Never called (its consumer doesn't exist) |
-| **`compute_interaction_potential()`** | 744-807 | "Desire-capability collision detection." Never called. The affordance system doesn't exist yet. |
-| **`gradient_at()`** | 280-299 | Computes gradient of gravity field. Never called. |
-| **`GravityField.potential_at()`** | 259-278 | Only used by `gradient_at()`, which is never called. |
-| **PHI, OMEGA_PHI** | 52-53 | Declared, never used |
+| **`invalidate_entropy_baseline()`** | 647-654 | **Real.** Called during context compression in the pulse loop. |
+| **`GravityField.potential_at()`** | 259-278 | Only defined in cognitive_space.py, never called. |
 
 ---
 
@@ -107,7 +104,6 @@ This is where 90% of the real work lives. ~1527 lines.
 |---|---|
 | **`_OmegaProxy` mock** (189-193) | Creates a fake sentinel object to pass omega. Fragile pattern. Should just pass omega as a parameter. |
 | **Duplicate `embed_text()` and `_get_embedder()`** | Both PhysicsEngine and SpatialMind have identical implementations. Should share one. |
-| **Trail particle deposition** (218-224) | Deposits a trail particle every single pulse. Over a day (~400 pulses), that's 400 trail particles with near-zero temperature cluttering the KDTree. No cleanup. |
 
 ---
 
@@ -146,6 +142,8 @@ Gamma adaptation (focus inertia)
 Identity center (stability spring anchor)
 SCALE_FACTOR = 5.0 (spreads positions)
 GalaxyMap (cluster-aware retrieval)
+decay_trail_particles() (prunes old trail particles)
+invalidate_entropy_baseline() (resets baseline on context compression)
 ```
 
 ### What's Decoration (Could Delete, Nothing Breaks)
@@ -155,10 +153,7 @@ GravityField (512-anchor grid) — never queried
 compute_shannon_entropy() — never called
 compute_kl_divergence() — never called  
 compute_local_temperature() — never called (NOT the same as _compute_temperature)
-compute_interaction_potential() — never called
-gradient_at() / potential_at() — never called
-PHI / OMEGA_PHI constants — never used
-Trail particle persistence (no cleanup, grows forever)
+potential_at() — never called
 All "Verlinde" and "Euler-Lagrange" comments — pure metaphor
 Phase state labels (gas/liquid/solid/plasma) — never read
 ```
@@ -166,10 +161,7 @@ Phase state labels (gas/liquid/solid/plasma) — never read
 ### What Might Be Broken
 
 > [!WARNING]
-> **Hubble expansion**: `get_expanded_position()` exists but may not be called during queries. If positions are stored at creation and never re-expanded, the expansion system is inert.
-
-> [!WARNING]
-> **Trail particle accumulation**: Trail particles are created every pulse and never cleaned up. The `decay_trail_particles()` function is explicitly a no-op. After weeks of operation, the KDTree will contain thousands of near-zero-temperature trail particles that slow queries without contributing.
+> **Hubble expansion**: `get_expanded_position()` exists but may not be called during queries. If positions are stored at creation and never re-expanded, the expansion is meaningless. Need to verify this is wired in.
 
 > [!WARNING]
 > **Duplicate temperature concepts**: `_compute_temperature()` (Lorentzian decay, USED) and `compute_local_temperature()` (Shannon entropy ratio, UNUSED) both exist with the word "temperature" in the name. This is a maintenance hazard.

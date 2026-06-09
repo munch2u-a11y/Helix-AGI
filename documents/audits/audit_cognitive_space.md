@@ -9,9 +9,8 @@ The `cognitive_space.py` module implements Helix’s **8‑dimensional spatial m
 1. **Deterministic projection** from high‑dimensional embeddings to an 8‑D space (`CognitiveProjection`).
 2. **Gravity field** over a fixed 512‑anchor grid (`GravityField`) that quantifies where cognitive mass is concentrated.
 3. **KD‑Tree indexed point store** (`CognitiveSpace`) for fast neighbor queries.
-4. **Physics‑based metrics** – Shannon entropy, KL‑divergence, temperature, and interaction potentials – derived from a Lagrangian formulation.
-5. **Trail particles** that leave a persistent trace of the attention path.
-6. **Interaction affordance detection** that surfaces tool suggestions when subjective desires intersect objective capabilities.
+4. **Physics‑based metrics** – Shannon entropy, KL‑divergence, and temperature – derived from a Lagrangian formulation.
+5. **Trail particles** that leave a trace of the attention path, pruned periodically during context compression.
 
 The design mirrors the original Kaleidoscope E8 architecture, adapted for Helix’s belief‑graph‑centric cognition.
 
@@ -49,9 +48,9 @@ PROJECTION_SEED = 42        # Deterministic seed for reproducible positions
   - Resets density array.
   - For each point, distributes its mass to the `K_SPLAT` nearest anchors using inverse‑distance weighting.
   - Sets `self.potential` as a copy of the accumulated density (simplified field).
-- **`potential_at` (lines 259‑270) & `gradient_at` (lines 280‑298):** Interpolate potential and compute finite‑difference gradients, respectively.
+- **`potential_at` (lines 259‑278):** Interpolates potential at an arbitrary 8D point (`gradient_at` was deleted in commit 1b55c50).
 
-**Why:** The gravity field provides a continuous scalar field (`potential`) that quantifies cognitive “weight” at any location, guiding attention flow (gradient) and enabling entropy/temperature calculations.
+**Why:** The gravity field provides a continuous scalar field (`potential`) that quantifies cognitive “weight” at any location, guiding attention flow and enabling entropy/temperature calculations.
 
 ---
 
@@ -90,16 +89,12 @@ PROJECTION_SEED = 42        # Deterministic seed for reproducible positions
 - Persists a lightweight point of type `"trail"` at the current attention position.
 - Includes `omega`, `importance`, and minimal metadata.
 - Triggers KD‑Tree rebuild as needed.
-- `decay_trail_particles` (line 697) is a no‑op; cooling is handled by temperature.
+- **`decay_trail_particles` (lines 670-706)**: Prunes trail particles older than `max_age_pulses` (default 200) to keep the KDTree size stable. Called during context compression in the pulse loop.
 
 ---
 
-### Interaction Potential (`compute_interaction_potential` lines 744‑798)
-- Splits nearby points into **subjective** (desires) and **objective** (capabilities) based on `metadata["drive_type"]`.
-- Computes `potential = (G_s * G_o) / max(pair_dist, ε)` for each pair.
-- Returns sorted affordances with tool name and urgency.
-
-**Why:** This implements **implicit tool affordance discovery** – when a desire aligns with a capability, a tool suggestion is surfaced automatically.
+### Interaction Potential (Removed)
+- **Status:** The `compute_interaction_potential` function (previously lines 744-798) has been **DELETED** in commit 1b55c50 as part of pruning dead/unused systems.
 
 ---
 
@@ -141,7 +136,7 @@ flowchart TD
     KL[compute_kl_divergence] -->|distributions| DKL[KL Divergence]
     Temp[compute_local_temperature] -->|H/H_baseline| T[Temperature]
     Trail[deposit_trail_particle] -->|persist| TrailStore[Trail Points]
-    Afford[compute_interaction_potential] -->|pairwise| Affordances[Tool Suggestions]
+    Prune[decay_trail_particles] -->|prune| TrailStore
 ```
 
 ---
