@@ -243,10 +243,7 @@ def run_evaluation(state_bench_path, num_tasks_per_domain, dry_run=False, save_p
                 memory_id=f"mem_{task['task_id']}",
                 text=payload,
                 importance=0.8,
-                source="procedural_learning",
-                task_id=task['task_id'],
-                task_type=task['task_type'],
-                created_at=time.strftime('%Y-%m-%dT%H:%M:%S'),
+                content=payload,
             )
             memory_manager.store(
                 content=payload,

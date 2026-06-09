@@ -1,32 +1,21 @@
 # Helix Memory Retrieval Benchmark Report (STATE-Bench)
+**Date**: 2026-06-09 12:32:38
+**Tasks Evaluated per Domain**: 5 (Total: 15)
 
-**Status**: Sandbox Ready & Verified (Dry-run Passed)
-**STATE-Bench Path**: `/home/nemo/state_bench`
-**Date**: 2026-06-09
+## Global Metrics Summary
 
-This report template is prepared for Helix's memory retrieval evaluation on Microsoft's **STATE-Bench** dataset. The sandbox harness has been successfully configured and verified.
+| Metric | 384D Semantic Search | 8D Physics Manifold | Description |
+| :--- | :---: | :---: | :--- |
+| Task Recall@1 | 93.33% | 40.00% | Recall accuracy or trace token overlap F1. |
+| Task Recall@3 | 100.00% | 53.33% | Recall accuracy or trace token overlap F1. |
+| Task Recall@5 | 100.00% | 73.33% | Recall accuracy or trace token overlap F1. |
+| Task-Type Recall@1 | 100.00% | 66.67% | Recall accuracy or trace token overlap F1. |
+| Task-Type Recall@3 | 100.00% | 80.00% | Recall accuracy or trace token overlap F1. |
+| Task-Type Recall@5 | 100.00% | 80.00% | Recall accuracy or trace token overlap F1. |
+| Procedural Trace Token F1 | 48.71% | 3.12% | Recall accuracy or trace token overlap F1. |
+| Avg Query Latency | 221.23 ms | 220.87 ms | Execution time in milliseconds. |
 
-## Verified Dataset Structure
-
-A dry-run parsing check was executed across all three enterprise domains:
-- **Customer Support**: Verified (Sample task `100-challenge_warranty_maxed_return_option` parsed successfully, trace length: 3,601 characters).
-- **Shopping Assistant**: Verified (Sample task `1-recommend_college_laptop` parsed successfully, trace length: 4,510 characters).
-- **Travel**: Verified (Sample task `10-book_with_points_full` parsed successfully, trace length: 3,587 characters).
-
-## Evaluation Metrics Configuration
-
-Once executed, the benchmark will track:
-- **Task Recall@K (K=1, 3, 5)**: The percentage of queries that retrieve the exact historical execution trajectory for the user's scenario.
-- **Task-Type Recall@K (K=1, 3, 5)**: The percentage of queries that retrieve a trajectory belonging to the same functional category, indicating whether Helix can find relevant procedural patterns for unseen tasks.
-- **Procedural Trace Token F1**: A token-level overlap F1 score (with Porter Stemming) measuring the semantic similarity between the retrieved historical context and the target trajectory.
-- **Avg Query Latency**: Time in milliseconds for semantic search and physics manifold query lookups.
-
----
-
-### Executing the Benchmark
-
-To start the actual evaluation run, execute:
-```bash
-/home/nemo/Helix/.venv/bin/python3 scripts/statebench_sandbox.py --num-tasks 5
-```
-*(The `--num-tasks` argument configures the number of tasks per domain to ingest and evaluate).*
+## Observations & Insights
+- **Task-level Recall** measures whether the exact historical execution trajectory for the user's scenario is retrieved.
+- **Task-Type Recall** measures whether a trajectory of the same functional category (e.g. cancellation, exchange) is retrieved, providing relevant procedural guidance even if the exact task was not previously run.
+- The **8D Physics Manifold** combines semantic layout with topological recency/gravitational dynamics to refine context retrieval.

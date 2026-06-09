@@ -77,8 +77,8 @@ def compute_token_f1(prediction, ground_truth):
 
 def compute_multi_f1(prediction, ground_truth):
     """Calculate F1 for comma-separated or multi-answer targets."""
-    predictions = [p.strip() for p in prediction.split(',')]
-    ground_truths = [g.strip() for g in ground_truth.split(',')]
+    predictions = [p.strip() for p in str(prediction).split(',')]
+    ground_truths = [g.strip() for g in str(ground_truth).split(',')]
     return float(np.mean([max([compute_token_f1(p, gt) for p in predictions]) for gt in ground_truths]))
 
 # ── Dialogue Ingestion ──────────────────────────────────────────────
@@ -187,9 +187,7 @@ def run_evaluation(dataset_path, num_dialogues, dry_run=False, save_path=None):
                         memory_id=f"mem_{dia_id}",
                         text=payload,
                         importance=0.5,
-                        source=speaker,
-                        dia_id=dia_id,
-                        created_at=session_datetime,
+                        content=payload,
                     )
                     
                     memory_manager.store(
@@ -216,7 +214,7 @@ def run_evaluation(dataset_path, num_dialogues, dry_run=False, save_path=None):
 
             for qa in qa_iterable:
                 question = qa["question"]
-                answer = qa["answer"]
+                answer = qa.get("answer") or qa.get("adversarial_answer") or ""
                 category = qa["category"]
                 evidence = qa["evidence"] # list of dia_ids, e.g. ['D1:3']
 
