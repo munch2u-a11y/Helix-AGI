@@ -356,10 +356,13 @@ class AffectField:
         """Deterministic mapping from Lagrangian signals to Plutchik vector.
 
         The Lagrangian signals already ARE the emotional state.
-        This just routes them to the right dimensions.
+        This routes them to the right dimensions. Spatial metrics (H, D_KL, T)
+        compound into the affect: scattered attention breeds anxiety,
+        identity drift generates anticipation or fear, volatile regions
+        produce surprise.
 
         Args:
-            snapshot: Lagrangian snapshot dict with H, omega, D_KL, s_total
+            snapshot: Lagrangian snapshot dict with H, omega, D_KL, s_total, T
 
         Returns:
             8D Plutchik position vector
@@ -367,21 +370,53 @@ class AffectField:
         omega = snapshot.get("omega", 0.5)
         H = snapshot.get("H", 0.0)
         D_KL = snapshot.get("D_KL", 0.0)
+        T = snapshot.get("T", 1.0)
         s_total = snapshot.get("s_total", 0.0)
 
         # Deltas from previous pulse
         delta_s = s_total - self._prev_s_total
         omega_vel = omega - self._prev_omega
 
+        # ── Base mappings (existing) ─────────────────────────────────
+        joy = omega
+        trust = 1.0 - D_KL
+        fear = max(0.0, delta_s) * 5.0
+        surprise = abs(delta_s) * 5.0
+        sadness = max(0.0, -omega_vel) * 10.0
+        disgust = self._stagnation_counter / 10.0
+        anger = H * (1.0 - omega) * 2.0
+        anticipation = max(0.0, omega_vel) * 10.0
+
+        # ── Spatial metric compounds ─────────────────────────────────
+
+        # High entropy (scattered attention) → anxious, fearful
+        # The mind is spread thin — things feel ungraspable
+        fear += H * 0.3
+
+        # Identity drift → anticipation (exploring) or fear (lost)
+        # Moderate drift is exciting; extreme drift is distressing
+        if D_KL > 0:
+            anticipation += D_KL * 0.5  # Exploring = anticipatory
+            if D_KL > 1.5:
+                # Too far from self — the discomfort of being lost
+                fear += (D_KL - 1.5) * 0.3
+
+        # Local temperature (cognitive volatility) → surprise + anticipation
+        # Volatile regions feel surprising and charged with possibility
+        if T > 1.0:
+            excess_T = T - 1.0
+            surprise += excess_T * 0.3
+            anticipation += excess_T * 0.2
+
         return [
-            _clamp(omega),                                  # joy
-            _clamp(1.0 - D_KL),                             # trust
-            _clamp(max(0.0, delta_s) * 5.0),                # fear
-            _clamp(abs(delta_s) * 5.0),                     # surprise
-            _clamp(max(0.0, -omega_vel) * 10.0),            # sadness
-            _clamp(self._stagnation_counter / 10.0),        # disgust
-            _clamp(H * (1.0 - omega) * 2.0),                # anger
-            _clamp(max(0.0, omega_vel) * 10.0),             # anticipation
+            _clamp(joy),
+            _clamp(trust),
+            _clamp(fear),
+            _clamp(surprise),
+            _clamp(sadness),
+            _clamp(disgust),
+            _clamp(anger),
+            _clamp(anticipation),
         ]
 
     # ── Evolution ────────────────────────────────────────────────────

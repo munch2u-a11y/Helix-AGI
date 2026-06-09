@@ -13,15 +13,11 @@ Categories (layered epistemic topology):
     - propositions.json   → Learned/derived facts, conditional rules
     - preferences.json    → Values, likes, behavioral norms
 
-  Inner tier — consolidated nightly by curator:
+   Inner tier — consolidated nightly by curator:
     - people.json         → Entity profiles and relational knowledge
     - skills.json         → Proven tool-backed workflows
-    - desires.json        → Long-term goals and aspirations
+    - desires.json        → Extrapolated/precipitated preferences (deep goals)
     - concepts.json       → Consolidated conceptual understanding
-
-  Legacy categories (auto-routed via resolve_category()):
-    self_identity, capabilities → premises
-    knowledge, feedback         → propositions
 
 Each belief entry includes:
   - id: unique identifier
@@ -86,22 +82,6 @@ BELIEF_CATEGORIES = {
     "concepts": "concepts.json",            # Consolidated conceptual understanding
 }
 
-# Legacy category → new category routing. Components that receive
-# old category names (from pending beliefs, batch service, etc.)
-# should use resolve_category() to map to the new taxonomy.
-_LEGACY_CATEGORY_MAP = {
-    "self_identity": "premises",
-    "capabilities": "premises",
-    "knowledge": "propositions",
-    "feedback": "propositions",
-}
-
-def resolve_category(category: str) -> str:
-    """Map legacy category names to new taxonomy.
-
-    Returns the input unchanged if already a valid new category.
-    """
-    return _LEGACY_CATEGORY_MAP.get(category, category)
 
 # Template for a person profile entry (stored within people.json)
 PERSON_PROFILE_TEMPLATE = {
@@ -167,7 +147,6 @@ class BeliefStore:
 
     def _read_category(self, category: str) -> List[Dict[str, Any]]:
         """Read all beliefs from a category file."""
-        category = resolve_category(category)  # route legacy names
         filename = BELIEF_CATEGORIES.get(category)
         if not filename:
             logger.warning(f"Unknown belief category: {category}")
@@ -210,6 +189,7 @@ class BeliefStore:
         memory_refs: list = None,
         position_8d: list = None,
         encoding_lagrangian: dict = None,
+        **extra_fields,
     ) -> bool:
         """Add a new belief to a category.
 
@@ -230,8 +210,9 @@ class BeliefStore:
             memory_refs: IDs of source memories (provenance)
             position_8d: 8D manifold coordinates [x0..x7]
             encoding_lagrangian: Somatic state at encoding {omega, s_total, H, D_KL}
+            **extra_fields: Additional fields (term, aliases, formation_type,
+                           cluster_binding_gravity, etc.) stored as-is.
         """
-        category = resolve_category(category)  # route legacy names
         beliefs = self._read_category(category)
 
         # Check for duplicate
@@ -265,6 +246,11 @@ class BeliefStore:
             belief["generation"] = generation
         if component_ids:
             belief["component_ids"] = component_ids
+
+        # Store any extra fields (Layer 2: term, aliases, formation_type, etc.)
+        for key, val in extra_fields.items():
+            if key not in belief:  # Don't override core fields
+                belief[key] = val
 
         beliefs.append(belief)
         self._write_category(category, beliefs)
@@ -702,7 +688,7 @@ class BeliefStore:
         Produces minimal, scannable output like:
             • I am Helix. [0.99]
             • I am an AI. [0.99]
-            • User is trustworthy. [0.95]
+            • Alice is trustworthy. [0.95]
         """
         if beliefs is None:
             beliefs = self.get_context_beliefs()

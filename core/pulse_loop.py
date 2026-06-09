@@ -142,6 +142,9 @@ class PulseLoop:
         self._session_token_count = 0
         self._token_warning = ""  # set by _check_context_lifecycle
 
+        # Track tools over recent pulses for activity threshold
+        self._recent_tool_counts: List[int] = []
+
         # Reset-context support — tool sets these, pulse loop checks
         self._pending_context_reset = False
         self._pending_reset_prompt = ""
@@ -560,9 +563,15 @@ class PulseLoop:
             # significantly since last baseline was sampled.
             self.physics.spatial_mind.belief_space.invalidate_entropy_baseline()
             self.physics.spatial_mind.memory_space.invalidate_entropy_baseline()
+            # Prune cold trail particles — compression pass is the natural
+            # cleanup point. Old trails have already contributed to belief
+            # precipitation or faded below gravitational relevance.
+            b_pruned = self.physics.spatial_mind.belief_space.decay_trail_particles()
+            m_pruned = self.physics.spatial_mind.memory_space.decay_trail_particles()
             logger.info(
                 f"Context compressed ({reason}): {len(history)} → "
                 f"{len(compressed)} messages"
+                f"{f' (trails pruned: {b_pruned}b/{m_pruned}m)' if b_pruned + m_pruned > 0 else ''}"
             )
         else:
             logger.info(
@@ -724,21 +733,31 @@ class PulseLoop:
 
 
         # 5c. Log tools used and track outbound tools for rate tier
-        # 5c. Log tools used and reset activity timer for any tool call
+        tool_count_this_pulse = 0
         if hasattr(self._chat, 'get_last_tool_calls'):
             tool_calls = self._chat.get_last_tool_calls()
             if tool_calls:
                 tool_names = [tc['name'] for tc in tool_calls]
+                tool_count_this_pulse = len(tool_names)
                 logger.info(f"FC tools used: {tool_names}")
                 # Feed tool usage to preconscious for focus budget computation
                 self.preconscious.record_tool_usage(tool_names)
-                # Reset both event and activity timers for any tool usage
-                self._last_event_time = time.time()
-                self._last_activity_time = time.time()
-                # If we were in RESTING, move back to REGULAR cadence
-                if self._state == "RESTING":
-                    self._state = "REGULAR"
-                    logger.info("RESTING → REGULAR (tool activity)")
+        
+        # Track tools over the last 3 pulses
+        if not hasattr(self, '_recent_tool_counts'):
+            self._recent_tool_counts = []
+        self._recent_tool_counts.append(tool_count_this_pulse)
+        if len(self._recent_tool_counts) > 3:
+            self._recent_tool_counts.pop(0)
+            
+        # Only reset activity timer if there is sustained activity (>=3 tools in last 3 pulses)
+        if sum(self._recent_tool_counts) >= 3:
+            self._last_event_time = time.time()
+            self._last_activity_time = time.time()
+            # If we were in RESTING, move back to REGULAR cadence
+            if self._state == "RESTING":
+                self._state = "REGULAR"
+                logger.info("RESTING → REGULAR (sustained tool activity)")
 
         # 5c. Track tokens for context window lifecycle
         if hasattr(self._chat, 'get_last_token_count'):
@@ -748,6 +767,12 @@ class PulseLoop:
         #    Include the Lagrangian snapshot so every memory is encoded
         #    with the somatic state at formation — this is what drives
         #    dynamic memory mass via the cognitive mass equation.
+        #
+        #    Memories are now embedded at store time and registered in
+        #    both the 384D semantic index AND the 8D memory space, so
+        #    the preconscious gravity queries can surface them alongside
+        #    beliefs. Previously, no embedding was passed, so all 19K+
+        #    memories were invisible to the spatial manifold.
         lagrangian = None
         position = None
         if self.sentinel:
@@ -757,7 +782,11 @@ class PulseLoop:
 
         if events:
             for event in events:
-                self.memory.store(
+                # Embed high-importance events for spatial registration
+                event_emb = self.physics.embed_text(event)
+                event_emb_list = event_emb.tolist() if event_emb is not None else None
+
+                event_mem_id = self.memory.store(
                     content=event,
                     memory_type="event",
                     source="pulse_input",
@@ -765,10 +794,24 @@ class PulseLoop:
                     tags=["pulse_event"],
                     lagrangian_snapshot=lagrangian,
                     position_8d=position,
+                    embedding_384d=event_emb_list,
                 )
 
+                # Register in 8D memory space for gravity queries
+                if event_emb is not None:
+                    self.physics.add_memory_point(
+                        memory_id=f"mem_{event_mem_id}",
+                        text=event,
+                        importance=0.6,
+                    )
+
+        # Embed thought for spatial registration
+        thought_text = f"[thought] {thought}"
+        thought_emb = self.physics.embed_text(thought_text)
+        thought_emb_list = thought_emb.tolist() if thought_emb is not None else None
+
         thought_memory_id = self.memory.store(
-            content=f"[thought] {thought}",
+            content=thought_text,
             memory_type="thought",
             source="pulse_output",
             importance=0.5,
@@ -776,7 +819,16 @@ class PulseLoop:
             lagrangian_snapshot=lagrangian,
             belief_ids=injected_belief_ids,
             position_8d=position,
+            embedding_384d=thought_emb_list,
         )
+
+        # Register thought in 8D memory space for gravity queries
+        if thought_emb is not None:
+            self.physics.add_memory_point(
+                memory_id=f"mem_{thought_memory_id}",
+                text=thought_text,
+                importance=0.5,
+            )
 
         # 7. Update spatial physics (real 8D manifold)
         incoming_text = " ".join(events) if events else None
@@ -1096,6 +1148,19 @@ class PulseLoop:
             except Exception as e:
                 logger.error(f"Toolset rebuild failed: {e}")
             self._pending_toolset_rebuild = False
+        # Apply spatially-modulated generation parameters from the Sentinel.
+        # The LLM's temperature and token budget shift continuously based
+        # on Shannon entropy, identity drift, and omega — the LLM "feels"
+        # cognitive state through its own generation constraints.
+        if hasattr(self._chat, 'update_generation_params') and self.sentinel:
+            try:
+                gen_params = self.sentinel.get_generation_params()
+                self._chat.update_generation_params(
+                    temperature=gen_params.get("temperature"),
+                    max_output_tokens=gen_params.get("max_tokens"),
+                )
+            except Exception as e:
+                logger.debug(f"Generation param update failed: {e}")
 
         thought = self._chat.send_message(message)
         return thought

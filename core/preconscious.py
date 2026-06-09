@@ -14,7 +14,7 @@ How it works:
   4. Runs independent gravity queries centered on each concept:
      - Nearby beliefs scored by mass × temperature / distance²
      - No overlap between concept clusters (rolling blacklist)
-  5. Pulls lexicon matches, scratchpad, and contact context
+  5. Pulls Layer 2 anchor matches, scratchpad, and contact context
   6. Formats everything as natural language "peripheral awareness"
 
 The conscious model receives this each pulse as its grounding.
@@ -114,52 +114,63 @@ class Preconscious:
         # knowledge locations rather than raw text midpoints.
         self._last_cluster_centroid = None
 
-        # Galaxy map — dynamic galaxy centers built from lexicon entries.
+        # Galaxy map — dynamic galaxy centers built from Layer 2 beliefs.
         # Rebuilt alongside the belief cache when beliefs change.
         from core.belief_cosmology import GalaxyMap
         self._galaxy_map = GalaxyMap()
 
-        # Lexicon — priority term-matched dictionary loaded once.
+        # Layer 2 anchors — priority term-matched lookup loaded from
+        # people.json, concepts.json, skills.json, desires.json.
         # Scanned every pulse BEFORE the 8D gravity query.
         self._lexicon_lookup: Dict[str, dict] = {}  # term_lower → entry
         self._lexicon_blacklist: set = set()         # entry IDs already injected this context window
-        self._load_lexicon()
+        self._load_layer2_anchors()
 
         # Concept extractor — RAKE-style keyphrase extraction.
-        # Initialized with lexicon keys so it can separate known entities
+        # Initialized with Layer 2 term keys so it can separate known entities
         # from general concepts during extraction.
         lexicon_keys = set(self._lexicon_lookup.keys())
         self._concept_extractor = ConceptExtractor(lexicon_keys=lexicon_keys)
 
-    def _load_lexicon(self):
-        """Load lexicon.json and build a case-insensitive term→entry lookup.
+    def _load_layer2_anchors(self):
+        """Load Layer 2 beliefs as priority injection anchors.
 
-        Each entry's `term` and all `aliases` become keys pointing to
-        the same entry. Called once on init.
+        Replaces lexicon.json loading. Reads from people.json,
+        concepts.json, skills.json, desires.json. Each entry's
+        `term` and `aliases` become lookup keys for fast string
+        matching during pulse injection.
         """
-        lexicon_path = os.path.join(self.beliefs.data_dir, "lexicon.json")
-        if not os.path.exists(lexicon_path):
-            logger.info("No lexicon.json found — lexicon disabled")
-            return
+        layer2_categories = ["people", "concepts", "skills", "desires"]
+        total_entries = 0
 
-        try:
-            with open(lexicon_path, 'r') as f:
-                entries = json.load(f)
+        for cat in layer2_categories:
+            try:
+                beliefs = self.beliefs._read_category(cat)
+            except Exception:
+                continue
 
-            for entry in entries:
-                term = entry.get("term", "")
-                if term:
-                    self._lexicon_lookup[term.lower()] = entry
-                for alias in entry.get("aliases", []):
+            for b in beliefs:
+                term = b.get("term", "")
+                if not term:
+                    continue
+
+                entry = {
+                    "id": b.get("id", ""),
+                    "term": term,
+                    "summary": b.get("content", ""),
+                    "category": cat,
+                    "aliases": b.get("aliases", []),
+                }
+                self._lexicon_lookup[term.lower()] = entry
+                for alias in b.get("aliases", []):
                     if alias:
                         self._lexicon_lookup[alias.lower()] = entry
+                total_entries += 1
 
-            logger.info(
-                f"Lexicon loaded: {len(entries)} entries, "
-                f"{len(self._lexicon_lookup)} lookup keys"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to load lexicon: {e}")
+        logger.info(
+            f"Layer 2 anchors loaded: {total_entries} entries, "
+            f"{len(self._lexicon_lookup)} lookup keys"
+        )
 
     # ── Focus Budget ─────────────────────────────────────────────────
 
@@ -176,13 +187,17 @@ class Preconscious:
             self._recent_tool_history.pop(0)
 
     def _compute_focus_budget(self) -> tuple:
-        """Compute (total_budget, max_skills) based on recent tool intensity.
+        """Compute (total_budget, max_skills) based on tool intensity + spatial state.
 
-        Queries the tool registry for each tool's focus_type so new tools
-        auto-classify without hardcoded lists here.
+        Two forces shape the injection budget:
+          1. Tool intensity (existing) — deep tool work narrows the budget
+          2. Spatial temperature (new) — volatile/unfamiliar regions narrow
+             further; stable/known regions allow the budget to widen
+
+        The spatial temperature acts as a multiplier on the tool-based tier.
 
         Returns:
-            Tuple of (total_budget, max_skills) from the focus tier constants.
+            Tuple of (total_budget, max_skills).
         """
         try:
             from tools.tool_registry import registry
@@ -195,12 +210,43 @@ class Preconscious:
                 if registry.get_focus_type(tool_name) == "focus":
                     focus_count += 1
 
+        # Base tier from tool intensity
         if focus_count >= 3:
-            return self.FOCUS_BUDGET_DEEP
+            base_budget, base_skills = self.FOCUS_BUDGET_DEEP
         elif focus_count >= 1:
-            return self.FOCUS_BUDGET_WORKING
+            base_budget, base_skills = self.FOCUS_BUDGET_WORKING
         else:
-            return self.FOCUS_BUDGET_OPEN
+            base_budget, base_skills = self.FOCUS_BUDGET_OPEN
+
+        # Spatial temperature modulation — the cognitive "weather"
+        # High T (volatile, unfamiliar region) → narrower budget
+        # Low T (stable, known region) → wider budget
+        spatial_T = None
+        if self.sentinel:
+            spatial_T = getattr(self.sentinel, '_spatial_T', None)
+
+        if spatial_T is not None and spatial_T > 0:
+            # T is a ratio: local_entropy / mean_entropy
+            # T ~1.0 = average region, T > 1.5 = hot/volatile, T < 0.5 = cool/stable
+            if spatial_T > 2.0:
+                # Very hot — overwhelming territory, cut budget hard
+                budget_mult = 0.5
+            elif spatial_T > 1.5:
+                # Hot — unfamiliar, reduce
+                budget_mult = 0.7
+            elif spatial_T < 0.5:
+                # Very cool — home ground, allow extra
+                budget_mult = 1.3
+            elif spatial_T < 0.8:
+                # Cool — familiar, slight bonus
+                budget_mult = 1.15
+            else:
+                budget_mult = 1.0
+
+            adjusted_budget = max(2, int(base_budget * budget_mult))
+            return (adjusted_budget, base_skills)
+
+        return (base_budget, base_skills)
 
     # ── Main Injection ───────────────────────────────────────────────
 
@@ -213,7 +259,7 @@ class Preconscious:
         """Build the peripheral awareness block for a single pulse.
 
         Called once per pulse. Assembles context from multiple layers:
-          0. Lexicon — fast string match for known terms (priority)
+          0. Layer 2 anchors — fast string match for known terms (priority)
           1. Spatial neighborhood — gravitational memory recall
           2. Belief grounding — concept-extracted independent gravity queries
           3. Short-term memory, scratchpad, contact context
@@ -264,8 +310,8 @@ class Preconscious:
         else:
             trigger_text = ""
 
-        # ── 0. Lexicon Match (PRIORITY) ──────────────────────────────
-        #    Fast string match for lexicon terms in the trigger text.
+        # ── 0. Layer 2 Anchor Match (PRIORITY) ────────────────────────
+        #    Fast string match for Layer 2 terms in the trigger text.
         #    Matched summaries are injected first — before any 8D query.
         #    Matched content is tracked so the gravity query skips it.
         lexicon_block, lexicon_summaries, lexicon_ids = self._pull_lexicon_matches(trigger_text)
@@ -364,14 +410,14 @@ class Preconscious:
             "</spatial-awareness>"
         ), injected_belief_ids, self._last_cluster_centroid
 
-    # ── Lexicon Match ─────────────────────────────────────────────────
+    # ── Layer 2 Anchor Match ───────────────────────────────────────────
 
     def _pull_lexicon_matches(self, trigger_text: str) -> Tuple[str, set, List[str]]:
-        """Scan trigger text for lexicon terms and return matched summaries.
+        """Scan trigger text for Layer 2 terms and return matched summaries.
 
         Fast case-insensitive string matching — no embeddings, no API calls.
         Returns (formatted_block, set_of_summary_strings) so the gravity
-        query can exclude lexicon content from its results.
+        query can exclude Layer 2 content from its results.
 
         Args:
             trigger_text: Combined incoming events + previous thought.
@@ -402,16 +448,11 @@ class Preconscious:
             term = entry.get("term", "")
             summary = entry.get("summary", "")
             cat = entry.get("category", "")
-
-            if cat == "person":
-                lines.append(f"(lexicon — {term}: {summary})")
-            else:
-                lines.append(f"(lexicon — {term}: {summary})")
-
+            lines.append(f"({cat} — {term}: {summary})")
             summaries.add(summary)
 
         logger.debug(
-            f"Lexicon matched: {[e.get('term') for e in matched_entries.values()]}"
+            f"Layer 2 matched: {[e.get('term') for e in matched_entries.values()]}"
         )
 
         # Blacklist these entries so they don't re-inject on subsequent
@@ -917,15 +958,21 @@ class Preconscious:
             f"{f' ({len(live_embs)} live-embedded)' if live_embs else ''}"
         )
 
-        # ── Build galaxy map from lexicon + belief positions ──────
+        # ── Build galaxy map from Layer 2 beliefs ────────────────────
         try:
-            lexicon_path = os.path.join(self.beliefs.data_dir, "lexicon.json")
-            if os.path.exists(lexicon_path):
-                import json as _json
-                with open(lexicon_path, "r") as f:
-                    lexicon_entries = _json.load(f)
+            layer2_entries = []
+            for cat in ["people", "concepts", "skills", "desires"]:
+                try:
+                    entries = self.beliefs._read_category(cat)
+                    for e in entries:
+                        if e.get("term"):
+                            layer2_entries.append(e)
+                except Exception:
+                    pass
+
+            if layer2_entries:
                 self._galaxy_map.build(
-                    lexicon_entries=lexicon_entries,
+                    lexicon_entries=layer2_entries,
                     all_beliefs=all_beliefs,
                     projection=getattr(
                         getattr(self.physics, 'spatial_mind', None),

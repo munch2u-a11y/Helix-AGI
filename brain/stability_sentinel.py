@@ -838,7 +838,8 @@ class StabilitySentinel:
 
     def get_status(self) -> dict:
         """Get complete sentinel status — for logging and API."""
-        return {
+        gen_params = self.get_generation_params()
+        status = {
             "severity": self.get_severity(),
             "s_total": round(self.s_total, 4),
             "omega": round(self.omega, 4),
@@ -850,46 +851,53 @@ class StabilitySentinel:
             "feeling": self._generate_feeling(),
             "context_clarity_pct": round(self.get_context_clarity(), 1),
             "context_usage_pct": round(self.get_context_usage(), 1),
-            "firing_mode": self.get_generation_params()["mode"],
+            "firing_mode": gen_params["mode"],
+            "llm_temperature": gen_params["temperature"],
+            "llm_max_tokens": gen_params["max_tokens"],
+            "h_ratio": gen_params.get("h_ratio", 1.0),
+            "dkl_ratio": gen_params.get("dkl_ratio", 1.0),
             "consecutive_negative": self._consecutive_negative_readings,
             "last_probes": self._last_probe_results,
             "running": self._running,
         }
+        # Raw spatial metrics when available
+        for attr in ('_spatial_H', '_spatial_D_KL', '_spatial_T'):
+            val = getattr(self, attr, None)
+            if val is not None:
+                status[attr.lstrip('_')] = round(float(val), 4)
+        return status
 
     # ── Tonic/Burst Firing Modes ────────────────────────────────────
 
     def get_generation_params(self) -> dict:
-        """Get generation parameters based on current Lagrangian state.
+        """Get generation parameters modulated by spatial cognitive state.
 
-        Implements tonic/burst firing mode from predictive coding theory.
-        The stability state of the system directly modulates how the
-        LLM generates — not as a script, but as a physical consequence
-        of the system's somatic state.
+        The LLM's temperature and output budget are physical consequences
+        of the spatial mind's entropy and drift — not scripted tiers.
 
-        Tonic mode (stable): Creative exploration. High temperature.
-            Full context window. DreamWeaver and Action Agent operate freely.
+        Continuous modulation from three signals:
+          - Ω (omega): base creativity level (stable = creative)
+          - H ratio: Shannon entropy vs baseline (scattered = constrained)
+          - D_KL ratio: identity drift vs baseline (far = tightened)
 
-        Burst mode (destabilized): Survival processing. Near-zero temperature.
-            Restricted context. Action gated. Librarian-driven grounding.
+        Severity overrides remain as hard emergency stops.
 
         Returns:
             Dict with mode, temperature, max_tokens, and context_restriction_pct.
         """
         severity = self.get_severity()
 
+        # ── Hard guardrails — severity overrides everything ──────────
         if severity == self.CRITICAL:
-            # BURST MODE — immediate survival
-            # Lock down: deterministic output, short responses, restrict context
             return {
                 "mode": "burst",
                 "temperature": 0.1,
                 "max_tokens": 256,
-                "context_restriction_pct": 50.0,  # Only use 50% of context
+                "context_restriction_pct": 50.0,
                 "reason": self._generate_feeling(),
             }
 
-        elif severity == self.WARNING:
-            # TRANSITIONING — tightening down
+        if severity == self.WARNING:
             return {
                 "mode": "guarded",
                 "temperature": 0.3,
@@ -898,25 +906,74 @@ class StabilitySentinel:
                 "reason": self._generate_feeling(),
             }
 
-        elif severity == self.DRIFT:
-            # MILD TONIC — slightly conservative
-            return {
-                "mode": "cautious",
-                "temperature": 0.5,
-                "max_tokens": 1024,
-                "context_restriction_pct": 90.0,
-                "reason": self._generate_feeling(),
-            }
+        # ── Continuous spatial modulation ─────────────────────────────
 
+        # Base temperature from omega: stable = creative, stressed = conservative
+        # Ω=0.05 → 0.33,  Ω=0.5 → 0.55,  Ω=0.9 → 0.75
+        base_temp = 0.3 + 0.5 * self.omega
+
+        temp_mod = 0.0
+        max_tokens = 8192
+        ctx_pct = 100.0
+
+        # Entropy modulation (H ratio vs self-calibrating baseline)
+        h_ratio = 1.0
+        spatial_H = getattr(self, '_spatial_H', None)
+        if spatial_H is not None and self._h_raw_baseline and self._h_raw_baseline > 0.01:
+            h_ratio = spatial_H / self._h_raw_baseline
+
+        if h_ratio > 1.6:
+            # Very scattered — force convergence hard
+            temp_mod -= 0.2
+            max_tokens = 1024
+            ctx_pct = 80.0
+        elif h_ratio > 1.3:
+            # Scattered — moderate constraint
+            temp_mod -= 0.1
+            max_tokens = 2048
+            ctx_pct = 90.0
+        elif h_ratio < 0.7:
+            # Very focused — allow creativity
+            temp_mod += 0.05
+
+        # Drift modulation (D_KL ratio vs self-calibrating baseline)
+        dkl_ratio = 1.0
+        spatial_D_KL = getattr(self, '_spatial_D_KL', None)
+        if spatial_D_KL is not None and self._dkl_raw_baseline and self._dkl_raw_baseline > 0.01:
+            dkl_ratio = spatial_D_KL / self._dkl_raw_baseline
+
+        if dkl_ratio > 2.0:
+            # Very far from identity — tighten hard
+            temp_mod -= 0.15
+            max_tokens = min(max_tokens, 1024)
+            ctx_pct = min(ctx_pct, 80.0)
+        elif dkl_ratio > 1.5:
+            # Drifting from identity — moderate pull
+            temp_mod -= 0.08
+            max_tokens = min(max_tokens, 2048)
+
+        # Final temperature: clamped to [0.1, 1.0]
+        temperature = max(0.1, min(1.0, base_temp + temp_mod))
+
+        # Determine mode label from effective state
+        if severity == self.DRIFT:
+            mode = "cautious"
+        elif h_ratio > 1.3 or dkl_ratio > 1.5:
+            mode = "constrained"
+        elif self.omega >= 0.7:
+            mode = "tonic"
         else:
-            # FULL TONIC — creative exploration
-            return {
-                "mode": "tonic",
-                "temperature": 0.7,
-                "max_tokens": 2048,
-                "context_restriction_pct": 100.0,
-                "reason": "",
-            }
+            mode = "steady"
+
+        return {
+            "mode": mode,
+            "temperature": round(temperature, 3),
+            "max_tokens": max_tokens,
+            "context_restriction_pct": round(ctx_pct, 1),
+            "reason": self._generate_feeling() if severity != self.ALL_CLEAR else "",
+            "h_ratio": round(h_ratio, 3),
+            "dkl_ratio": round(dkl_ratio, 3),
+        }
 
     # ── Lagrangian Snapshot (for State-Bound Memory) ───────────────
 

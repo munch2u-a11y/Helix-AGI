@@ -48,9 +48,6 @@ K_QUERY_ANCHORS = 8         # Interpolate potential from K nearest anchors
 KDTREE_REBUILD_THRESHOLD = 100  # Rebuild tree after this many new points
 PROJECTION_SEED = 42        # Deterministic seed for reproducible positions
 
-# Golden ratio constants (for optional φ-modulated field dynamics)
-PHI = (1.0 + math.sqrt(5.0)) / 2.0
-OMEGA_PHI = 2.0 * math.pi / math.log(PHI)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -276,27 +273,6 @@ class GravityField:
             weights = 1.0 / np.maximum(dists[nearest], 0.01)
             values = self.potential[nearest]
             return float(np.dot(weights, values) / weights.sum())
-
-    def gradient_at(self, position: np.ndarray) -> np.ndarray:
-        """Gradient of the potential field at a point.
-
-        Points in the direction of increasing potential — toward
-        gravity wells. This IS the attention flow direction.
-
-        Computed via finite differences on nearby anchors.
-        """
-        position = np.asarray(position, dtype=np.float32).reshape(-1)
-        center_pot = self.potential_at(position)
-
-        grad = np.zeros(self.dim, dtype=np.float32)
-        epsilon = 0.01
-
-        for d in range(self.dim):
-            probe = position.copy()
-            probe[d] += epsilon
-            grad[d] = (self.potential_at(probe) - center_pot) / epsilon
-
-        return grad
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -694,14 +670,42 @@ class CognitiveSpace:
         if self._pending_additions >= KDTREE_REBUILD_THRESHOLD:
             self._rebuild_tree()
 
-    def decay_trail_particles(self, **kwargs):
-        """DEPRECATED — no-op. Temperature handles cooling.
+    def decay_trail_particles(self, max_age_pulses: int = 200) -> int:
+        """Prune trail particles older than max_age_pulses.
 
-        Trail particles persist forever. Their gravitational influence
-        fades via Lorentzian temperature cooling, not importance decay.
-        Kept as no-op for backward compatibility with callers.
+        Called during context compression passes to prevent unbounded
+        KDTree growth. Older trails have already contributed to belief
+        precipitation or faded below relevance.
+
+        Args:
+            max_age_pulses: Maximum age in pulses before pruning.
+
+        Returns:
+            Number of particles pruned.
         """
-        pass
+        if not self._points:
+            return 0
+
+        to_remove = []
+        for pid, data in self._points.items():
+            if data.get("type") != "trail":
+                continue
+            creation_pulse = data.get("creation_pulse", 0)
+            age = self._current_pulse - creation_pulse
+            if age > max_age_pulses:
+                to_remove.append(pid)
+
+        for pid in to_remove:
+            del self._points[pid]
+
+        if to_remove:
+            self._tree_dirty = True
+            logger.debug(
+                "Pruned %d trail particles (max_age=%d, current_pulse=%d)",
+                len(to_remove), max_age_pulses, self._current_pulse,
+            )
+
+        return len(to_remove)
 
     def get_trail_particles(
         self,
@@ -738,73 +742,6 @@ class CognitiveSpace:
             })
 
         return particles
-
-    # ── Interaction Potential (V6 Phase 3) ─────────────────────────────
-
-    def compute_interaction_potential(
-        self,
-        position: np.ndarray,
-        threshold: float = 0.5,
-        k: int = 30,
-    ) -> list[dict]:
-        """Detect desire-capability collisions that generate tool affordances.
-
-        When a subjective belief (desire) and an objective belief (capability)
-        are both gravitationally pulling on the attention center, their
-        interaction creates a "will" — an automatic tool affordance.
-
-        Φ(s, o) = (G_s × G_o) / max(d(s, o), ε)
-
-        where:
-          G_s = gravitational pull of subjective belief s on attention center
-          G_o = gravitational pull of objective belief o on attention center
-          d(s, o) = distance between s and o in 8D space
-          ε = softening constant
-
-        This is how intentions form without explicit prompting.
-        """
-        nearby = self.gravity_ranked_query(position, k=k)
-
-        subjective = []  # desires pulling on attention
-        objective = []   # capabilities pulling on attention
-
-        for pid, gravity, dist in nearby:
-            point = self._points.get(pid)
-            if not point:
-                continue
-            drive_type = point.get("metadata", {}).get("drive_type", "")
-            if drive_type == "subjective":
-                subjective.append((pid, gravity, dist, point))
-            elif drive_type == "objective":
-                objective.append((pid, gravity, dist, point))
-
-        affordances = []
-        epsilon = 0.01  # softening constant
-
-        for s_id, s_grav, s_dist, s_point in subjective:
-            for o_id, o_grav, o_dist, o_point in objective:
-                # Distance between the subjective and objective beliefs
-                pair_dist = float(np.linalg.norm(
-                    s_point["position"] - o_point["position"]
-                ))
-
-                # Interaction potential: product of pulls / pair distance
-                potential = (s_grav * o_grav) / max(pair_dist, epsilon)
-
-                if potential > threshold:
-                    affordances.append({
-                        "desire": s_point.get("content", s_id),
-                        "desire_id": s_id,
-                        "capability": o_point.get("content", o_id),
-                        "capability_id": o_id,
-                        "potential": round(float(potential), 4),
-                        "tool_name": o_point.get("metadata", {}).get("tool_name"),
-                        "urgency": round(float(s_grav / max(s_dist, epsilon)), 4),
-                    })
-
-        # Sort by potential, highest first
-        affordances.sort(key=lambda a: a["potential"], reverse=True)
-        return affordances
 
     # ── Attention Dynamics (Euler-Lagrange) ─────────────────────────────
     #
@@ -1066,13 +1003,10 @@ class CognitiveSpace:
         Time is measured in PULSES — the mind's own proper time.
         Not wall-clock seconds from the external universe.
 
-        Initial temperature by phase:
-          Imagined states: T₀ = 3.0 × c  (gas — hot, volatile)
-          Memories:        T₀ = 1.5 × c  (liquid — warm, flowing)
-          Beliefs:         T₀ = 0.3       (solid — cool, crystallized)
-          Trail particles:  T₀ = 2.0 × c  (plasma — very hot, brief)
-
-        Phase state is emergent from temperature, not a label.
+        Initial temperature by type:
+          Beliefs:         T₀ = 0.3       (cool, crystallized)
+          Trail particles:  T₀ = 2.0 × c  (hot, brief)
+          Memories:        T₀ = 1.5 × c  (warm, flowing)
         """
         concept_type = point_data.get("type", "memory")
 
