@@ -34,34 +34,31 @@ The Curator is Helix's **nightly personality crystallization engine**. It conver
 - Checks each candidate against existing beliefs for semantic overlap (≥0.75 similarity).
 - **Merge**: If a near-duplicate exists, the existing belief absorbs the new one (mass accretion, verification increment).
 - **Pass**: If genuinely novel, the belief proceeds to integration.
-- **Divert to Lexicon**: If a candidate is a high-density summary about a term that already has 5+ beliefs, it's routed to `lexicon.json` instead of the belief store.
+- **Crop**: If a candidate exceeds the 250-character cap (or 500 for Layer 2), it is cropped to fit the limit.
 
-**Phase 3 — UMAP/HDBSCAN Compounding** (lines 517–564):
-- Takes ALL existing beliefs, extracts their 8D positions as embeddings.
-- **UMAP** reduces from 8D → 2D (n_neighbors=5, min_dist=0.1).
-- **HDBSCAN** clusters the reduced space (min_cluster_size=3).
-- For each cluster (excluding noise label -1), the member beliefs are sent to the LLM with:
-  > "Synthesize these related beliefs into ONE single higher-order realization. Do not restate the premises. Extract the novel realization."
+**Phase 3 — Relation-Graph Compound Synthesis** (lines 612–686):
+- Reads clusters built by the real-time `co_occurrence_hook` (Hebbian wiring).
+- Sends each cluster of related beliefs to the LLM for compound belief synthesis.
+- Falls back to finding well-connected beliefs (with 3+ existing relations) if co-occurrence tracker is unavailable.
 - Output: Compound beliefs — emergent insights that none of the source beliefs contained individually.
 
-**Phase 4 — Validate & Integrate** (lines 566–618):
+**Phase 3.5 — Layer 2 Precipitation** (lines 176–478):
+- Gravitational collapse of Layer 1 clusters into Layer 2 (people, skills, desires, concepts).
+- Steps:
+  1. Re-embed all positioned Layer 1 beliefs into 384D (using DefaultEmbeddingFunction).
+  2. Run UMAP to reduce from 384D → 5D for high-density clustering (n_neighbors=15, min_dist=0.05).
+  3. Run HDBSCAN to discover semantic clusters (min_cluster_size=4, min_samples=3).
+  4. Compute mean pairwise binding gravity in 8D for each cluster: `G = (m1 * m2) / (d^2 + 1e-4)`.
+  5. Evaluate against precipitation threshold `(1 + EXPANSION_PER_BELIEF)^total_beliefs` (Hubble-expansion-bound).
+  6. Synthesize cluster beliefs via LLM into a Layer 2 anchor and store under `concepts`, `people`, `skills`, or `desires` with component IDs and centroid coordinates.
+  7. Update component beliefs to link back to the new Layer 2 anchor.
+
+**Phase 4 — Validate & Integrate** (lines 688–708):
 - All beliefs (extracted + compounded) pass through format validation:
   - Strip markdown artifacts (`**`, `*`, `→`)
-  - Check length bounds (15–250 chars, 300 for feedback)
+  - Check length bounds (15–250 chars)
 - Valid beliefs are written to `data/pending_beliefs.json` for the BatchService.
 - **Attrition pass**: Calls `belief_store.recalculate_all_confidences()`.
-
-**Phase 5 — Lexicon Synchronization** (lines 160–408):
-Two deterministic triggers (no LLM decision-making):
-
-1. **Term Frequency**: If a proper noun appears in 5+ beliefs but has no Lexicon entry, gather those beliefs and synthesize a Lexicon summary via LLM.
-2. **Mass Threshold**: If any single belief crosses mass ≥ 5.0 and its dominant proper noun has no Lexicon entry, same treatment.
-
-The proper noun detection uses a sophisticated multi-pass algorithm:
-- Strips possessives (`the creator's` → `<name>`)
-- Detects multi-word terms (consecutive capitalized words)
-- Tracks article usage (`the X` = named entity, `a/an X` = generic noun)
-- Absorption filter: if a word only appears inside multi-word compounds, it's absorbed into the compound and not counted independently.
 
 ---
 
@@ -78,14 +75,14 @@ The BatchService is the **formatting and validation gateway** between raw belief
 1. Read `data/pending_beliefs.json` — filter to `status: "pending"`.
 2. Batch candidates (up to 10 per API call).
 3. Send to Gemini with `_FORMAT_SPEC` (lines 55–112) — a detailed formatting prompt enforcing:
-   - Category-specific templates (e.g., self_identity must start with "I am")
+   - Category-specific templates (e.g., premises must start with "I am" or "I can" if about self/ability)
    - The "implied foundations" principle: state the REALIZATION, not the premises
-   - 250-char max per belief (300 for feedback)
+   - 250-char max per belief (500 for Layer 2 beliefs)
    - Condensation rules for over-length candidates
 4. Parse structured response: `BELIEF [n]: ... / CATEGORY [n]: ... / STATUS [n]: ACCEPT|REJECT|SPLIT`
 5. Validate each formatted belief against `_validate_belief()` (lines 290–324):
    - Length bounds, no markdown, no numbered lists, no meta-references
-   - Category-specific prefix checks
+   - Category-specific prefix checks (for premises, propositions, preferences)
 6. Write accepted beliefs to the BeliefStore with `compute_cognitive_mass()`.
 7. Mark processed candidates as "integrated" or "rejected" in pending_beliefs.json.
 
@@ -140,18 +137,17 @@ The pattern is stored as a high-importance memory (not a direct belief), so the 
 
 ### 12.1 Category Architecture
 
-8 categories, each a separate JSON file:
+7 categories divided into 2 tiers, each a separate JSON file:
 
-| Category | File | Template | Purpose |
-|----------|------|----------|---------|
-| self_identity | self_identity.json | "I am..." | Core personality |
-| people | people.json | "[Name]..." | Relational knowledge |
-| knowledge | knowledge.json | "[Subject] [predicate]" | World facts |
-| capabilities | capabilities.json | "I can..." | Demonstrable abilities |
-| skills | skills.json | "To [goal]: [steps]" | Procedural HOW-TO |
-| preferences | preferences.json | "I want/prefer/value..." | Normative desires |
-| feedback | feedback.json | "[Lesson]. [Why]. [How]" | Experiential lessons |
-| desires | desires.json | (legacy, migrating) | Being replaced by preferences |
+| Category | File | Template | Tier / Purpose |
+|----------|------|----------|----------------|
+| premises | premises.json | "I am...", "I can...", etc. | Layer 1: Axiomatic self-observations & abilities |
+| propositions | propositions.json | "[Name]...", "If X then Y" | Layer 1: Objective facts & conditional knowledge |
+| preferences | preferences.json | "I want/prefer/value..." | Layer 1: Normative values & likes |
+| people | people.json | — | Layer 2: Relational profiles |
+| skills | skills.json | "To [goal]: [steps]" | Layer 2: Procedural skillsets |
+| desires | desires.json | — | Layer 2: Long-term goals & aspirations |
+| concepts | concepts.json | — | Layer 2: Crystallized conceptual understanding |
 
 ### 12.2 Cognitive Mass Equation (verified lines 956–994)
 

@@ -208,15 +208,15 @@ When a memory is recalled, `memory_manager.recall_with_somatic_echo()` (lines 54
 
 The Preconscious is the **bridge between the 8D spatial manifold and the Gemini conscious layer**. Every pulse, it assembles a `<peripheral-awareness>` injection block containing everything Helix should "feel" without explicitly searching for it.
 
-### 7.2 Injection Pipeline (verified lines 100–300)
+### 7.2 Injection Pipeline (verified lines 253–411)
 
 The `inject(previous_thought, trigger_type)` method executes:
 
-1. **Lexicon Pre-Filter**: Scan the trigger text for terms matching `lexicon.json` entries. Matched entries are injected at **highest priority** (they are curated, authoritative summaries). A **blacklist** prevents re-injecting the same lexicon entry within a rolling window.
+1. **Layer 2 Anchor Match**: Scan the trigger text for terms matching Layer 2 anchor entries (loaded from `people.json`, `concepts.json`, `skills.json`, `desires.json`). Matched entries are injected at **highest priority** (authoritative summaries/narratives). A **blacklist** prevents re-injecting the same anchor entry within the current context window.
 
-2. **Gravity-Ranked Belief Query**: Query `physics_engine.get_neighborhood()` for the k-nearest beliefs to the current attention center, ranked by gravitational force. Lexicon-matched beliefs are **excluded** from this query to avoid redundancy.
+2. **Gravity-Ranked Belief Query**: Query the 8D concept seeds via `_pull_relevant_beliefs()` for the k-nearest beliefs to the attention center. Layer 2 matched anchor entries are **excluded** from this query to avoid double-injection/redundancy.
 
-3. **Gravity-Ranked Memory Query**: Same query against the memory space.
+3. **Spatial Neighborhood Query**: Query the physics engine's gravitational neighborhood via `_pull_spatial_neighborhood()`.
 
 4. **Scratchpad Summary**: Pull active/due notes from the Scratchpad.
 
@@ -224,28 +224,28 @@ The `inject(previous_thought, trigger_type)` method executes:
 
 6. **Spatial Awareness Signal**: Generate a natural-language description of the attention dynamics (e.g., "deep focus — thoughts are cohering" or "attention shifting rapidly").
 
-### 7.3 Lexicon System (verified lines 50–100)
+### 7.3 Layer 2 Anchor System (verified lines 122–174)
 
-The Lexicon (`data/beliefs/lexicon.json`) contains ~22 high-density entries that serve as **authoritative, curated context anchors**. Each entry:
+Layer 2 beliefs (`people.json`, `concepts.json`, `skills.json`, `desires.json`) serve as **authoritative, crystallized context anchors**. During initialization, they are loaded into `self._lexicon_lookup` where each entry is represented as:
 
 ```json
 {
+    "id": "con_xyz",
     "term": "Cognitive Gravity",
-    "aliases": ["cognitive gravity", "gravity ranking"],
     "summary": "The mathematical framework...",
-    "mass": 8.5
+    "category": "concepts",
+    "aliases": ["cognitive gravity", "gravity ranking"]
 }
 ```
 
-Term-matching is case-insensitive and checks aliases. The blacklist TTL is tied to the context compression lifecycle — when context is compressed, the blacklist is cleared so lexicon entries become available again.
+Term-matching is case-insensitive, word-boundary aware, and checks aliases. The blacklist is cleared during context compression, making anchor entries eligible for re-injection to re-ground the LLM's state.
 
 ### 7.4 Token Budget Management
 
-The preconscious enforces a strict token budget for injections (typically ~2000 tokens). It allocates across sources:
-- Lexicon hits: highest priority, up to 40% of budget
-- Beliefs: 35% of budget
-- Memories: 15% of budget
-- Scratchpad + somatic: 10% of budget
+The preconscious dynamically manages budget allocation:
+- Layer 2 anchor hits: highest priority, injected first.
+- Spatial Neighborhood / Beliefs: bounded by target and maximum token caps (e.g., 500 tokens for spatial neighborhood).
+- Scratchpad + somatic + affect: low footprint, qualitative formatting.
 
 ---
 

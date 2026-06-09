@@ -65,7 +65,7 @@ All queued events are extracted with `_drain_events()`.  This guarantees determi
 ### Step 3: Pre‑conscious Injection (Line 583)
 `preconscious.inject()` pulls:
 - **Spatial memory** (nearest KD‑Tree points in the 8‑D belief field).
-- **Lexicon terms** that match the current context.
+- **Layer 2 anchors** that match the current context.
 - **Scratchpad notes** relevant to the current focus.
 The trigger is `"user_message"` when there are events, otherwise `"llm_output"`.  The result is wrapped in a `<spatial‑awareness>` block, giving the LLM a *felt* sense of the agent’s internal world without explicit search calls.
 
@@ -131,7 +131,7 @@ Helix no longer wipes the session on overflow.  Two *soft* triggers cause **roll
 1. Retrieves full session history from the chat session.
 2. Calls `ContextCompressor.compress()` with the current token count and the latest `spatial_state`.
 3. Replaces the history with a **first‑person summary** that preserves the agent’s subjective viewpoint.
-4. Clears the lexicon blacklist so high‑frequency terms can be re‑injected in the new context.
+4. Clears the Layer 2 anchor blacklist so high‑frequency terms can be re‑injected in the new context.
 
 ---
 

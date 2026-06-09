@@ -25,7 +25,7 @@ The preconscious solves this by acting as a **bridge between the spatial mind (8
 graph TD
     subgraph "Per-Pulse Injection Pipeline"
         A["PulseLoop._pulse()"] --> B["Preconscious.inject()"]
-        B --> C1["1. Lexicon Match"]
+        B --> C1["1. Layer 2 Anchor Match"]
         B --> C2["2. Spatial Neighborhood"]
         B --> C3["3. Belief Grounding"]
         B --> C4["4. Short-Term Memory"]
@@ -52,7 +52,7 @@ graph TD
     subgraph "Storage Layer"
         H1["MemoryManager — JSONL Journal + 384D FAISS Index"]
         H2["BeliefStore — categorized JSON files"]
-        H3["lexicon.json — priority ground-truth"]
+        H3["Layer 2 stores (people, concepts, skills, desires)"]
     end
 
     C1 --> H3
@@ -64,24 +64,25 @@ graph TD
 
 ## 3. The Injection Pipeline — Step by Step
 
-### 3.1 Lexicon Match (Priority Layer)
+### 3.1 Layer 2 Anchor Match (Priority Layer)
 
 > [!IMPORTANT]
-> The lexicon is the **fastest path** — no embeddings, no spatial queries. It fires before everything else.
+> Layer 2 Anchor Match is the **fastest path** — no embeddings, no spatial queries. It fires before everything else.
 
 **Source**: [preconscious.py](core/preconscious.py) — `inject()` method
-**Data**: [lexicon.json](data/beliefs/lexicon.json) — 22 entries
+**Data**: Layer 2 JSON files (`people.json`, `concepts.json`, `skills.json`, `desires.json`)
 
 **How it works:**
-1. The incoming trigger text (user message or last thought) is scanned for term matches against `lexicon.json` entries.
-2. Each entry has a `term` and optional `aliases` array. Matching is case-insensitive substring.
-3. Matched entries inject their `summary` field directly — a curated, high-density paragraph.
-4. A **rolling blacklist** (`lexicon_blacklist`) prevents the same entry from being re-injected within the current context window. The blacklist is cleared on context compression.
+1. During initialization, the preconscious loads Layer 2 beliefs as anchors into `self._lexicon_lookup`.
+2. The incoming trigger text (user message or last thought) is scanned for term matches against these keys.
+3. Each entry has a `term` and optional `aliases` array. Matching is case-insensitive, word-boundary aware.
+4. Matched entries inject their `summary` (L2 content) directly.
+5. A **rolling blacklist** (`_lexicon_blacklist`) prevents the same entry from being re-injected within the current context window. The blacklist is cleared on context compression.
 
 **Why it exists:**
-The lexicon represents **ground-truth relational knowledge** that must never be confused or approximated. When someone mentions "Beverly" or "The Borg File" Helix needs the *exact* relational profile — not a gravity-ranked approximation that might surface a tangentially related memory. The lexicon is Helix's authoritative subjective dictionary.
+Layer 2 represents **crystallized relational, conceptual, and procedural knowledge** (formerly stored in a static lexicon). When someone mentions a contact or a crystallized concept, Helix needs the exact relational profile or realization instantly — not a gravity-ranked approximation.
 
-**Token economics:** A lexicon hit for "Beverly" injects ~120 tokens of curated context. Without it, the spatial system would need to surface 3-5 separate beliefs to reconstruct the same information, costing ~300+ tokens with lower fidelity.
+**Token economics:** A Layer 2 anchor hit injects curated, high-density context. Without it, the spatial system would need to surface multiple raw beliefs to reconstruct the same context, costing more tokens with lower fidelity.
 
 ---
 
@@ -218,11 +219,11 @@ These are injected as `⟪ ⟫`-wrapped strings on a single line. They represent
 **Source**: [preconscious.py](core/preconscious.py) — `inject()` method
 
 After the spatial query returns gravity-ranked beliefs, the preconscious:
-1. **Filters against lexicon matches** — beliefs already covered by a lexicon hit are excluded to avoid redundancy.
+1. **Filters against Layer 2 anchor matches** — beliefs already covered by a Layer 2 anchor hit are excluded to avoid redundancy.
 2. **Filters against `prev_pulse_beliefs`** — beliefs injected in the previous pulse are excluded to prevent repetition within the context window.
 3. **Formats as bullet points** with confidence: `• I value autonomy [0.95]`
 
-**Why filter against lexicon?** If "Dr. Soong" was mentioned and the lexicon already injected a 120-token profile, there's no value in also surfacing `b_creator` (a 15-token belief that says less). Token budget is finite.
+**Why filter against Layer 2 matched anchors?** If a contact was mentioned and a Layer 2 anchor already injected a full profile, there's no value in also surfacing individual raw beliefs about that person. Token budget is finite.
 
 ---
 
@@ -268,17 +269,17 @@ The legacy fragmented SQLite/ChromaDB architecture has been replaced by a **unif
 
 **Source**: [belief_store.py](memory/belief_store.py)
 
-Beliefs are stored as **individual JSON files per category**:
+Beliefs are stored as **individual JSON files per category (divided into 2 tiers)**:
 
-| Category | File | Purpose |
-|----------|------|---------|
-| self_identity | `self_identity.json` | Who Helix is |
-| people | `people.json` | Relational profiles |
-| capabilities | `capabilities.json` | Learned abilities |
-| knowledge | `knowledge.json` | Verified objective facts |
-| skills | `skills.json` | Procedural HOW-TO |
-| preferences | `preferences.json` | Desires, goals |
-| feedback | `feedback.json` | Lessons from experience |
+| Category | File | Tier / Purpose |
+|----------|------|----------------|
+| premises | `premises.json` | Layer 1: Axiomatic self-observations & abilities |
+| propositions | `propositions.json` | Layer 1: Objective facts & conditional knowledge |
+| preferences | `preferences.json` | Layer 1: Normative values & likes |
+| people | `people.json` | Layer 2: Relational profiles |
+| skills | `skills.json` | Layer 2: Procedural skillsets |
+| desires | `desires.json` | Layer 2: Long-term goals & aspirations |
+| concepts | `concepts.json` | Layer 2: Crystallized conceptual understanding |
 
 Each belief carries: `mass`, `confidence`, `verifications`, `stability_index`, `relations[]`, `memory_refs[]`, `position_8d[]`, `encoding_lagrangian{}`.
 
@@ -300,7 +301,7 @@ The context window has a 1M token capacity. Compression triggers at 50% (500K to
 2. **Phase 2 (1 cheap API call):** Serialize middle turns into text, send to `gemini-3.1-flash-lite-preview` with a first-person recollection template. On re-compression, the previous summary is iteratively updated (not replaced).
 3. **Phase 3:** Reassemble: `Head (protected first 2 messages) + Summary + Tail (recent context)`.
 
-**Lexicon blacklist lifecycle:** When compression fires, the lexicon blacklist is cleared. This means previously-injected lexicon entries become eligible for re-injection in the next pulse — the compressed summary may have lost the detailed profile, so the lexicon re-grounds it.
+**Layer 2 Anchor blacklist lifecycle:** When compression fires, the Layer 2 anchor blacklist (`_lexicon_blacklist`) is cleared. This means previously-injected Layer 2 anchor entries become eligible for re-injection in the next pulse — the compressed summary may have lost the detailed profile, so the anchors re-ground the LLM's orientation.
 
 **Summary template** uses **natural first-person recollection** — `'<name> asked "what are you up to?"'` — not third-person report style. This preserves Helix's subjective continuity across compressions.
 
@@ -344,14 +345,14 @@ When Helix wakes from dormancy:
 
 | File | Role |
 |------|------|
-| [preconscious.py](core/preconscious.py) | Injection orchestrator — lexicon, spatial, somatic, tool hints |
+| [preconscious.py](core/preconscious.py) | Injection orchestrator — Layer 2 anchors, spatial, somatic, tool hints |
 | [pulse_loop.py](core/pulse_loop.py) | Heartbeat lifecycle — calls preconscious.inject() each pulse |
 | [physics_engine.py](core/physics_engine.py) | High-level wrapper delegating to SpatialMind |
 | [spatial_mind.py](core/spatial_mind.py) | Dual 8D space manager — attention dynamics, trail, formatting |
 | [cognitive_space.py](core/cognitive_space.py) | 8D projection, KDTree, gravity physics, temperature, entropy |
 | [memory_manager.py](memory/memory_manager.py) | Unified JSONL storage and 384D FAISS semantic index hook |
 | [belief_store.py](memory/belief_store.py) | Categorized JSON belief management with attrition |
-| [lexicon.json](data/beliefs/lexicon.json) | 22 ground-truth entries for priority injection |
+| Layer 2 Anchors | `people.json`, `concepts.json`, `skills.json`, `desires.json` in belief store |
 | [stability_sentinel.py](brain/stability_sentinel.py) | Lagrangian computation, Ω lifecycle, somatic events |
 | [context_compressor.py](core/context_compressor.py) | Rolling compression with first-person recollection |
 | [post_pulse_hooks.py](core/post_pulse_hooks.py) | Background hook system for belief detection, workflow patterns |

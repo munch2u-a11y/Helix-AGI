@@ -79,7 +79,7 @@ Each pulse executes this sequence (verified lines 300–500):
 
 1. **Event Drain**: Dequeue all pending events (user messages, stability alerts, timer events).
 2. **Lagrangian Snapshot (Before)**: Capture `sentinel.get_lagrangian_snapshot()` — the somatic state before the pulse.
-3. **Preconscious Injection**: Call `preconscious.inject(trigger)` to get gravity-ranked beliefs, memories, lexicon entries, and scratchpad notes.
+3. **Preconscious Injection**: Call `preconscious.inject(trigger)` to get gravity-ranked beliefs, memories, Layer 2 anchors, and scratchpad notes.
 4. **Prompt Assembly**: Combine events + preconscious context + somatic state into a single prompt.
 5. **LLM Call**: Send to `GeminiSession.send_message()` — which handles function calling internally.
 6. **Memory Storage**: Save the thought to MemoryManager with the Lagrangian snapshot and 8D position.

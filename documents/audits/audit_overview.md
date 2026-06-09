@@ -79,7 +79,7 @@ The following detailed module audits are available:
 
 #### 1. Core Loop & Consciousness
 - **[Pulse Loop Audit](audit_pulse_loop.md)** (`core/pulse_loop.py`): The main state machine, event queue, rate-limit fallback, and heartbeat cycle.
-- **[Preconscious Audit](audit_preconscious.md)** (`core/preconscious.py`): Context assembly, lexicon injection, dynamic spatial neighborhood retrieval, and toolset awareness.
+- **[Preconscious Audit](audit_preconscious.md)** (`core/preconscious.py`): Context assembly, Layer 2 anchor injection, dynamic spatial neighborhood retrieval, and toolset awareness.
 
 #### 2. Spatial Physics & Attention
 - **[Spatial Mind Audit](audit_spatial_mind.md)** (`core/spatial_mind.py`): The wrapper managing the dual 8D fields (belief/memory) and handling pulse integration.
