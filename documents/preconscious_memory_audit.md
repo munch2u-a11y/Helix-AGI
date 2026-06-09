@@ -45,7 +45,7 @@ graph TD
         F1 --> G["CognitiveSpace"]
         G --> G1["KDTree query_nearby()"]
         G --> G2["_compute_structural_mass()"]
-        G --> G3["_compute_temperature()"]
+        G --> G3["_compute_recency_temperature()"]
         G --> G4["step_attention() — Euler-Lagrange"]
     end
 
@@ -189,7 +189,7 @@ T = T₀ / (1 + (pulse_age / τ)²)    [Lorentzian profile]
 
 **Minimum temperature: 0.05** — the "cosmic microwave background." Even ancient concepts have *some* thermal presence; nothing is ever truly cold.
 
-**Source**: [cognitive_space.py](core/cognitive_space.py) — `_compute_temperature()` (L1030-1081)
+**Source**: [cognitive_space.py](core/cognitive_space.py) — `_compute_recency_temperature()` (L1039-1087)
 
 **Why Lorentzian, not exponential?** A Lorentzian has a fatter tail than an exponential. At `age = τ`, T = T₀/2. At `age = 3τ`, T = T₀/10. This means old memories cool slowly rather than vanishing — a week-old memory still has ~10% of its original heat, enough to be surfaced if the attention center passes nearby. An exponential would suppress it to near-zero.
 

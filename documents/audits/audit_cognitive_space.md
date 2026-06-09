@@ -113,7 +113,7 @@ mass = c × (1 + n_connections / n_mean)
 - For **memories/trails**: `c = importance`.
 - `n_connections` = `relations_count`; `n_mean` = mean connections across all points (computed in `update_gravity_field`).
 
-### Lorentzian Temperature (`_compute_temperature` lines 1056‑1095)
+### Lorentzian Temperature (`_compute_recency_temperature` lines 1039‑1087)
 ```python
 T = T₀ / (1 + (pulse_age / τ)²)
 ```

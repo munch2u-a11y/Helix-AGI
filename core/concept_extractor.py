@@ -9,7 +9,7 @@ noun phrases from trigger text.
 This module serves two roles:
   1. Concept extraction — pulls 1-5 key concepts from trigger text,
      scaled dynamically by input richness (word count / density).
-  2. Lexicon backend — scans extracted concepts against the lexicon
+  2. Layer 2 backend — scans extracted concepts against the Layer 2
      term lookup to separate known entities from general concepts.
 
 Each extracted concept becomes an independent gravity query center
@@ -86,7 +86,7 @@ class ConceptExtractor:
         self.lexicon_keys = set(k.lower() for k in (lexicon_keys or []))
 
     def update_lexicon_keys(self, lexicon_keys: Set[str]):
-        """Update the lexicon key set (e.g., after lexicon.json reload)."""
+        """Update the lexicon key set (e.g., after Layer 2 anchors reload)."""
         self.lexicon_keys = set(k.lower() for k in lexicon_keys)
 
     # ── Tokenizer ─────────────────────────────────────────────────────

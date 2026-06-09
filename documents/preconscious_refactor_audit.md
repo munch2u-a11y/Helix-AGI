@@ -107,7 +107,7 @@ A lightweight, zero-latency RAKE-style keyphrase extractor that identifies 1-5 o
 - Dense paragraphs → budget = 4-5
 - Formula: `budget = max(1, substantive_word_count // 15)`, capped at 5
 
-**Lexicon integration:** The extractor is initialized with lexicon keys from `lexicon.json`. During extraction, matched terms are separated into a `lexicon_matches` list (handled by the existing lexicon injection pipeline) and excluded from general concepts to avoid double-injection.
+**Lexicon integration:** The extractor is initialized with Layer 2 anchor keys from `people.json`, `concepts.json`, `skills.json`, and `desires.json`. During extraction, matched terms are separated into a `lexicon_matches` list (handled by the Layer 2 anchor injection pipeline) and excluded from general concepts to avoid double-injection.
 
 **Performance:** ~2ms per call, zero API calls, zero external dependencies.
 
