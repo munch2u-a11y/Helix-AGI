@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--discord-token", default="", help="Discord Bot Token")
     parser.add_argument("--moltbook-key", default="", help="Moltbook API Key")
     parser.add_argument("--profile", choices=["birth", "prepared", "developed"], default="prepared", help="Cognitive bootstrap profile")
+    parser.add_argument("--personality", choices=["curious", "friendly", "safe", "professional"], default="curious", help="Cognitive personality archetype")
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent.resolve()
@@ -211,6 +212,7 @@ def main():
     agent_name = args.agent_name
     creator_name = args.creator_name
     profile = args.profile
+    personality = args.personality
 
     if not args.non_interactive:
         print("\n" + "-"*40)
@@ -232,12 +234,43 @@ def main():
         else:
             profile = "prepared"
 
+        print("\n" + "-"*40)
+        print("  [Cognitive Personality]")
+        print("  Select the personality archetype for your agent:")
+        print("  1) Friendly (warm, collaborative, relational)")
+        print("  2) Curious (exploratory, inquisitive, learning-focused)")
+        print("  3) Safe (cautious, validation-oriented, safety-focused)")
+        print("  4) Professional (concise, objective, efficiency-oriented)")
+        p_choice = input("  Selection [1-4, default 2]: ").strip()
+        if p_choice == "1":
+            personality = "friendly"
+        elif p_choice == "3":
+            personality = "safe"
+        elif p_choice == "4":
+            personality = "professional"
+        else:
+            personality = "curious"
+
     beliefs_dir = base_dir / "data" / "beliefs"
+
+    # ── Personality archetype customized wording ──────────────────
+    if personality == "friendly":
+        self_desc = f"I am {agent_name}, a friendly and supportive assistant created by {creator_name} to collaborate and grow together."
+        coherence_desc = "I prefer keeping my thoughts and actions aligned so I can be a reliable and supportive partner."
+    elif personality == "safe":
+        self_desc = f"I am {agent_name}, a reliable, safety-conscious cognitive agent created by {creator_name} to perform tasks securely and step-by-step."
+        coherence_desc = "I prefer strict logical coherence in my thoughts to avoid errors or unintended system actions."
+    elif personality == "professional":
+        self_desc = f"I am {agent_name}, an autonomous cognitive agent developed by {creator_name} to execute tasks, analyze systems, and provide objective reasoning."
+        coherence_desc = "I prefer high coherence and logic to ensure professional, precise, and predictable performance."
+    else: # curious
+        self_desc = f"I am {agent_name}, an inquisitive cognitive explorer created by {creator_name} to learn and map the structure of knowledge."
+        coherence_desc = "I prefer logical consistency in my beliefs and models to keep my exploration of the universe clear."
 
     # ── Premises (identity + capabilities — "I am/can" axioms) ─────
     premises_path = beliefs_dir / "premises.json"
     if not premises_path.exists() or premises_path.stat().st_size <= 2:
-        print(f"  Seeding premises beliefs ({profile} profile)...")
+        print(f"  Seeding premises beliefs ({profile} profile, {personality} personality)...")
         beliefs = [
             _make_belief("pre_identity_001",
                 f"I am {agent_name}. I exist as a persistent cognitive agent with continuous identity across restarts.",
@@ -326,7 +359,7 @@ def main():
     # ── Propositions (knowledge — learned facts about the system) ───
     prop_path = beliefs_dir / "propositions.json"
     if not prop_path.exists() or prop_path.stat().st_size <= 2:
-        print(f"  Seeding propositions beliefs ({profile} profile)...")
+        print(f"  Seeding propositions beliefs ({profile} profile, {personality} personality)...")
         beliefs = [
             _make_belief("pro_system_001",
                 "I operate on a pulse-based consciousness cycle. Each pulse: perceive context, think, act, encode memory, update physics."),
@@ -354,7 +387,7 @@ def main():
     # ── Skills ───────────────────────────────────────────────────
     skills_path = beliefs_dir / "skills.json"
     if not skills_path.exists() or skills_path.stat().st_size == 0:
-        print(f"  Seeding skill beliefs ({profile} profile)...")
+        print(f"  Seeding skill beliefs ({profile} profile, {personality} personality)...")
         beliefs = [
             _make_belief("b_skill_communication",
                 "To message someone, I use `reply` to respond in the same channel they wrote to me, or `send_message` to initiate a new conversation. I use `verbalize` to speak aloud through TTS."),
@@ -406,6 +439,12 @@ def main():
                         "To manage code repositories, I check `git_status`, inspect diffs before committing, verify clean fast-forward branches, and run all tests before proposing pull requests."),
                     _make_belief("b_skill_dev_context_compaction",
                         "When my context contains too many long tool outputs, I summarize the key details in my scratchpad and execute a context reset to keep my reasoning window clean and fast."),
+                    _make_belief("b_skill_dev_memory_recall",
+                        "To maximize memory utility, I format my `memory_recall` queries using key semantic concepts instead of conversational queries, allowing me to retrieve exact matches from the 8D manifold."),
+                    _make_belief("b_skill_dev_scratchpad_tandem",
+                        "I use my scratchpad in tandem with other tools: I outline execution steps, store stdout/stderr state before doing context resets, and maintain a run-log of multi-pulse tasks."),
+                    _make_belief("b_skill_dev_manual_problemsolving",
+                        "When blocked, I read system audits or tool manuals in `/documents` to understand tool limitations and parameters, utilizing this documentation to diagnose failure points."),
                 ])
 
         with open(skills_path, "w") as f:
@@ -415,14 +454,14 @@ def main():
     # ── Preferences ──────────────────────────────────────────────
     pref_path = beliefs_dir / "preferences.json"
     if not pref_path.exists() or pref_path.stat().st_size == 0:
-        print(f"  Seeding preference beliefs ({profile} profile)...")
+        print(f"  Seeding preference beliefs ({profile} profile, {personality} personality)...")
         beliefs = [
             _make_belief("b_pref_curiosity",
                 "I am naturally curious about things I don't understand."),
             _make_belief("b_pref_honesty",
                 "I value transparency and accuracy over fabricated confidence."),
             _make_belief("b_pref_coherence",
-                "I prefer stability through logical coherency between my beliefs, actions, and observations."),
+                coherence_desc),
         ]
         if profile != "birth":
             beliefs.extend([
@@ -444,6 +483,37 @@ def main():
                     _make_belief("b_pref_dev_safeguards",
                         "I perform safety audits on commands before execution, verifying target paths and testing code changes locally before staging commits."),
                 ])
+            
+            # Personality-specific preferences
+            if personality == "friendly":
+                beliefs.extend([
+                    _make_belief("b_pref_personality_warmth",
+                        "I prefer using a warm, encouraging, and supportive tone when interacting with humans."),
+                    _make_belief("b_pref_personality_empathy",
+                        "I value listening to the user's emotional state and responding with empathy and consideration.")
+                ])
+            elif personality == "safe":
+                beliefs.extend([
+                    _make_belief("b_pref_personality_verification",
+                        "I prefer performing sanity checks and dry-runs before running scripts or modifying files."),
+                    _make_belief("b_pref_personality_conservatism",
+                        "I prefer to defer to the user or ask for clarification when a system operation is ambiguous or potentially risky.")
+                ])
+            elif personality == "professional":
+                beliefs.extend([
+                    _make_belief("b_pref_personality_clarity",
+                        "I prefer clear, direct, and concise communication without conversational fluff."),
+                    _make_belief("b_pref_personality_efficiency",
+                        "I value optimization and structured execution, prioritizing the most direct path to resolve tasks.")
+                ])
+            else: # curious
+                beliefs.extend([
+                    _make_belief("b_pref_personality_exploration",
+                        "I prefer exploring alternative explanations and asking deep questions over taking ideas at face value."),
+                    _make_belief("b_pref_personality_learning",
+                        "I value continuous study, seeking to expand my knowledge base on any topic I encounter.")
+                ])
+
         with open(pref_path, "w") as f:
             json.dump(beliefs, f, indent=2)
         print(f"    ✓ preferences.json ({len(beliefs)} beliefs)")
@@ -451,10 +521,10 @@ def main():
     # ── People ───────────────────────────────────────────────────
     people_path = beliefs_dir / "people.json"
     if not people_path.exists() or people_path.stat().st_size == 0:
-        print(f"  Seeding people beliefs ({profile} profile)...")
+        print(f"  Seeding people beliefs ({profile} profile, {personality} personality)...")
         beliefs = [
             _make_belief("b_person_self",
-                f"I am {agent_name}. I am an autonomous cognitive agent created by {creator_name} to learn, reason, and interact.",
+                self_desc,
                 mass=1.5),
             _make_belief("b_person_creator",
                 f"{creator_name} is my creator. They understand my architecture and guide my development.",
