@@ -42,18 +42,15 @@ This is where 90% of the real work lives. ~1527 lines.
 |---|---|---|
 | **"Verlinde entropic gravity"** (comments at 1014-1026) | — | The comment claims `F = T × ΔS / Δx` from Verlinde 2011. The actual code does `gravity = T × mass / d²`. This is just a weighted score. It has nothing to do with holographic screens, entropic information, or the second law of thermodynamics. The mapping is: "temperature" = recency, "mass" = confidence, "gravity" = relevance score. Perfectly fine as a relevance formula — just not Verlinde gravity. |
 | **"Euler-Lagrange equation"** (comments at 513-526) | — | The comment claims the system derives from `δ∫(H(q) + λ D_KL(q‖q*))dt = 0`. The actual code is `v += dt × F; x += dt × v` — forward Euler integration of Newton's second law. No Lagrangian is constructed. No variational calculus is performed. No functional is minimized. The forces are defined directly, not derived from a Lagrangian. |
-| **"Shannon entropy H(q)"** (528-555) | — | The code correctly computes Shannon entropy of the gravity distribution at a point. However, **nothing calls `compute_shannon_entropy()` during normal operation.** It's used only by `compute_local_temperature()`, which is also called by nothing in the pulse loop. Dead code path. |
-| **"KL divergence"** (557-610) | — | Correctly computes KL divergence between gravity distributions at two positions. **Also never called during normal operation.** Dead code path. |
-| **"Local temperature"** (612-654) | — | Computes `H_local / H_mean` — ratio of local entropy to baseline. **Never called during normal operation.** The `_compute_temperature()` function (which IS used) is a completely different function that does Lorentzian recency decay. Confusingly, two different "temperature" concepts exist in the same file. |
+| **"Shannon entropy H(q)"** (528-555) | — | The code correctly computes Shannon entropy of the gravity distribution at a point. This is called in normal operation by the background `StabilitySentinel` thread to calculate manifold entropy. |
+| **"KL divergence"** (557-610) | — | Correctly computes KL divergence between gravity distributions at two positions. This is called in normal operation by the background `StabilitySentinel` thread to track identity drift. |
+| **"Local temperature"** (612-654) | — | Computes `H_local / H_mean` — ratio of local entropy to baseline. This is called in normal operation by the background `StabilitySentinel` thread to continuously modulate generation parameters. |
 | **"Phase states"** (docstring at 1069-1075) | — | "Gas", "liquid", "solid", "plasma" labels in the temperature docstring. Nothing reads or uses these labels. They're just comments. |
 
 #### 💀 DEAD CODE — Computed but never consumed
 
 | Component | Lines | Status |
 |---|---|---|
-| **`compute_shannon_entropy()`** | 528-555 | Never called in normal operation |
-| **`compute_kl_divergence()`** | 557-610 | Never called in normal operation |
-| **`compute_local_temperature()`** | 612-654 | Never called in normal operation |
 | **`invalidate_entropy_baseline()`** | 647-654 | **Real.** Called during context compression in the pulse loop. |
 | **`GravityField.potential_at()`** | 259-278 | Only defined in cognitive_space.py, never called. |
 
@@ -75,13 +72,13 @@ This is where 90% of the real work lives. ~1527 lines.
 | **Wake flash system** (107-110, 337-341, 656-722) | Loads overnight dream trail, sets attention to last position, injects wake fragments on first pulse. Real and functional. |
 | **Identity center computation** (422-447) | Centroid of "core" beliefs, or fallback to all-belief centroid. Used as the stability spring anchor. |
 | **CCI (Cognitive Coherence Index)** (499-571) | Composite of gravity density, gamma, identity drift. Self-calibrating EMA baselines. **Real and consumed by Sentinel.** |
+| **`_affect_steering` force** (216-221) | Incorporates Plutchik emotional steering bias vector to attract/steer attention based on affect. **Real and set dynamically by `affect_hook`.** |
 
 #### ⚠️ ISSUES
 
 | Component | Issue |
 |---|---|
 | **`_get_query_depth()` always returns (10, 8, 5)** (304-315) | The docstring says it was "Sentinel-modulated" but it's hardcoded. This means the trail always traces 5 waypoints, regardless of cognitive state. The whole function is 12 lines that could be 1 line. |
-| **`_affect_steering` check** (216-221) | Checks for a Plutchik emotional steering vector. This field is set by the affect system but it's unclear if the affect system is active. If not, it's dead code. |
 
 ---
 
@@ -136,7 +133,10 @@ CognitiveProjection (384D → 8D via QR-JL)
 KDTree spatial index (O(log N) queries)
 gravity_ranked_query() → T × mass / d²
 _compute_structural_mass() → confidence/importance
-_compute_temperature() → Lorentzian recency decay in pulse-time
+_compute_recency_temperature() → Lorentzian recency decay in pulse-time
+compute_shannon_entropy() → called by StabilitySentinel
+compute_kl_divergence() → called by StabilitySentinel
+compute_local_temperature() → called by StabilitySentinel
 step_attention() → v += F; x += v with 3 forces
 Gamma adaptation (focus inertia)
 Identity center (stability spring anchor)
@@ -150,18 +150,15 @@ invalidate_entropy_baseline() (resets baseline on context compression)
 
 ```
 GravityField (512-anchor grid) — never queried
-compute_shannon_entropy() — never called
-compute_kl_divergence() — never called  
-compute_local_temperature() — never called (NOT the same as _compute_temperature)
 potential_at() — never called
 All "Verlinde" and "Euler-Lagrange" comments — pure metaphor
 Phase state labels (gas/liquid/solid/plasma) — never read
 ```
 
-### What Might Be Broken
+### What Was Broken (Fixed)
 
-> [!WARNING]
-> **Hubble expansion**: `get_expanded_position()` exists but may not be called during queries. If positions are stored at creation and never re-expanded, the expansion is meaningless. Need to verify this is wired in.
+> [!NOTE]
+> **Hubble expansion**: `apply_hubble_expansion()` has been implemented and wired into `add_point` and state loading. Base positions and creation epochs are now correctly persisted, ensuring older beliefs expand outward dynamically.
 
-> [!WARNING]
-> **Duplicate temperature concepts**: `_compute_temperature()` (Lorentzian decay, USED) and `compute_local_temperature()` (Shannon entropy ratio, UNUSED) both exist with the word "temperature" in the name. This is a maintenance hazard.
+> [!NOTE]
+> **Duplicate temperature concepts**: The internal Lorentzian recency decay helper has been renamed to `_compute_recency_temperature()`, separating its name clearly from the Shannon-entropy-based `compute_local_temperature()` used by the Stability Sentinel.
