@@ -412,7 +412,7 @@ class ToolExecutor:
                     importance=0.6,
                     tags=["reply", "outbound", recipient.lower()],
                 )
-            return f"[You said to {recipient}]: {message}"
+            return f"Sent to {recipient}."
         return f"Could not deliver reply to {recipient} — no recent inbound channel or default channel found."
 
     def _fc_send_message(self, args: dict) -> str:
@@ -434,7 +434,7 @@ class ToolExecutor:
                     importance=0.6,
                     tags=["message", "outbound", recipient.lower()],
                 )
-            return f"[You said to {recipient}]: {message}"
+            return f"Sent to {recipient}."
         return f"Could not deliver message to {recipient} — no contact record or default channel found."
 
     def _fc_terminal(self, args: dict) -> str:

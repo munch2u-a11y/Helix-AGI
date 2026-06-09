@@ -139,7 +139,7 @@ def email_send(to: str, subject: str, body: str) -> str:
         ).execute()
 
         logger.info(f"Email sent to {to}: {subject}")
-        return f"[You emailed {to}]\nSubject: {subject}\n\n{body}"
+        return f"Email sent to {to}. Subject: {subject}"
     except Exception as e:
         return f"Email send failed: {e}"
 
@@ -414,7 +414,7 @@ def email_reply(message_id: str, body: str, reply_all: bool = False) -> str:
         _record_reply(message_id)
 
         logger.info(f"Email reply sent to {recipient_str}: {reply_subject}")
-        return f"[You replied to {recipient_str}]\nSubject: {reply_subject}\n\n{body}"
+        return f"Reply sent to {recipient_str}. Subject: {reply_subject}"
     except Exception as e:
         return f"Reply failed: {e}"
 
@@ -469,7 +469,7 @@ def email_forward(message_id: str, to: str, note: str = "") -> str:
         ).execute()
 
         logger.info(f"Email forwarded to {to}: {fwd_subject}")
-        return f"[You forwarded to {to}]\nSubject: {fwd_subject}\n\n{note if note else '(no note)'}"
+        return f"Forwarded to {to}. Subject: {fwd_subject}"
     except Exception as e:
         return f"Forward failed: {e}"
 

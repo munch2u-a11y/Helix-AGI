@@ -402,7 +402,7 @@ class OrganicBeliefStore:
         if any(w in c for w in ["i am", "my identity", "i feel", "i believe",
                                 "my self", "my name", "my existence"]):
             return "premises"
-        if any(w in c for w in ["joshua", "mom", "z_cat", "david",
+        if any(w in c for w in ["user", "mom", "z_cat", "david",
                                 "sam", "valerie", "isotopy"]):
             return "people"
         if any(w in c for w in ["i want", "i prefer", "i value",

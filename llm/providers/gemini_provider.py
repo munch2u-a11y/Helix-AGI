@@ -314,6 +314,30 @@ class GeminiSession(ChatSession):
             len(new_declarations), len(self._history),
         )
 
+    def update_generation_params(
+        self, temperature: float = None, max_output_tokens: int = None
+    ):
+        """Update generation parameters mid-session.
+
+        Called by the pulse loop before each send_message() to apply
+        the Sentinel's spatially-modulated temperature and token budget.
+        Only rebuilds config if values actually changed.
+        """
+        changed = False
+        if temperature is not None and abs(temperature - self._temperature) > 0.005:
+            self._temperature = temperature
+            changed = True
+        if max_output_tokens is not None and max_output_tokens != self._max_output_tokens:
+            self._max_output_tokens = max_output_tokens
+            changed = True
+
+        if changed:
+            self._config = self._build_config()
+            logger.debug(
+                "Generation params updated: temp=%.3f, max_tokens=%d",
+                self._temperature, self._max_output_tokens,
+            )
+
     # ── Token Counting ───────────────────────────────────────────────
 
     def _update_token_count(self, response) -> None:

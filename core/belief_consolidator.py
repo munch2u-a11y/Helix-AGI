@@ -2,14 +2,15 @@
 Helix — Belief Consolidator (Nightly Merge Pass)
 
 Simple, direct belief merging:
-  1. Word-match each new belief against lexicon terms + same-category existing beliefs
+  1. Word-match each new belief against Layer 2 terms + same-category existing beliefs
   2. Send matches to Gemini Flash for MERGE/PASS decision (one call per belief, parallel)
   3. Apply merges programmatically (LLM handles content, code handles metadata)
-  4. If a merge overflows the belief char cap, divert to lexicon.json automatically
+  4. If a merge overflows the belief char cap, divert to Layer 2 automatically
 
-The lexicon is the star map — an index of named gravitational bodies.
-When a belief concept becomes too dense to fit in a normal belief, the overflow
-is automatically routed to the Lexicon as a high-density anchor entry.
+Layer 2 beliefs (people, concepts, skills, desires) are the gravitational
+anchors — dense conceptual star-centers formed by precipitation. When a
+belief concept becomes too dense to fit in a normal belief, the overflow
+is automatically routed to the appropriate Layer 2 file.
 
 Called by the Curator as Phase 2.5 of the nightly cycle.
 """
@@ -30,9 +31,6 @@ logger = logging.getLogger("helix.core.belief_consolidator")
 _MODEL = "gemini-3.1-flash-lite-preview"
 _MAX_MATCH_CANDIDATES = 6   # Top N existing beliefs to send for comparison
 _MAX_WORKERS = 4             # Parallel Gemini calls
-_LEXICON_MAX_LENGTH = 500    # Lexicon entries can hold more text than beliefs
-_LEXICON_MASS_THRESHOLD = 5.0  # Beliefs above this mass trigger Lexicon candidacy
-_LEXICON_TERM_FREQ_THRESHOLD = 5  # Terms in 5+ beliefs trigger Lexicon candidacy
 
 # Words too common to be useful for matching
 _STOPWORDS = frozenset({
@@ -61,10 +59,10 @@ _MAX_LENGTHS = {
     "premises": 250,
     "propositions": 250,
     "preferences": 250,
-    "people": 250,
-    "skills": 250,
-    "desires": 250,
-    "concepts": 300,
+    "people": 500,
+    "skills": 500,
+    "desires": 500,
+    "concepts": 500,
 }
 
 # ── System Prompt ────────────────────────────────────────────────────
@@ -105,33 +103,39 @@ _SYSTEM_PROMPT = (
 )
 
 
-# ── Lexicon Loader ───────────────────────────────────────────────────
+# ── Layer 2 Term Loader ───────────────────────────────────────────
 
 def _load_lexicon_terms(lexicon_path: Path) -> Dict[str, str]:
-    """Load lexicon terms + aliases as a matching index.
+    """Load Layer 2 terms + aliases as a matching index.
+
+    Reads from people.json, concepts.json, skills.json, desires.json
+    in the beliefs directory (lexicon_path's parent).
 
     Returns dict mapping each matchable term (lowercased) to
-    the lexicon entry's primary term (for logging/identification).
+    the entry's primary term (for logging/identification).
 
     Example: {"user": "User", "admin": "User", "creator": "User"}
     """
     terms = {}
-    try:
-        with open(lexicon_path, "r", encoding="utf-8") as f:
-            entries = json.load(f)
-        for entry in entries:
-            primary = entry.get("term", "")
-            if primary:
-                terms[primary.lower()] = primary
-            for alias in entry.get("aliases", []):
-                if alias:
-                    terms[alias.lower()] = primary
-    except Exception as e:
-        logger.warning("Failed to load lexicon: %s", e)
+    beliefs_dir = lexicon_path.parent
+    for cat in ["people", "concepts", "skills", "desires"]:
+        cat_path = beliefs_dir / f"{cat}.json"
+        try:
+            with open(cat_path, "r", encoding="utf-8") as f:
+                entries = json.load(f)
+            for entry in entries:
+                primary = entry.get("term", "")
+                if primary:
+                    terms[primary.lower()] = primary
+                for alias in entry.get("aliases", []):
+                    if alias:
+                        terms[alias.lower()] = primary
+        except Exception:
+            continue
     return terms
 
 
-# ── Lexicon Diversion ────────────────────────────────────────────────
+
 
 def _extract_dominant_term(text: str) -> Optional[str]:
     """Extract the most significant proper noun from belief text.
@@ -153,77 +157,6 @@ def _extract_dominant_term(text: str) -> Optional[str]:
         if w.lower() == winner_lower:
             return w
     return proper_nouns[0]
-
-
-def _divert_to_lexicon(
-    term: str,
-    summary: str,
-    lexicon_path: Path,
-    category: str = "concept",
-) -> bool:
-    """Create or update a Lexicon entry. Pure system routing, no LLM.
-
-    If an entry for this term already exists, its summary is replaced
-    with the richer merged content. If not, a new entry is created.
-
-    Returns True on success.
-    """
-    try:
-        with open(lexicon_path, "r", encoding="utf-8") as f:
-            entries = json.load(f)
-    except Exception:
-        entries = []
-
-    # Determine the lexicon category based on the belief category
-    if category == "people":
-        lex_category = "person"
-    else:
-        lex_category = "concept"
-
-    # Check if this term already has an entry
-    existing = None
-    for entry in entries:
-        if entry.get("term", "").lower() == term.lower():
-            existing = entry
-            break
-        for alias in entry.get("aliases", []):
-            if alias.lower() == term.lower():
-                existing = entry
-                break
-        if existing:
-            break
-
-    # Truncate to Lexicon cap
-    summary = summary[:_LEXICON_MAX_LENGTH]
-
-    if existing:
-        # Update — only if the new summary is richer (longer)
-        if len(summary) > len(existing.get("summary", "")):
-            existing["summary"] = summary
-            logger.info("⭐ LEXICON UPDATED [%s]: %s", term, summary[:80])
-        else:
-            logger.debug("Lexicon entry for '%s' already richer, skipping", term)
-            return True
-    else:
-        # Create new entry
-        lex_id = f"lex_{term.lower().replace(' ', '_')}"
-        new_entry = {
-            "id": lex_id,
-            "term": term,
-            "aliases": [],
-            "category": lex_category,
-            "summary": summary,
-        }
-        entries.append(new_entry)
-        logger.info("⭐ LEXICON CREATED [%s]: %s", term, summary[:80])
-
-    try:
-        with open(lexicon_path, "w", encoding="utf-8") as f:
-            json.dump(entries, f, indent=2, ensure_ascii=False)
-        return True
-    except Exception as e:
-        logger.error("Failed to write lexicon: %s", e)
-        return False
 
 
 # ── Tokenizer ────────────────────────────────────────────────────────
@@ -418,16 +351,12 @@ def _apply_merge(
     decision: Dict[str, str],
     new_belief: Dict[str, Any],
     belief_store,
-    lexicon_path: Path = None,
 ) -> bool:
     """Update the existing belief in place with merged content + metadata.
 
     The new belief is never added — the existing one absorbs it.
     Code handles all metadata; only content comes from the LLM.
-
-    If the merged content exceeds the category's char cap, the overflow
-    is automatically diverted to lexicon.json. The winning belief keeps
-    its pre-merge content but still absorbs mass, relations, and refs.
+    If the merged content exceeds the category char cap, it is truncated.
     """
     merge_with_id = decision["merge_with"]
     merged_content = decision["content"]
@@ -469,35 +398,9 @@ def _apply_merge(
     else:
         encoding_lag = existing.get("encoding_lagrangian")
 
-    # ── Lexicon Overflow Check ───────────────────────────────────
-    # If the merged content exceeds the belief char cap, divert the
-    # full merged text to the Lexicon. The belief keeps its original
-    # content but still absorbs mass, relations, and memory refs.
+    # Truncate if merged content exceeds the category char cap
     max_len = _MAX_LENGTHS.get(category, 250)
-    content_to_store = merged_content
-
-    if len(merged_content) > max_len and lexicon_path:
-        dominant_term = _extract_dominant_term(merged_content)
-        if dominant_term:
-            _divert_to_lexicon(
-                term=dominant_term,
-                summary=merged_content,
-                lexicon_path=lexicon_path,
-                category=category,
-            )
-            # Belief keeps its pre-merge content (already fits)
-            content_to_store = existing.get("content", merged_content[:max_len])
-            logger.info(
-                "↗ Overflow diverted to lexicon [%s], belief keeps original content",
-                dominant_term,
-            )
-        else:
-            # No proper noun found — truncate as fallback
-            content_to_store = merged_content[:max_len]
-            logger.warning(
-                "Merged content overflows (%d chars) but no dominant term found — truncating",
-                len(merged_content),
-            )
+    content_to_store = merged_content[:max_len]
 
     # Apply the update — existing belief absorbs everything
     updates = {
@@ -530,7 +433,6 @@ def _process_one_belief(
     new_belief: Dict[str, Any],
     lexicon_terms: Dict[str, str],
     belief_store,
-    lexicon_path: Path = None,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
     """Process a single new belief: match, review, merge-or-pass.
@@ -590,7 +492,7 @@ def _process_one_belief(
                 content[:60], decision["merge_with"], decision["content"][:60],
             )
         else:
-            _apply_merge(decision, new_belief, belief_store, lexicon_path=lexicon_path)
+            _apply_merge(decision, new_belief, belief_store)
 
         return {
             "action": "MERGE",
@@ -619,14 +521,15 @@ def consolidate_new_beliefs(
     """Consolidate a list of new beliefs against the existing store.
 
     For each new belief:
-      - Word-match against lexicon terms and same-category beliefs
+      - Word-match against Layer 2 terms and same-category beliefs
       - If matches found: ask Gemini to MERGE or PASS
       - If no matches: PASS directly
 
     Args:
         new_beliefs: List of belief dicts with at least {content, category}
         belief_store: BeliefStore instance
-        lexicon_path: Path to lexicon.json (default: data/beliefs/lexicon.json)
+        lexicon_path: Deprecated, ignored. Layer 2 terms are loaded from
+                      canonical files (people.json, concepts.json, etc.).
         dry_run: If True, log proposed merges without executing
 
     Returns:
@@ -636,12 +539,12 @@ def consolidate_new_beliefs(
         logger.info("No new beliefs to consolidate")
         return {"merged": 0, "passed": 0, "errors": 0, "passed_beliefs": []}
 
-    # Load lexicon as matching index
-    if lexicon_path is None:
-        lexicon_path = Path("data/beliefs/lexicon.json")
-    lexicon_terms = _load_lexicon_terms(lexicon_path)
+    # Load Layer 2 terms as matching index
+    # _load_lexicon_terms reads from people.json, concepts.json, etc.
+    beliefs_dir = Path("data/beliefs")
+    lexicon_terms = _load_lexicon_terms(beliefs_dir / "_placeholder")
     logger.info(
-        "Consolidator loaded %d lexicon terms for matching", len(lexicon_terms),
+        "Consolidator loaded %d Layer 2 terms for matching", len(lexicon_terms),
     )
 
     stats = {"merged": 0, "passed": 0, "errors": 0}
@@ -653,7 +556,7 @@ def consolidate_new_beliefs(
         for belief in new_beliefs:
             future = executor.submit(
                 _process_one_belief,
-                belief, lexicon_terms, belief_store, lexicon_path, dry_run,
+                belief, lexicon_terms, belief_store, dry_run,
             )
             futures[future] = belief
 

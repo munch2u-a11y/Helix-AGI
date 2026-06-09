@@ -24,7 +24,7 @@ logger = logging.getLogger("layer_audit")
 BELIEFS_DIR = Path("data/beliefs")
 
 NAMED_ENTITIES = {
-    'joshua', 'mom', 'david', 'sam', 'valerie', 'marley',
+    'user', 'mom', 'david', 'sam', 'valerie', 'marley',
     'zeb', 'mickey', 'freddy', 'patrick', 'antigravity',
     'helix', 'claude', 'archivist', 'storyteller', 'pyclaw',
     'z_cat', 'basin', 'nemo', 'centaurxiv', 'moltbook',

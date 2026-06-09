@@ -46,10 +46,10 @@ _MAX_LENGTHS = {
     "premises": 250,
     "propositions": 250,
     "preferences": 250,
-    "people": 250,
-    "skills": 250,
-    "desires": 250,
-    "concepts": 300,
+    "people": 500,
+    "skills": 500,
+    "desires": 500,
+    "concepts": 500,
 }
 
 # ── Format Specification (embedded for the LLM) ─────────────────────
@@ -392,9 +392,14 @@ def _parse_batch_response(
             idx_part = idx_part.strip().rstrip("ab")
             cat = cat.strip().lower().replace(" ", "_")
 
-            # Route legacy category names from LLM responses
-            from memory.belief_store import resolve_category
-            cat = resolve_category(cat)
+            # Remap legacy category names the LLM might still output
+            _LEGACY_REMAP = {
+                "self_identity": "premises",
+                "capabilities": "premises",
+                "knowledge": "propositions",
+                "feedback": "propositions",
+            }
+            cat = _LEGACY_REMAP.get(cat, cat)
 
             # Demote Layer 2 → Layer 1 (Layer 2 forms via consolidation only)
             if cat not in valid_categories:
@@ -480,11 +485,6 @@ def _validate_belief(text: str, category: str) -> Tuple[bool, str]:
         if not any(text.startswith(p) for p in
                     ["I want", "I prefer", "I value", "I strive"]):
             return False, "preferences must start with 'I want/prefer/value/strive'"
-    elif category == "desires":
-        if not any(text.startswith(p) for p in
-                    ["I aspire", "I want", "My goal", "I am working"]):
-            # Desires are flexible
-            pass
 
     return True, "ok"
 

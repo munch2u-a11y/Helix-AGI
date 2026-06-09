@@ -10,6 +10,9 @@ Key Architectural Upgrades:
 3. Strict Belief Spec: Validates output against the belief_format_spec (15-250 chars, specific categories).
 4. Co-Occurrence Wiring: Real-time Hebbian wiring via post-pulse hooks replaces batch UMAP/HDBSCAN.
    Nightly Phase 3 reads pre-built relation clusters for compound synthesis.
+5. Layer 2 Precipitation: UMAP/HDBSCAN clustering identifies dense belief
+   clusters that exceed the gravitational binding threshold (tied to expansion
+   rate). These collapse into Layer 2 beliefs (people, skills, desires, concepts).
 """
 
 import json
@@ -116,7 +119,6 @@ class Curator:
                 consolidation = consolidate_new_beliefs(
                     new_beliefs=new_beliefs,
                     belief_store=self.beliefs,
-                    lexicon_path=self.data_dir / "beliefs" / "lexicon.json",
                 )
                 stats["consolidated_merged"] = consolidation.get("merged", 0)
                 stats["consolidated_passed"] = consolidation.get("passed", 0)
@@ -137,14 +139,13 @@ class Curator:
             validated_beliefs = self._validate_and_format(all_beliefs)
             self._integrate_to_store(validated_beliefs)
 
-            # Phase 5: Lexicon Synchronization (term frequency + mass threshold)
-            logger.info("Curator Phase 5: Lexicon Synchronization")
+            # Phase 3.5: Layer 2 Precipitation (gravitational collapse)
+            logger.info("Curator Phase 3.5: Layer 2 Precipitation")
             try:
-                lexicon_updates = self._sync_lexicon()
-                stats["lexicon_created"] = lexicon_updates.get("created", 0)
-                stats["lexicon_updated"] = lexicon_updates.get("updated", 0)
+                precipitated = self._precipitate_layer2()
+                stats["precipitated"] = len(precipitated)
             except Exception as e:
-                logger.error(f"Lexicon sync failed (continuing): {e}")
+                logger.error(f"Layer 2 precipitation failed (continuing): {e}")
 
             # Phase 6: Process Pending Beliefs
             #   The Curator writes candidates to pending_beliefs.json in Phase 4.
@@ -172,256 +173,309 @@ class Curator:
             
         return stats
 
-    def _sync_lexicon(self) -> Dict[str, int]:
-        """Phase 5: Sync the Lexicon star map with the belief graph.
+    def _precipitate_layer2(self) -> List[Dict[str, Any]]:
+        """Phase 3.5: Gravitational collapse of Layer 1 clusters into Layer 2.
 
-        Two deterministic triggers (no LLM decision-making):
+        1. Re-embed all L1 beliefs (384D via all-MiniLM-L6-v2)
+        2. UMAP 384D → 5D for clustering
+        3. HDBSCAN to find natural semantic clusters
+        4. Compute mean pairwise binding gravity (8D) per cluster
+        5. Precipitate clusters exceeding expansion-factor threshold
 
-        1. Term Frequency: If a proper noun appears in 5+ beliefs but
-           has no Lexicon entry, gather those beliefs and send them
-           through the standard merge LLM (same prompt, 500-char cap)
-           to synthesize a Lexicon summary.
-
-        2. Mass Threshold: If any single belief crosses mass >= 5.0
-           and its dominant term has no Lexicon entry, same treatment.
-
-        All routing is pure Python. The LLM only does natural language
-        synthesis — it doesn't know about the Lexicon.
+        Precipitation threshold = (1 + EXPANSION_PER_BELIEF)^total_beliefs
+        This ties directly to the Hubble expansion rate — a cluster must be
+        gravitationally bound against the cumulative drift.
         """
-        from collections import Counter
-        from core.belief_consolidator import (
-            _tokenize, _is_proper_noun, _divert_to_lexicon,
-            _call_gemini, _LEXICON_MASS_THRESHOLD,
-            _LEXICON_TERM_FREQ_THRESHOLD, _LEXICON_MAX_LENGTH,
+        from core.belief_cosmology import EXPANSION_PER_BELIEF
+        import numpy as np
+        from itertools import combinations
+
+        # ── Step 0: Load all beliefs and check viability ─────────────
+        all_beliefs = self.beliefs.get_all_beliefs_flat()
+        beliefs_with_pos = [
+            b for b in all_beliefs
+            if b.get("position_8d") and len(b.get("position_8d", [])) == 8
+        ]
+
+        if len(beliefs_with_pos) < 20:
+            logger.info("Phase 3.5: Too few positioned beliefs (%d) — skipping", len(beliefs_with_pos))
+            return []
+
+        total_beliefs = len(all_beliefs)
+        threshold = (1 + EXPANSION_PER_BELIEF) ** total_beliefs
+        logger.info(
+            "Phase 3.5: %d beliefs, expansion factor %.3f, threshold %.2f",
+            total_beliefs, threshold, threshold,
         )
 
-        lexicon_path = self.data_dir / "beliefs" / "lexicon.json"
-        stats = {"created": 0, "updated": 0}
-
-        # Load current lexicon terms to know what's already covered
+        # ── Step 1: Re-embed from text content (384D) ────────────────
         try:
-            with open(lexicon_path, "r", encoding="utf-8") as f:
-                lex_entries = json.load(f)
-        except Exception:
-            lex_entries = []
+            from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+            embedder = DefaultEmbeddingFunction()
+        except Exception as e:
+            logger.error("Phase 3.5: Embedder unavailable: %s", e)
+            return []
 
-        covered_terms = set()
-        for entry in lex_entries:
-            covered_terms.add(entry.get("term", "").lower())
-            for alias in entry.get("aliases", []):
-                covered_terms.add(alias.lower())
+        texts = [b.get("content", "") for b in beliefs_with_pos]
+        embeddings_384 = []
+        batch_size = 128
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            embs = embedder(batch)
+            embeddings_384.extend(embs)
 
-        # Load all beliefs
-        all_beliefs = self.beliefs.get_all_beliefs_flat()
+        matrix_384 = np.array(embeddings_384, dtype=np.float32)
+        logger.info("Phase 3.5: Embedded %d beliefs (384D)", len(matrix_384))
 
-        # ── Extract multi-word terms + filter noise ──────────────────
-        # 1. Strip possessive 's from words (User's → User)
-        # 2. Detect multi-word terms (consecutive capitalized words)
-        # 3. Track article usage: "the X" = named entity, "a/an X" = generic
-        # 4. A term is noise if "a/an" precedes it more than "the" does
+        # ── Step 2: UMAP 384D → 5D ──────────────────────────────────
+        try:
+            import umap
+            reducer = umap.UMAP(
+                n_components=5, n_neighbors=15,
+                min_dist=0.05, random_state=42,
+            )
+            embedding_5d = reducer.fit_transform(matrix_384)
+        except Exception as e:
+            logger.error("Phase 3.5: UMAP failed: %s", e)
+            return []
 
-        from collections import defaultdict
-        term_stats = defaultdict(lambda: {
-            "display": "",        # original-case form
-            "total": 0,           # total occurrences
-            "mid_sentence": 0,    # occurrences NOT at sentence start
-            "preceded_by_the": 0, # preceded by "the" (named entity signal)
-            "preceded_by_a": 0,   # preceded by "a/an" (generic noun signal)
-            "belief_ids": set(),  # which beliefs mention it
-        })
+        # ── Step 3: HDBSCAN clustering ───────────────────────────────
+        try:
+            import hdbscan
+            clusterer = hdbscan.HDBSCAN(
+                min_cluster_size=4, min_samples=3,
+            )
+            labels = clusterer.fit_predict(embedding_5d)
+        except Exception as e:
+            logger.error("Phase 3.5: HDBSCAN failed: %s", e)
+            return []
 
-        # Track which single words are part of multi-word terms
-        # so we can grant them mid-sentence credit from their compound
-        multiword_members = defaultdict(set)  # word_lower -> set of compound_lowers
+        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+        noise = list(labels).count(-1)
+        logger.info(
+            "Phase 3.5: %d clusters found, %d noise points",
+            n_clusters, noise,
+        )
 
-        for b_idx, b in enumerate(all_beliefs):
-            content = b.get("content", "")
-            sentences = re.split(r'[.!?:;—]\s+', content)
-            for sentence in sentences:
-                raw_words = sentence.split()
-                cleaned = []
-                for w in raw_words:
-                    c = re.sub(r"[^A-Za-z0-9_'-]", '', w)
-                    # Strip possessive 's
-                    if c.endswith("'s"):
-                        c = c[:-2]
-                    cleaned.append(c)
+        # ── Step 4: Evaluate clusters for precipitation ──────────────
+        positions = np.array(
+            [b["position_8d"] for b in beliefs_with_pos], dtype=np.float32,
+        )
 
-                i = 0
-                while i < len(cleaned):
-                    w = cleaned[i]
-                    if len(w) > 1 and w[0].isupper() and not w.isupper():
-                        # Look ahead for consecutive capitalized words
-                        term_parts = [w]
-                        j = i + 1
-                        while j < len(cleaned):
-                            nw = cleaned[j]
-                            if len(nw) > 1 and nw[0].isupper() and not nw.isupper():
-                                term_parts.append(nw)
-                                j += 1
-                            else:
-                                break
+        candidates = []
+        cluster_audit = []
 
-                        term_str = " ".join(term_parts)
-                        term_lower = term_str.lower()
-
-                        ts = term_stats[term_lower]
-                        if not ts["display"]:
-                            ts["display"] = term_str
-                        ts["total"] += 1
-                        ts["belief_ids"].add(b_idx)
-
-                        is_mid = i > 0
-                        if is_mid:
-                            ts["mid_sentence"] += 1
-
-                        # Track article type
-                        if i > 0:
-                            prev = cleaned[i - 1].lower().strip("'\"()")
-                            if prev == "the":
-                                ts["preceded_by_the"] += 1
-                            elif prev in ("a", "an"):
-                                ts["preceded_by_a"] += 1
-
-                        # Multi-word: record absorption + grant mid-sentence
-                        # credit to component words
-                        if len(term_parts) > 1:
-                            for part in term_parts:
-                                part_lower = part.lower()
-                                multiword_members[part_lower].add(term_lower)
-                                absorbed_key = f"_absorbed_{part_lower}"
-                                term_stats[absorbed_key]["total"] += 1
-
-                        i = j
-                    else:
-                        i += 1
-
-        # Pass 2: Filter to genuine proper nouns/terms
-        term_beliefs = {}
-        for term_lower, ts in term_stats.items():
-            if term_lower.startswith("_absorbed_"):
+        for label in sorted(set(labels)):
+            if label == -1:
                 continue
 
-            # Minimum term length (filters "The", "An", "If", etc.)
-            if len(term_lower.replace(" ", "")) < 3:
-                continue
+            member_idx = np.where(labels == label)[0]
+            members = [beliefs_with_pos[i] for i in member_idx]
+            member_pos = positions[member_idx]
+            member_masses = np.array([b.get("mass", 1.0) for b in members])
 
-            # Mid-sentence check (with multi-word promotion):
-            # A word passes if it appears mid-sentence itself, OR if
-            # any multi-word term containing it appears mid-sentence
-            has_mid = ts["mid_sentence"] > 0
-            if not has_mid and " " not in term_lower:
-                for compound_lower in multiword_members.get(term_lower, set()):
-                    if term_stats[compound_lower]["mid_sentence"] > 0:
-                        has_mid = True
+            # Compute mean pairwise binding gravity in 8D
+            total_grav = 0.0
+            pair_count = 0
+            n = len(members)
+            # Sample for large clusters
+            sample_n = min(n, 30)
+            if n <= 30:
+                idxs = list(range(n))
+            else:
+                idxs = list(np.random.choice(n, 30, replace=False))
+
+            for i, j in combinations(idxs, 2):
+                d = float(np.linalg.norm(member_pos[i] - member_pos[j]))
+                g = (member_masses[i] * member_masses[j]) / (d ** 2 + 1e-4)
+                total_grav += g
+                pair_count += 1
+
+            mean_gravity = total_grav / max(pair_count, 1)
+            total_mass = float(member_masses.sum())
+
+            # Check if >50% of members already reference a Layer 2 entry
+            layer2_referenced = 0
+            for m in members:
+                for rel in m.get("relations", []):
+                    if any(rel.startswith(p) for p in ("ppl_", "skl_", "des_", "con_")):
+                        layer2_referenced += 1
                         break
-            if not has_mid:
-                continue
+            already_precipitated = layer2_referenced > len(members) * 0.5
 
-            # Indefinite article filter:
-            # If "a/an" precedes this term MORE than "the" does,
-            # it's likely a generic noun, not a coined concept.
-            # "the Sentinel" = named. "a memory" = generic.
-            if ts["preceded_by_a"] > ts["preceded_by_the"] and ts["preceded_by_a"] >= 2:
-                continue
+            cluster_info = {
+                "cluster_id": int(label),
+                "member_count": len(members),
+                "member_ids": [m.get("id", "") for m in members],
+                "mean_binding_gravity": round(mean_gravity, 2),
+                "total_mass": round(total_mass, 2),
+                "exceeds_threshold": mean_gravity > threshold,
+                "already_precipitated": already_precipitated,
+                "precipitated_as": None,
+            }
+            cluster_audit.append(cluster_info)
 
-            # Skip if already in Lexicon
-            if term_lower in covered_terms:
-                continue
+            if mean_gravity > threshold and not already_precipitated:
+                candidates.append({
+                    "cluster_info": cluster_info,
+                    "members": members,
+                    "member_pos": member_pos,
+                    "member_masses": member_masses,
+                    "mean_gravity": mean_gravity,
+                    "total_mass": total_mass,
+                })
 
-            # Absorption: skip single words mostly part of multi-word terms
-            if " " not in term_lower:
-                absorbed_count = term_stats.get(
-                    f"_absorbed_{term_lower}", {}
-                ).get("total", 0)
-                # If the word has NO direct mid-sentence appearances
-                # (only promoted via compounds), absorb it entirely
-                if absorbed_count > 0 and ts["mid_sentence"] == 0:
-                    continue
-                # Also absorb if 40%+ of appearances are inside compounds
-                if absorbed_count > 0 and absorbed_count >= ts["total"] * 0.4:
-                    continue
-
-            # Gather the actual belief contents
-            belief_contents = [
-                all_beliefs[idx].get("content", "")
-                for idx in ts["belief_ids"]
-            ]
-            if len(belief_contents) >= _LEXICON_TERM_FREQ_THRESHOLD:
-                term_beliefs[term_lower] = {
-                    "term": ts["display"],
-                    "beliefs": belief_contents,
-                }
-
-        for term_lower, data in term_beliefs.items():
-            if len(data["beliefs"]) >= _LEXICON_TERM_FREQ_THRESHOLD:
-                # Synthesize a summary from the top beliefs about this term
-                belief_texts = data["beliefs"][:8]  # Cap at 8 for prompt size
-                prompt = (
-                    f"Combine these related statements about '{data['term']}' "
-                    f"into ONE comprehensive summary (max {_LEXICON_MAX_LENGTH} chars). "
-                    f"Plain text only, no markdown.\n\n"
-                    + "\n".join(f"- {t}" for t in belief_texts)
-                )
-                summary = _call_gemini(prompt, system="You write concise summaries.")
-                if summary:
-                    summary = summary[:_LEXICON_MAX_LENGTH]
-                    existed = any(
-                        e.get("term", "").lower() == term_lower for e in lex_entries
-                    )
-                    _divert_to_lexicon(
-                        term=data["term"],
-                        summary=summary,
-                        lexicon_path=lexicon_path,
-                    )
-                    if existed:
-                        stats["updated"] += 1
-                    else:
-                        stats["created"] += 1
-
-        # ── Trigger 2: Mass Threshold ────────────────────────────────
-        for b in all_beliefs:
-            if b.get("mass", 0) >= _LEXICON_MASS_THRESHOLD:
-                words = _tokenize(b.get("content", ""))
-                proper = [w for w in words if _is_proper_noun(w)]
-                if not proper:
-                    continue
-
-                # Use the dominant proper noun
-                from collections import Counter as C2
-                counts = C2(w.lower() for w in proper)
-                dominant_lower, _ = counts.most_common(1)[0]
-
-                if dominant_lower not in covered_terms:
-                    # This high-mass belief's term isn't in the Lexicon yet
-                    # Gather all beliefs mentioning this term for synthesis
-                    related = [
-                        ob.get("content", "") for ob in all_beliefs
-                        if dominant_lower in ob.get("content", "").lower()
-                    ][:8]
-
-                    prompt = (
-                        f"Combine these related statements about '{proper[0]}' "
-                        f"into ONE comprehensive summary (max {_LEXICON_MAX_LENGTH} chars). "
-                        f"Plain text only, no markdown.\n\n"
-                        + "\n".join(f"- {t}" for t in related)
-                    )
-                    summary = _call_gemini(prompt, system="You write concise summaries.")
-                    if summary:
-                        _divert_to_lexicon(
-                            term=proper[0],
-                            summary=summary[:_LEXICON_MAX_LENGTH],
-                            lexicon_path=lexicon_path,
-                        )
-                        stats["created"] += 1
-                        # Mark as covered so we don't re-process
-                        covered_terms.add(dominant_lower)
+        # Sort by binding gravity (densest first)
+        candidates.sort(key=lambda x: -x["mean_gravity"])
 
         logger.info(
-            "Lexicon sync complete: %d created, %d updated",
-            stats["created"], stats["updated"],
+            "Phase 3.5: %d clusters exceed threshold (%.2f), %d eligible",
+            sum(1 for c in cluster_audit if c["exceeds_threshold"]),
+            threshold,
+            len(candidates),
         )
-        return stats
+
+        # ── Step 5: LLM synthesis + write Layer 2 ────────────────────
+        precipitated = []
+
+        for cand in candidates:
+            members = cand["members"]
+            member_pos = cand["member_pos"]
+            member_masses = cand["member_masses"]
+
+            # Build precipitation prompt
+            belief_texts = [m.get("content", "") for m in members[:12]]
+            prompt = (
+                "These beliefs have been gravitationally clustering in my "
+                "cognitive field. They represent fragments of a single deeper "
+                "understanding. Collapse them into ONE dense realization — "
+                "the concept beneath the language.\n\n"
+                "BELIEFS:\n"
+                + "\n".join(f"- {t}" for t in belief_texts)
+                + "\n\nRules:\n"
+                "- Extract the UNDERLYING CONCEPT, not a summary\n"
+                "- Max 500 chars, plain text, no markdown\n"
+                "- Assign category:\n"
+                "    concepts: A consolidated conceptual understanding\n"
+                "    people: A relational understanding of a person\n"
+                "    skills: A proven procedure (To [goal]: [steps])\n"
+                "    desires: A deep aspiration or long-term goal\n\n"
+                "Output EXACTLY 2 lines:\n"
+                "CATEGORY: [category]\n"
+                "CONTENT: [the precipitated belief]\n"
+            )
+
+            try:
+                response = self.llm_client.generate(
+                    prompt=prompt,
+                    system_instruction=(
+                        "You collapse belief clusters into dense conceptual "
+                        "anchors. Output exactly 2 lines: CATEGORY and CONTENT."
+                    ),
+                )
+                raw = response.text.strip()
+            except Exception as e:
+                logger.error("Phase 3.5: LLM call failed: %s", e)
+                continue
+
+            # Parse response
+            category = None
+            content = None
+            for line in raw.split("\n"):
+                line = line.strip()
+                if line.upper().startswith("CATEGORY:"):
+                    cat = line.split(":", 1)[1].strip().lower().replace(" ", "_")
+                    if cat in ("concepts", "people", "skills", "desires"):
+                        category = cat
+                elif line.upper().startswith("CONTENT:"):
+                    content = line.split(":", 1)[1].strip().strip('"')
+
+            if not category or not content or len(content) < 15:
+                logger.warning("Phase 3.5: Failed to parse LLM output: %s", raw[:200])
+                continue
+
+            content = content[:500]  # Enforce Layer 2 max length
+
+            # Compute centroid position (mass-weighted)
+            weights = member_masses / (member_masses.sum() + 1e-8)
+            centroid = (member_pos * weights[:, np.newaxis]).sum(axis=0)
+
+            # Extract dominant term for preconscious string matching
+            from core.belief_consolidator import _extract_dominant_term
+            term = _extract_dominant_term(content) or ""
+
+            # Generate belief ID and write
+            belief_id = self.beliefs.generate_id(category)
+            stored = self.beliefs.add_belief(
+                category=category,
+                belief_id=belief_id,
+                content=content,
+                mass=cand["total_mass"],  # Summed mass — gravitational collapse
+                confidence=0.6,
+                source="precipitation_" + datetime.now().strftime("%Y-%m-%d"),
+                stability_index=0.7,
+                encoding_lagrangian={},
+                memory_refs=[],
+                position_8d=centroid.tolist(),
+                term=term,
+                aliases=[],
+                formation_type="precipitation",
+                component_ids=[m.get("id", "") for m in members],
+                cluster_binding_gravity=cand["mean_gravity"],
+            )
+
+            if stored:
+                # Wire component beliefs to the new Layer 2 anchor
+                for m in members:
+                    existing_relations = m.get("relations", [])
+                    if belief_id not in existing_relations:
+                        existing_relations.append(belief_id)
+                        self.beliefs.update_belief(
+                            m.get("id", ""),
+                            relations=existing_relations,
+                        )
+
+                precipitated.append({
+                    "id": belief_id,
+                    "category": category,
+                    "content": content,
+                    "mass": cand["total_mass"],
+                    "component_count": len(members),
+                    "binding_gravity": cand["mean_gravity"],
+                })
+                cand["cluster_info"]["precipitated_as"] = belief_id
+
+                logger.info(
+                    "⭐ PRECIPITATED [%s] %s (N=%d, G=%.1f, M=%.1f): %s",
+                    category, belief_id, len(members),
+                    cand["mean_gravity"], cand["total_mass"],
+                    content[:80],
+                )
+
+        # ── Save cluster audit log ───────────────────────────────────
+        try:
+            audit_path = self.data_dir / "logs" / "manifold_clusters.json"
+            audit_path.parent.mkdir(parents=True, exist_ok=True)
+            audit_data = {
+                "timestamp": datetime.now().isoformat(),
+                "total_beliefs": total_beliefs,
+                "expansion_factor": round(threshold, 4),
+                "precipitation_threshold": round(threshold, 4),
+                "clusters_found": n_clusters,
+                "noise_points": noise,
+                "precipitated": len(precipitated),
+                "clusters": cluster_audit,
+            }
+            with open(audit_path, "w", encoding="utf-8") as f:
+                json.dump(audit_data, f, indent=2)
+            logger.info(
+                "Phase 3.5 complete: %d precipitated, audit saved",
+                len(precipitated),
+            )
+        except Exception as e:
+            logger.error("Failed to save cluster audit: %s", e)
+
+        return precipitated
 
     def _collect_raw_memories(self) -> List[Dict[str, Any]]:
         """Collect memories from structured journals AND thought output logs.
@@ -527,12 +581,9 @@ class Curator:
         2. Single statement per belief.
         3. Length: 15-250 characters.
         4. Must fall into one of these categories:
-           - self_identity: (I am...)
-           - people: ([Name]...)
-           - knowledge: Facts about the world, lessons learned
-           - capabilities: (I can...)
-           - skills: (To [goal]: [step sequence])
-           - preferences: (I want/prefer/value...)
+           - premises: Foundational truths, axioms, self-observations, abilities (I am..., I can..., [declarative fact])
+           - propositions: Learned or derived facts, conditional rules, knowledge about others ([Name]..., If X then Y)
+           - preferences: Values, likes, behavioral norms (I want/prefer/value...)
            
         Output ONLY a raw JSON list: [{"category": "...", "content": "..."}]
         No markdown, no code fences, no explanation. Just the JSON array.
@@ -668,7 +719,7 @@ class Curator:
         for b in beliefs:
             candidate = {
                 "content": b['content'],
-                "category": b.get('category', 'knowledge'),
+                "category": b.get('category', 'propositions'),
                 "status": "pending",
                 "detected_at": datetime.now().isoformat()
             }

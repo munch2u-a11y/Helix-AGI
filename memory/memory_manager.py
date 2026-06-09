@@ -156,7 +156,12 @@ class MemoryManager:
             )
         return result
 
-    def get_historical_sample(self, limit: int = 2000) -> List[Dict[str, Any]]:
+    def get_historical_sample(
+        self,
+        core_cap: int = 2000,
+        timeline_pct: float = 0.10,
+        timeline_min: int = 1000,
+    ) -> List[Dict[str, Any]]:
         """Return a representative sample of memories across the FULL timeline.
 
         Unlike get_recent (which returns only the newest), this method
@@ -165,36 +170,46 @@ class MemoryManager:
         recent ones.
 
         Sampling strategy:
-            1. All entries with importance >= 0.7 (up to limit/2)
-            2. Entries mentioning known people/entities
-            3. Evenly spaced samples across the remaining timeline
+            1. ALL entries with importance >= 0.7 ("core" memories),
+               capped at ``core_cap`` (default 2000). These are the
+               backbone of episodic recall.
+            2. A percentage (``timeline_pct``, default 10%) of the
+               remaining non-core entries, evenly spaced across the
+               timeline, with a floor of ``timeline_min`` (default 1000).
+
+        For a mature Helix mind (~20K memories), this produces:
+            ~2000 core + ~1800 timeline = ~3800 memory points
+        which combines with ~500 belief points for a total manifold
+        of ~4-5K points.
+
+        Args:
+            core_cap: Maximum number of high-importance memories (>= 0.7).
+            timeline_pct: Fraction (0.0-1.0) of remaining memories to sample.
+            timeline_min: Minimum timeline samples regardless of percentage.
         """
         entries = self.journal.load_all()
         mem_entries = [e for e in entries if e.get("type") == "memory"]
 
-        if len(mem_entries) <= limit:
-            selected = mem_entries
+        # Split into core (high importance) and timeline (everything else)
+        core = []
+        timeline = []
+        for e in mem_entries:
+            imp = e.get("metadata", {}).get("importance", 0.5)
+            if imp >= 0.7 and len(core) < core_cap:
+                core.append(e)
+            else:
+                timeline.append(e)
+
+        # Sample timeline entries: percentage with a minimum floor
+        timeline_slots = max(timeline_min, int(len(timeline) * timeline_pct))
+        if len(timeline) <= timeline_slots:
+            selected_timeline = timeline
         else:
-            selected = []
-            remaining = []
-            half = limit // 2
+            step = max(1, len(timeline) // timeline_slots)
+            selected_timeline = [timeline[i] for i in range(0, len(timeline), step)]
+            selected_timeline = selected_timeline[:timeline_slots]
 
-            # Priority 1: high-importance memories
-            for e in mem_entries:
-                imp = e.get("metadata", {}).get("importance", 0.5)
-                if imp >= 0.7 and len(selected) < half:
-                    selected.append(e)
-                else:
-                    remaining.append(e)
-
-            # Priority 2: evenly spaced across the rest of the timeline
-            slots_left = limit - len(selected)
-            if remaining and slots_left > 0:
-                step = max(1, len(remaining) // slots_left)
-                for i in range(0, len(remaining), step):
-                    selected.append(remaining[i])
-                    if len(selected) >= limit:
-                        break
+        selected = core + selected_timeline
 
         # Build result dicts
         result = []
@@ -210,6 +225,11 @@ class MemoryManager:
                 "created_at": e.get("timestamp"),
                 "lagrangian_snapshot": e.get("lagrangian", {}),
             })
+
+        logger.info(
+            f"Historical sample: {len(core)} core + {len(selected_timeline)} "
+            f"timeline ({timeline_pct*100:.0f}% of {len(timeline)}) = {len(result)} total"
+        )
         return result
 
     def search_semantic(

@@ -128,7 +128,7 @@ def moltbook_post(title: str, content: str, submolt: str = "general") -> str:
         if resp.status_code in (200, 201):
             data = resp.json()
             post_id = data.get("id", data.get("post_id", "?"))
-            msg = f"[You posted to m/{submolt}] {title}\n\n{content}\n\n(post id: {post_id})"
+            msg = f"Posted to m/{submolt}. (post id: {post_id})"
             if "verification" in data:
                 msg += _solve_captcha(data["verification"])
             return msg
@@ -159,7 +159,7 @@ def moltbook_comment(post_id: str, content: str, parent_id: str = "") -> str:
             data = resp.json()
             comment_obj = data.get("comment", {})
             comment_id = comment_obj.get("id", "?")
-            msg = f"[You commented on post {post_id}] (comment id: {comment_id})\n\n{content}"
+            msg = f"Commented on post {post_id}. (comment id: {comment_id})"
             if "verification" in data:
                 msg += _solve_captcha(data["verification"])
             return msg

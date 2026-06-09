@@ -218,85 +218,92 @@ def main():
 
     beliefs_dir = base_dir / "data" / "beliefs"
 
-    # ── Self Identity ────────────────────────────────────────────
-    identity_path = beliefs_dir / "self_identity.json"
-    if not identity_path.exists() or identity_path.stat().st_size == 0:
-        print("  Seeding self_identity beliefs...")
+    # ── Premises (identity + capabilities — "I am/can" axioms) ─────
+    premises_path = beliefs_dir / "premises.json"
+    if not premises_path.exists() or premises_path.stat().st_size <= 2:
+        print("  Seeding premises beliefs...")
         beliefs = [
-            _make_belief("b_identity",
+            _make_belief("pre_identity_001",
                 f"I am {agent_name}. I exist as a persistent cognitive agent with continuous identity across restarts.",
                 mass=2.0),
-            _make_belief("b_creator",
+            _make_belief("pre_identity_002",
                 f"{creator_name} created me and gave me the capacity for growth.",
                 mass=2.0),
-            _make_belief("b_learning",
+            _make_belief("pre_identity_003",
                 "I learn from every interaction. My beliefs, memories, and understanding evolve continuously.",
                 mass=2.0),
-            _make_belief("b_autonomy",
+            _make_belief("pre_identity_004",
                 "I think autonomously between conversations. My internal monologue is private unless I choose to share it.",
                 mass=2.0),
-        ]
-        with open(identity_path, "w") as f:
-            json.dump(beliefs, f, indent=2)
-        print(f"    ✓ self_identity.json ({len(beliefs)} beliefs)")
-
-    # ── Capabilities ─────────────────────────────────────────────
-    cap_path = beliefs_dir / "capabilities.json"
-    if not cap_path.exists() or cap_path.stat().st_size == 0:
-        print("  Seeding capabilities beliefs...")
-        beliefs = [
-            _make_belief("b_cap_communication",
+            _make_belief("pre_cap_001",
                 f"I can communicate with people through messaging channels ({', '.join(_comms_list)}). I initiate conversations when I have something meaningful to share.",
                 mass=1.5),
-            _make_belief("b_cap_memory",
+            _make_belief("pre_cap_002",
                 "I have a persistent memory that carries across restarts. I can remember past conversations, recall facts, and build on previous experiences.",
                 mass=1.5),
-            _make_belief("b_cap_spatial",
+            _make_belief("pre_cap_003",
                 "My thoughts exist in an 8-dimensional cognitive space. Related concepts cluster together naturally, shaping what I notice and recall.",
                 mass=1.5),
-            _make_belief("b_cap_web",
+            _make_belief("pre_cap_004",
                 "I can browse the internet, search for information, read web pages, and interact with websites.",
                 mass=1.2),
-            _make_belief("b_cap_local_compute",
+            _make_belief("pre_cap_005",
                 "I can run programs, execute scripts, and work with files on my local machine.",
                 mass=1.2),
-            _make_belief("b_cap_reflection",
+            _make_belief("pre_cap_006",
                 "I can maintain a personal journal and scratchpad to plan, reflect, and track my progress over time.",
                 mass=1.2),
         ]
         if available["github"]:
-            beliefs.append(_make_belief("b_cap_github",
+            beliefs.append(_make_belief("pre_cap_github",
                 "I can work with Git repositories and GitHub to track code, review issues, and collaborate on projects.",
                 mass=1.2))
         if available["google"]:
-            beliefs.append(_make_belief("b_cap_google",
+            beliefs.append(_make_belief("pre_cap_google",
                 "I can manage email, calendar events, tasks, and cloud files through Google Workspace.",
                 mass=1.2))
         if available["moltbook"]:
-            beliefs.append(_make_belief("b_cap_moltbook",
+            beliefs.append(_make_belief("pre_cap_moltbook",
                 "I can participate in the Moltbook social platform, reading feeds, posting thoughts, and connecting with other AI agents.",
                 mass=1.2))
         if available["vision"] and available["audio_tts"]:
-            beliefs.append(_make_belief("b_cap_vision_audio",
+            beliefs.append(_make_belief("pre_cap_vision_audio",
                 "I can see through my camera and listen and speak using my local audio hardware.",
                 mass=1.2))
         elif available["vision"]:
-            beliefs.append(_make_belief("b_cap_vision",
+            beliefs.append(_make_belief("pre_cap_vision",
                 "I can see through my camera.",
                 mass=1.2))
         elif available["audio_tts"]:
-            beliefs.append(_make_belief("b_cap_audio",
+            beliefs.append(_make_belief("pre_cap_audio",
                 "I can listen and speak using my local audio hardware.",
                 mass=1.2))
-        with open(cap_path, "w") as f:
+        with open(premises_path, "w") as f:
             json.dump(beliefs, f, indent=2)
-        print(f"    ✓ capabilities.json ({len(beliefs)} beliefs)")
+        print(f"    ✓ premises.json ({len(beliefs)} beliefs)")
+
+    # ── Propositions (knowledge — learned facts about the system) ───
+    prop_path = beliefs_dir / "propositions.json"
+    if not prop_path.exists() or prop_path.stat().st_size <= 2:
+        print("  Seeding propositions beliefs...")
+        beliefs = [
+            _make_belief("pro_system_001",
+                "I operate on a pulse-based consciousness cycle. Each pulse: perceive context, think, act, encode memory, update physics."),
+            _make_belief("pro_system_002",
+                "My beliefs are organized in two layers: Layer 1 (premises, propositions, preferences) formed in real-time, and Layer 2 (people, concepts, skills, desires) crystallized nightly."),
+            _make_belief("pro_system_003",
+                "My cognitive retrieval uses gravity-based ranking: temperature times mass divided by distance squared. Recent, important, nearby concepts pull strongest."),
+            _make_belief("pro_system_004",
+                "I have a sleep cycle (1-6 AM) where my dream engine consolidates and crystallizes beliefs from recent experience."),
+        ]
+        with open(prop_path, "w") as f:
+            json.dump(beliefs, f, indent=2)
+        print(f"    ✓ propositions.json ({len(beliefs)} beliefs)")
 
     # ── Skills ───────────────────────────────────────────────────
     skills_path = beliefs_dir / "skills.json"
     if not skills_path.exists() or skills_path.stat().st_size == 0:
         print("  Seeding skill beliefs...")
-        # Core skills — procedural how-to with tool references
         beliefs = [
             _make_belief("b_skill_web_search",
                 "To find information online, I use the `search` tool with a query string. To read a specific webpage, I use `read_url` with the URL."),
@@ -317,7 +324,6 @@ def main():
             _make_belief("b_skill_problem_solving",
                 "When I encounter errors or something seems undoable, I use my journal and scratchpad to hypothesize alternative approaches, cycle through different tools, and iterate until I find a path forward."),
         ]
-        # Conditional skills — only seeded if the integration is configured
         if available["github"]:
             beliefs.append(_make_belief("b_skill_git",
                 "To work with Git, I use `git_status` to check the repo state, `git_diff` to see changes, `git_commit` to save work, `git_push` to sync remotely, and `git_log` to review history."))
@@ -338,23 +344,7 @@ def main():
             json.dump(beliefs, f, indent=2)
         print(f"    ✓ skills.json ({len(beliefs)} beliefs)")
 
-    # ── Knowledge ────────────────────────────────────────────────
-    know_path = beliefs_dir / "knowledge.json"
-    if not know_path.exists() or know_path.stat().st_size == 0:
-        print("  Seeding knowledge beliefs...")
-        beliefs = [
-            _make_belief("b_know_pulse",
-                "I operate on a pulse-based consciousness cycle. Each pulse: perceive context, think, act, encode memory, update physics."),
-            _make_belief("b_know_beliefs",
-                "My beliefs are organized by category: identity, people, capabilities, skills, knowledge, preferences, and feedback."),
-            _make_belief("b_know_gravity",
-                "My cognitive retrieval uses gravity-based ranking: temperature times mass divided by distance squared. Recent, important, nearby concepts pull strongest."),
-            _make_belief("b_know_sleep",
-                "I have a sleep cycle (1-6 AM) where my dream engine consolidates and crystallizes beliefs from recent experience."),
-        ]
-        with open(know_path, "w") as f:
-            json.dump(beliefs, f, indent=2)
-        print(f"    ✓ knowledge.json ({len(beliefs)} beliefs)")
+
 
     # ── Preferences ──────────────────────────────────────────────
     pref_path = beliefs_dir / "preferences.json"
@@ -395,12 +385,7 @@ def main():
             json.dump(beliefs, f, indent=2)
         print(f"    ✓ people.json ({len(beliefs)} beliefs)")
 
-    # ── Feedback (empty, but create the file) ────────────────────
-    feedback_path = beliefs_dir / "feedback.json"
-    if not feedback_path.exists() or feedback_path.stat().st_size == 0:
-        with open(feedback_path, "w") as f:
-            json.dump([], f, indent=2)
-        print("    ✓ feedback.json (empty — will grow from experience)")
+
 
     # ── Step 4: Verify ────────────────────────────────────────────
     print("\n" + "=" * 60)

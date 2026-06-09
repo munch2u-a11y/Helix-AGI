@@ -110,13 +110,12 @@ class Scratchpad:
             nid = f"n{nid}"
 
         text = self._read()
-        lines = text.split("\n")
-
-        original_count = len(lines)
-        lines = [l for l in lines if f"({nid})" not in l]
-
-        if len(lines) < original_count:
-            self._write("\n".join(lines))
+        pattern = rf"- \[[ x/]\] \({re.escape(nid)}\) .*?(?:\s*←\s*.*?)?(?=\n- \[|\Z)\n?"
+        
+        new_text, count = re.subn(pattern, "", text, count=1, flags=re.DOTALL)
+        if count > 0:
+            self._write(new_text)
+            logger.info(f"Scratchpad: removed '{nid}'")
             return True
         return False
 
@@ -130,9 +129,9 @@ class Scratchpad:
         timestamp = _now_short()
 
         # Match the note line (checked or unchecked)
-        pattern = rf"(- \[[ x/]\] \({re.escape(nid)}\)) .+?(\s*←\s*.+)?$"
+        pattern = rf"(- \[[ x/]\] \({re.escape(nid)}\)) (.*?)(?:\s*←\s*.*?)?(?=\n- \[|\Z)"
         replacement = rf"\1 {new_content}  ← {timestamp}"
-        new_text, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+        new_text, count = re.subn(pattern, replacement, text, count=1, flags=re.DOTALL)
         if count > 0:
             self._write(new_text)
             logger.info(f"Scratchpad: updated '{nid}'")
@@ -142,26 +141,22 @@ class Scratchpad:
     def clear_completed(self) -> int:
         """Remove all checked [x] notes. Returns count removed."""
         text = self._read()
-        lines = text.split("\n")
-        original = len(lines)
-        lines = [l for l in lines if not l.strip().startswith("- [x]")]
-        removed = original - len(lines)
-        if removed > 0:
-            self._write("\n".join(lines))
-            logger.info(f"Scratchpad: cleared {removed} completed notes")
-        return removed
+        pattern = r"- \[x\] \(\w+\) .*?(?:\s*←\s*.*?)?(?=\n- \[|\Z)\n?"
+        new_text, count = re.subn(pattern, "", text, flags=re.DOTALL)
+        if count > 0:
+            self._write(new_text)
+            logger.info(f"Scratchpad: cleared {count} completed notes")
+        return count
 
     def clear_all(self) -> int:
         """Remove ALL notes (active and completed). Returns count removed."""
         text = self._read()
-        lines = text.split("\n")
-        original = len(lines)
-        lines = [l for l in lines if not l.strip().startswith("- [")]
-        removed = original - len(lines)
-        if removed > 0:
-            self._write("\n".join(lines))
-            logger.info(f"Scratchpad: cleared ALL {removed} notes")
-        return removed
+        pattern = r"- \[[ x/]\] \(\w+\) .*?(?:\s*←\s*.*?)?(?=\n- \[|\Z)\n?"
+        new_text, count = re.subn(pattern, "", text, flags=re.DOTALL)
+        if count > 0:
+            self._write(new_text)
+            logger.info(f"Scratchpad: cleared ALL {count} notes")
+        return count
 
     # ── Queries ──────────────────────────────────────────────────────
 
@@ -170,8 +165,8 @@ class Scratchpad:
         text = self._read()
         notes = []
 
-        pattern = r"- \[ \] \((\w+)\) (.+?)(?:\s+\[due: ([^\]]+)\])?\s*←\s*(.+)$"
-        for match in re.finditer(pattern, text, re.MULTILINE):
+        pattern = r"- \[ \] \((\w+)\) (.*?)(?:\s+\[due: ([^\]]+)\])?\s*←\s*(.*?)(?=\n- \[|\Z)"
+        for match in re.finditer(pattern, text, re.DOTALL):
             notes.append({
                 "id": match.group(1),
                 "content": match.group(2).strip(),

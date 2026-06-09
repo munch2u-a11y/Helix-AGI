@@ -478,112 +478,132 @@ class PhysicsEngine:
         existing data so gravity fields are non-empty from the start.
         Every entry is registered via _register_point() to ensure both
         the 8D manifold and 384D semantic index stay in sync.
+
+        Checks belief and memory spaces INDEPENDENTLY — if beliefs are
+        already loaded from a previous boot but memories are empty, only
+        the memory bootstrap runs (and vice versa).
         """
-        if self.semantic_index.count > 0:
-            logger.info("SemanticIndex already loaded from disk — skipping heavy embedding bootstrap")
+        # Check each space independently instead of a single early-exit.
+        # The old guard checked semantic_index.count > 0 and returned,
+        # which skipped memory loading when beliefs were already present.
+        belief_loaded = self.spatial_mind.belief_space.point_count > 0
+        memory_loaded = self.spatial_mind.memory_space.point_count > 0
+
+        if belief_loaded and memory_loaded:
+            logger.info(
+                f"Both spaces already populated (beliefs={self.spatial_mind.belief_space.point_count}, "
+                f"memories={self.spatial_mind.memory_space.point_count}) — skipping bootstrap"
+            )
             return
 
         beliefs_added = 0
         memories_added = 0
 
-        # Bootstrap beliefs
-        try:
-            all_beliefs = belief_store.get_all_beliefs_flat()
-            for b in all_beliefs:
-                content = b.get("content", "")
-                if not content or len(content) < 5:
-                    continue
-                emb = self.embed_text(content)
-                bid = b.get("id", f"belief_{beliefs_added}")
+        # Bootstrap beliefs (skip if already loaded from persisted state)
+        if not belief_loaded:
+            try:
+                all_beliefs = belief_store.get_all_beliefs_flat()
+                for b in all_beliefs:
+                    content = b.get("content", "")
+                    if not content or len(content) < 5:
+                        continue
+                    emb = self.embed_text(content)
+                    bid = b.get("id", f"belief_{beliefs_added}")
 
-                # Extract encoding Lagrangian components
-                lag = b.get("encoding_lagrangian", {})
-                if not isinstance(lag, dict):
-                    lag = {}
+                    # Extract encoding Lagrangian components
+                    lag = b.get("encoding_lagrangian", {})
+                    if not isinstance(lag, dict):
+                        lag = {}
 
-                self._register_point(
-                    point_id=bid,
-                    emb=emb,
-                    point_type="belief",
-                    spatial_kwargs={
-                        "confidence": b.get("confidence", 0.5),
-                        "importance": b.get("mass", 1.0),
-                        "content": content,
-                        "encoding_omega": lag.get("omega", 0.5),
-                        "encoding_s_total": lag.get("s_total", 0.15),
-                        "relations_count": len(b.get("relations", [])),
-                        "metadata": {
-                            "verifications": b.get("verifications", 0),
-                            "stability_index": b.get("stability_index", 0.5),
-                            "memory_refs": b.get("memory_refs", []),
-                            "created_at": b.get("created_at", ""),
-                            "last_verified": b.get("last_verified", ""),
-                            "formation_type": b.get("formation_type", ""),
-                            "encoding_lagrangian": lag,
+                    self._register_point(
+                        point_id=bid,
+                        emb=emb,
+                        point_type="belief",
+                        spatial_kwargs={
+                            "confidence": b.get("confidence", 0.5),
+                            "importance": b.get("mass", 1.0),
+                            "content": content,
+                            "encoding_omega": lag.get("omega", 0.5),
+                            "encoding_s_total": lag.get("s_total", 0.15),
+                            "relations_count": len(b.get("relations", [])),
+                            "metadata": {
+                                "verifications": b.get("verifications", 0),
+                                "stability_index": b.get("stability_index", 0.5),
+                                "memory_refs": b.get("memory_refs", []),
+                                "created_at": b.get("created_at", ""),
+                                "last_verified": b.get("last_verified", ""),
+                                "formation_type": b.get("formation_type", ""),
+                                "encoding_lagrangian": lag,
+                            },
                         },
-                    },
-                    semantic_metadata={
-                        "content": content[:500],
-                        "type": "belief",
-                        "confidence": b.get("confidence", 0.5),
-                        "importance": b.get("mass", 1.0),
-                        "category": b.get("_category", ""),
-                        "verifications": b.get("verifications", 0),
-                        "memory_refs_count": len(b.get("memory_refs", [])),
-                        "encoding_omega": lag.get("omega", 0.5),
-                    },
-                )
-                beliefs_added += 1
-        except Exception as e:
-            logger.warning(f"Belief bootstrap failed: {e}")
+                        semantic_metadata={
+                            "content": content[:500],
+                            "type": "belief",
+                            "confidence": b.get("confidence", 0.5),
+                            "importance": b.get("mass", 1.0),
+                            "category": b.get("_category", ""),
+                            "verifications": b.get("verifications", 0),
+                            "memory_refs_count": len(b.get("memory_refs", [])),
+                            "encoding_omega": lag.get("omega", 0.5),
+                        },
+                    )
+                    beliefs_added += 1
+            except Exception as e:
+                logger.warning(f"Belief bootstrap failed: {e}")
+        else:
+            logger.info(f"Belief space already populated ({self.spatial_mind.belief_space.point_count} points) — skipping belief bootstrap")
 
-        # Bootstrap memories — load broadly so historical episodic
-        # memories (people, places, events) are present in the manifold.
+        # Bootstrap memories — load ALL core memories (importance >= 0.7)
+        # plus 10% of the remaining timeline for temporal coverage.
         # No time cutoff: the whole journal is Helix's lived experience.
-        try:
-            recent = memory_manager.get_historical_sample(limit=2000)
-            for m in recent:
-                content = m.get("content", "")
-                if not content or len(content) < 10:
-                    continue
-                emb = self.embed_text(content)
-                mid = m.get("id", f"mem_{memories_added}")
+        if not memory_loaded:
+            try:
+                recent = memory_manager.get_historical_sample()
+                logger.info(f"Memory bootstrap: loading {len(recent)} historical memories into 8D space")
+                for m in recent:
+                    content = m.get("content", "")
+                    if not content or len(content) < 10:
+                        continue
+                    emb = self.embed_text(content)
+                    mid = m.get("id", f"mem_{memories_added}")
 
-                # Extract encoding Lagrangian if available
-                mem_lag = m.get("lagrangian_snapshot", {})
-                if isinstance(mem_lag, str):
-                    try:
-                        import json as _json
-                        mem_lag = _json.loads(mem_lag)
-                    except Exception:
+                    # Extract encoding Lagrangian if available
+                    mem_lag = m.get("lagrangian_snapshot", {})
+                    if isinstance(mem_lag, str):
+                        try:
+                            import json as _json
+                            mem_lag = _json.loads(mem_lag)
+                        except Exception:
+                            mem_lag = {}
+                    if not isinstance(mem_lag, dict):
                         mem_lag = {}
-                if not isinstance(mem_lag, dict):
-                    mem_lag = {}
 
-                self._register_point(
-                    point_id=mid,
-                    emb=emb,
-                    point_type="memory",
-                    spatial_kwargs={
-                        "importance": m.get("importance", 0.5),
-                        "content": content[:200],
-                        "encoding_omega": mem_lag.get("omega",
-                                            m.get("encoding_omega", 0.5)),
-                        "encoding_s_total": mem_lag.get("s_total", 0.15),
-                    },
-                    semantic_metadata={
-                        "content": content[:500],
-                        "type": "memory",
-                        "importance": m.get("importance", 0.5),
-                        "memory_type": m.get("memory_type", ""),
-                        "created_at": m.get("created_at", ""),
-                        "encoding_omega": mem_lag.get("omega",
-                                            m.get("encoding_omega", 0.5)),
-                    },
-                )
-                memories_added += 1
-        except Exception as e:
-            logger.warning(f"Memory bootstrap failed: {e}")
+                    self._register_point(
+                        point_id=mid,
+                        emb=emb,
+                        point_type="memory",
+                        spatial_kwargs={
+                            "importance": m.get("importance", 0.5),
+                            "content": content[:200],
+                            "encoding_omega": mem_lag.get("omega",
+                                                m.get("encoding_omega", 0.5)),
+                            "encoding_s_total": mem_lag.get("s_total", 0.15),
+                        },
+                        semantic_metadata={
+                            "content": content[:500],
+                            "type": "memory",
+                            "importance": m.get("importance", 0.5),
+                            "memory_type": m.get("memory_type", ""),
+                            "created_at": m.get("created_at", ""),
+                            "encoding_omega": mem_lag.get("omega",
+                                                m.get("encoding_omega", 0.5)),
+                        },
+                    )
+                    memories_added += 1
+            except Exception as e:
+                logger.warning(f"Memory bootstrap failed: {e}")
+        else:
+            logger.info(f"Memory space already populated ({self.spatial_mind.memory_space.point_count} points) — skipping memory bootstrap")
 
         # Rebuild 8D trees
         if beliefs_added > 0:
@@ -597,6 +617,8 @@ class PhysicsEngine:
         # Save the fully hydrated semantic index to disk so we don't re-embed on next boot
         if self.data_dir:
             self.semantic_index.save(self.data_dir / "semantic_index")
+            # Also save spatial state so memory_space_state.json is populated
+            self.spatial_mind.save_state()
 
         logger.info(
             f"Spatial mind bootstrapped: {beliefs_added} beliefs, "
