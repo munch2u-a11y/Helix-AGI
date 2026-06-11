@@ -898,12 +898,23 @@ class Preconscious:
 
             bid = b.get("id", "")
             cache_idx = len(cache)
+            lag = b.get("encoding_lagrangian", {})
+            if not isinstance(lag, dict):
+                lag = {}
             cache.append({
                 "id": bid,
                 "content": content,
                 "mass": b.get("mass", 1.0),
                 "category": b.get("_category", ""),
                 "position_8d": position,
+                "confidence": b.get("confidence", 0.5),
+                "stability_index": b.get("stability_index", 0.5),
+                "access_count": b.get("access_count", 0),
+                "relations_count": len(b.get("relations", [])),
+                "encoding_omega": lag.get("omega", 0.5),
+                "encoding_s_total": lag.get("s_total", 0.15),
+                "creation_pulse": b.get("creation_pulse", 0),
+                "last_accessed_pulse": b.get("last_accessed_pulse", 0),
             })
 
             # Collect 384D embedding: from semantic index or embed on the fly
@@ -1061,6 +1072,7 @@ class Preconscious:
         # Within the semantically anchored candidate pool, rank by
         # Verlinde entropic gravity in the 8D cognitive manifold.
         scored = []
+        belief_space = self.physics.spatial_mind.belief_space
         for cache_idx, b in enumerate(self._belief_cache):
             # If we have semantic anchors, skip beliefs not in the anchor set
             if anchor_cache_indices is not None and cache_idx not in anchor_cache_indices:
@@ -1070,15 +1082,38 @@ class Preconscious:
             if content in exclude:
                 continue
 
+            # Fetch active point from the belief space if possible
+            bid = b.get("id")
+            pt = belief_space.get_point(bid) if bid else None
+            if pt:
+                # Use the active spatial state of the belief point
+                mass = belief_space._compute_structural_mass(pt)
+                temperature = belief_space._compute_temperature(pt)
+            else:
+                # Fallback to cache attributes using the same formulas via a fallback dict
+                fallback_pt = {
+                    "type": "belief",
+                    "confidence": b.get("confidence", 0.5),
+                    "importance": b.get("mass", 1.0),
+                    "access_count": b.get("access_count", 0),
+                    "relations_count": b.get("relations_count", 0),
+                    "encoding_omega": b.get("encoding_omega", 0.5),
+                    "stability_index": b.get("stability_index", 0.5),
+                    "creation_pulse": b.get("creation_pulse", 0),
+                    "last_accessed_pulse": b.get("last_accessed_pulse", 0),
+                }
+                mass = belief_space._compute_structural_mass(fallback_pt)
+                temperature = belief_space._compute_temperature(fallback_pt)
+
             dist_sq = float(np.sum((b["position_8d"] - query_pos) ** 2))
-            gravity = b["mass"] / (dist_sq + 1e-4)
+            gravity = (temperature * mass) / (dist_sq + 1e-4)
 
             scored.append({
-                "id": b.get("id", ""),
+                "id": bid or "",
                 "content": content,
                 "gravity": gravity,
                 "category": b["category"],
-                "mass": b["mass"],
+                "mass": mass,
                 "position_8d": b["position_8d"],
             })
 
@@ -1328,6 +1363,13 @@ class Preconscious:
         # Combine selection and re-sort by gravity
         final_selection = selected_skills + selected_other
         final_selection.sort(key=lambda x: x["gravity"], reverse=True)
+
+        # Update access in spatial mind for selected beliefs
+        belief_space = self.physics.spatial_mind.belief_space
+        for b in final_selection:
+            bid = b.get("id")
+            if bid:
+                belief_space.update_access(bid)
 
         # Format for injection
         lines = []
