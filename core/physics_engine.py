@@ -218,7 +218,7 @@ class PhysicsEngine:
         # Deposit trail particles in both spaces
         self.spatial_mind.belief_space.deposit_trail_particle(
             position=self.attention_center,
-            content=thought_text[:80] if thought_text else "",
+            content=thought_text[:250] if thought_text else "",
             pulse_id=self._pulse_count,
             omega=omega,
         )
@@ -296,7 +296,7 @@ class PhysicsEngine:
                 "relevance": round(gravity, 4),
                 "distance": round(dist, 4),
                 "mass": round(self.spatial_mind.belief_space._compute_structural_mass(pt), 3),
-                "temperature": round(self.spatial_mind.belief_space._compute_recency_temperature(pt), 4),
+                "temperature": round(self.spatial_mind.belief_space._compute_temperature(pt), 4),
                 "type": pt.get("type", "belief"),
                 "creation_pulse": pt.get("creation_pulse", 0),
             })
@@ -313,7 +313,7 @@ class PhysicsEngine:
                 "relevance": round(gravity, 4),
                 "distance": round(dist, 4),
                 "mass": round(self.spatial_mind.memory_space._compute_structural_mass(pt), 3),
-                "temperature": round(self.spatial_mind.memory_space._compute_recency_temperature(pt), 4),
+                "temperature": round(self.spatial_mind.memory_space._compute_temperature(pt), 4),
                 "type": pt.get("type", "memory"),
                 "creation_pulse": pt.get("creation_pulse", 0),
             })
@@ -526,8 +526,9 @@ class PhysicsEngine:
                             "encoding_omega": lag.get("omega", 0.5),
                             "encoding_s_total": lag.get("s_total", 0.15),
                             "relations_count": len(b.get("relations", [])),
+                            "access_count": b.get("access_count", 0),
+                            "stability_index": b.get("stability_index", 0.5),
                             "metadata": {
-                                "creation_epoch": b.get("creation_epoch", 0),
                                 "verifications": b.get("verifications", 0),
                                 "stability_index": b.get("stability_index", 0.5),
                                 "memory_refs": b.get("memory_refs", []),
@@ -585,10 +586,11 @@ class PhysicsEngine:
                         point_type="memory",
                         spatial_kwargs={
                             "importance": m.get("importance", 0.5),
-                            "content": content[:200],
+                            "content": content,
                             "encoding_omega": mem_lag.get("omega",
                                                 m.get("encoding_omega", 0.5)),
                             "encoding_s_total": mem_lag.get("s_total", 0.15),
+                            "access_count": m.get("access_count", 0),
                         },
                         semantic_metadata={
                             "content": content[:500],

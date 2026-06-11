@@ -64,12 +64,10 @@ class SpatialMind:
             embedding_dim=embedding_dim,
             base_dir=base_dir,
         )
-        self.belief_space.space_type = "belief"
         self.memory_space = CognitiveSpace(
             embedding_dim=embedding_dim,
             base_dir=base_dir,
         )
-        self.memory_space.space_type = "memory"
 
         # Force same projection matrix for both spaces
         # (so the same concept maps to the same 8D region in both)

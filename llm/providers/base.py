@@ -30,6 +30,11 @@ class ChatSession(ABC):
         """Return approximate character count of all messages in the session."""
         ...
 
+    def clear_pending_tool_results(self) -> None:
+        """Clear any pending/queued tool responses/results in the session."""
+        pass
+
+
 
 class ProviderConfig:
     """Configuration for a specific LLM provider.
@@ -97,6 +102,18 @@ def create_session(
             options=config.options,
         )
 
+    elif config.provider_type == "anthropic":
+        from llm.providers.anthropic_provider import AnthropicSession
+        return AnthropicSession(
+            model=config.model,
+            system_instruction=system_instruction,
+            temperature=config.temperature,
+            max_output_tokens=config.max_output_tokens,
+            tool_declarations=tool_declarations,
+            tool_executor=tool_executor,
+            preconscious=preconscious,
+        )
+
     elif config.provider_type == "llama_cpp":
         from llm.providers.llama_cpp_provider import LlamaCppSession
         return LlamaCppSession(
@@ -111,20 +128,47 @@ def create_session(
     else:
         raise ValueError(
             f"Unknown provider type: {config.provider_type}. "
-            f"Supported: gemini, ollama, llama_cpp"
+            f"Supported: gemini, anthropic, ollama, llama_cpp"
         )
 
 
 def detect_available_provider() -> Optional[ProviderConfig]:
     """Auto-detect the best available LLM backend.
 
-    Priority: Gemini API (if key exists) > Ollama > llama.cpp > None
+    Priority:
+      If HELIX_PROVIDER=anthropic: Anthropic Fable 5 (if key exists)
+      Default: Gemini API (if key exists) > Ollama > llama.cpp > None
 
-    Gemini is the conscious mind. Ollama/llama.cpp are for subagents.
+    Gemini is the default conscious mind. Anthropic activates only
+    when explicitly requested via HELIX_PROVIDER env var.
+    Ollama/llama.cpp are for subagents.
     """
     import os
 
-    # 1. Gemini API — primary conscious mind
+    # 0. Explicit provider override via HELIX_PROVIDER
+    provider_pref = os.environ.get("HELIX_PROVIDER", "").lower()
+
+    # 1a. Anthropic — if explicitly requested
+    if provider_pref == "anthropic":
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if anthropic_key:
+            logger.info(
+                "HELIX_PROVIDER=anthropic — using claude-fable-5"
+            )
+            return ProviderConfig(
+                provider_type="anthropic",
+                model="claude-fable-5",
+                context_window=1_000_000,
+                temperature=0.8,
+                max_output_tokens=16384,
+            )
+        else:
+            logger.warning(
+                "HELIX_PROVIDER=anthropic but no ANTHROPIC_API_KEY found — "
+                "falling through to Gemini"
+            )
+
+    # 1b. Gemini API — default conscious mind
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     if gemini_key:
         logger.info("Auto-detected Gemini API key — using gemini-3-flash-preview")

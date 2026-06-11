@@ -248,6 +248,13 @@ class GeminiSession(ChatSession):
         self._pending_tool_results = []
         return results
 
+    def clear_pending_tool_results(self) -> None:
+        """Clear any pending/queued tool responses/results in the session."""
+        self._native_tool_responses = []
+        self._pending_tool_results = []
+        logger.info("Cleared pending Gemini tool responses and results.")
+
+
     # ── Model Switching ──────────────────────────────────────────────
 
     def switch_model(self, new_model: str):

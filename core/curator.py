@@ -404,6 +404,38 @@ class Curator:
             from core.belief_consolidator import _extract_dominant_term
             term = _extract_dominant_term(content) or ""
 
+            # Aggregate metadata from cluster members
+            member_omegas = []
+            member_s_totals = []
+            all_mem_refs = []
+            member_stabilities = []
+
+            for m in members:
+                # stability_index
+                member_stabilities.append(m.get("stability_index", 0.5))
+                # encoding_lagrangian
+                lag = m.get("encoding_lagrangian", {})
+                if not isinstance(lag, dict):
+                    lag = {}
+                member_omegas.append(lag.get("omega", m.get("stability_index", 0.5)))
+                member_s_totals.append(lag.get("s_total", 0.15))
+                # memory_refs
+                for r in m.get("memory_refs", []):
+                    if r not in all_mem_refs:
+                        all_mem_refs.append(r)
+
+            # Compute means
+            mean_stability = float(np.mean(member_stabilities)) if member_stabilities else 0.5
+            mean_omega = float(np.mean(member_omegas)) if member_omegas else 0.5
+            mean_s_total = float(np.mean(member_s_totals)) if member_s_totals else 0.15
+
+            encoding_lag = {
+                "omega": mean_omega,
+                "s_total": mean_s_total,
+                "H": 0.15,
+                "D_KL": 0.0,
+            }
+
             # Generate belief ID and write
             belief_id = self.beliefs.generate_id(category)
             stored = self.beliefs.add_belief(
@@ -413,9 +445,9 @@ class Curator:
                 mass=cand["total_mass"],  # Summed mass — gravitational collapse
                 confidence=0.6,
                 source="precipitation_" + datetime.now().strftime("%Y-%m-%d"),
-                stability_index=0.7,
-                encoding_lagrangian={},
-                memory_refs=[],
+                stability_index=mean_stability,
+                encoding_lagrangian=encoding_lag,
+                memory_refs=all_mem_refs,
                 position_8d=centroid.tolist(),
                 term=term,
                 aliases=[],
@@ -717,11 +749,16 @@ class Curator:
                 pass
                 
         for b in beliefs:
+            encoding_lag = b.get("encoding_lagrangian", {})
+            stability = encoding_lag.get("omega", 0.5)
             candidate = {
                 "content": b['content'],
                 "category": b.get('category', 'propositions'),
                 "status": "pending",
-                "detected_at": datetime.now().isoformat()
+                "detected_at": datetime.now().isoformat(),
+                "memory_refs": b.get("memory_refs", []),
+                "encoding_lagrangian": encoding_lag,
+                "stability_index": b.get("stability_index", stability),
             }
             existing_pending.append(candidate)
             

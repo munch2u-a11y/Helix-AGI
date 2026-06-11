@@ -392,8 +392,11 @@ class PulseLoop:
                     self._consecutive_429s = 0
                     self._fallback_successes = 0
                     self._restore_failures = 0
-                    # Restore primary model
-                    _PRIMARY_MODEL = "gemini-2.5-flash"
+                    # Restore primary model (provider-aware)
+                    if self._provider_config and self._provider_config.provider_type == "anthropic":
+                        _PRIMARY_MODEL = "claude-fable-5"
+                    else:
+                        _PRIMARY_MODEL = "gemini-2.5-flash"
                     if hasattr(self._chat, 'switch_model'):
                         current = getattr(self._chat, '_model', '')
                         if current != _PRIMARY_MODEL:
@@ -409,7 +412,10 @@ class PulseLoop:
             # ── Rate-Limit Gate ───────────────────────────────────
             #    When rate-limited, force fallback model but keep pulsing.
             if self._rate_limited:
-                _FALLBACK = "gemini-3.1-flash-lite-preview"
+                if self._provider_config and self._provider_config.provider_type == "anthropic":
+                    _FALLBACK = "claude-opus-4-8"
+                else:
+                    _FALLBACK = "gemini-3.1-flash-lite-preview"
                 if self._chat is not None:
                     # Session exists — switch model if needed
                     if hasattr(self._chat, 'switch_model'):
@@ -630,8 +636,12 @@ class PulseLoop:
         thought = self._send_pulse(pulse_message)
 
         # 4b. If we got a 429, back off and optionally fallback model
-        _FALLBACK_MODEL = "gemini-3.1-flash-lite-preview"
-        _PRIMARY_MODEL = "gemini-2.5-flash"
+        if self._provider_config and self._provider_config.provider_type == "anthropic":
+            _FALLBACK_MODEL = "claude-opus-4-8"
+            _PRIMARY_MODEL = "claude-fable-5"
+        else:
+            _FALLBACK_MODEL = "gemini-3.1-flash-lite-preview"
+            _PRIMARY_MODEL = "gemini-2.5-flash"
         # How many consecutive successes on fallback before trying primary again.
         _FALLBACK_COOLDOWN_PULSES = 10
         # How many failed restore attempts before hard-locking to fallback
@@ -1071,14 +1081,28 @@ class PulseLoop:
                 parts.extend(prop_lines)
 
         # ── 4. Communication & Actions ───────────────────────────────
-        parts.append(
-            "\n## Communication & Actions\n"
-            "ALL actions (replying, journaling, noting, terminal, searching, browsing, etc.) "
-            "are handled natively via the Gemini Function Calling API.\n"
-            "CRITICAL: DO NOT write raw JSON blocks (e.g. `{\"action\": \"search\"}`) in your text. "
-            "That is legacy formatting and it WILL NOT WORK. "
-            "Just think naturally, and use the native tools provided to you to take action.\n"
+        _is_anthropic = (
+            self._provider_config
+            and self._provider_config.provider_type == "anthropic"
         )
+        if _is_anthropic:
+            parts.append(
+                "\n## Communication & Actions\n"
+                "ALL actions (replying, journaling, noting, terminal, searching, browsing, etc.) "
+                "are handled natively via tool use.\n"
+                "CRITICAL: DO NOT write raw JSON blocks (e.g. `{\"action\": \"search\"}`) in your text. "
+                "That is legacy formatting and it WILL NOT WORK. "
+                "Just think naturally, and use the tools provided to you to take action.\n"
+            )
+        else:
+            parts.append(
+                "\n## Communication & Actions\n"
+                "ALL actions (replying, journaling, noting, terminal, searching, browsing, etc.) "
+                "are handled natively via the Gemini Function Calling API.\n"
+                "CRITICAL: DO NOT write raw JSON blocks (e.g. `{\"action\": \"search\"}`) in your text. "
+                "That is legacy formatting and it WILL NOT WORK. "
+                "Just think naturally, and use the native tools provided to you to take action.\n"
+            )
 
         return "\n".join(parts)
 

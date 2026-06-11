@@ -34,6 +34,9 @@ from datetime import datetime
 
 logger = logging.getLogger("helix.core.batch_service")
 
+# Unified LLM dispatch — routes to Gemini or Anthropic based on HELIX_PROVIDER
+from llm.llm_dispatch import call_llm as _call_llm
+
 # ── Configuration ────────────────────────────────────────────────────
 
 _PENDING_FILE = Path("data/pending_beliefs.json")
@@ -79,8 +82,8 @@ _FORMAT_SPEC = (
 
     "propositions (max 250 chars):\n"
     "  Template: '[Subject] [predicate]' or '[If/When X], [then Y]'\n"
-    "  Example: 'User values sovereignty in AI design.'\n"
-    "  Example: 'A delayed reply from User is normal.'\n"
+    "  Example: 'Joshua values sovereignty in AI design.'\n"
+    "  Example: 'A delayed reply from Joshua is normal.'\n"
     "  Rule: Learned or derived facts about the world, people, or systems.\n\n"
 
     "preferences (max 250 chars):\n"
@@ -142,7 +145,7 @@ def _extract_beliefs_from_thought(thought_text: str) -> List[str]:
     Returns a list of extracted belief strings (may be empty).
     """
     prompt = _EXTRACTION_PROMPT.format(thought=thought_text)
-    raw = _call_gemini(prompt, system=_EXTRACTION_SYSTEM)
+    raw = _call_llm(prompt, system=_EXTRACTION_SYSTEM)
     if not raw:
         return []
 
@@ -563,11 +566,14 @@ def process_pending_beliefs(
                     extracted_candidates.append({
                         "content": belief_text,
                         "category": "unclassified",
-                        "memory_refs": [c.get("memory_id", -1)],
+                        "memory_refs": [c.get("memory_id", -1)] if c.get("memory_id", -1) != -1 else c.get("memory_refs", []),
                         "detected_at": c.get("detected_at", ""),
                         "pulse_count": c.get("pulse_count", 0),
                         "status": "pending",
                         "_source_tag_id": c.get("id", ""),
+                        "encoding_delta": c.get("encoding_delta", {}),
+                        "encoding_lagrangian": c.get("encoding_lagrangian", {}),
+                        "stability_index": c.get("stability_index", None),
                     })
                 stats["extracted"] += len(beliefs)
                 c["status"] = "extracted"
@@ -637,7 +643,7 @@ def process_pending_beliefs(
             )
 
         prompt = _BATCH_PROMPT.format(candidates=candidate_text)
-        raw_response = _call_gemini(prompt, system=_FORMAT_SPEC)
+        raw_response = _call_llm(prompt, system=_FORMAT_SPEC)
 
         if not raw_response:
             stats["api_failures"] += len(batch)
@@ -704,14 +710,25 @@ def process_pending_beliefs(
                     # Write to belief store
                     belief_id = belief_store.generate_id(cat)
 
-                    # Use the encoding delta from detection time
+                    # Use the encoding delta/lagrangian from detection time
                     encoding_delta = original.get("encoding_delta", {})
+                    orig_lag = original.get("encoding_lagrangian", {})
+                    
+                    # Compute omega and s_total, prioritizing delta, then lagrangian, then default
+                    omega_val = encoding_delta.get("omega_after", orig_lag.get("omega", 0.5))
+                    s_total_val = encoding_delta.get("delta_s_total", 0.0) + orig_lag.get("s_total", 0.15)
+                    
                     encoding_lag = {
-                        "omega": encoding_delta.get("omega_after", 0.5),
-                        "s_total": 0.15,
-                        "H": 0.15,
-                        "D_KL": 0.0,
+                        "omega": omega_val,
+                        "s_total": max(0.0, min(1.0, s_total_val)),
+                        "H": orig_lag.get("H", 0.15),
+                        "D_KL": orig_lag.get("D_KL", 0.0),
                     }
+
+                    # Default stability_index to stability_index if present, else omega_val
+                    stability_index = original.get("stability_index")
+                    if stability_index is None:
+                        stability_index = omega_val
 
                     stored = belief_store.add_belief(
                         category=cat,
@@ -721,9 +738,7 @@ def process_pending_beliefs(
                         confidence=0.5,
                         source="belief_detector_"
                                + datetime.now().strftime("%Y-%m-%d"),
-                        stability_index=encoding_delta.get(
-                            "omega_after", 0.5,
-                        ),
+                        stability_index=stability_index,
                         encoding_lagrangian=encoding_lag,
                         memory_refs=original.get("memory_refs", []),
                     )
