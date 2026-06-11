@@ -219,7 +219,8 @@ def run_evaluation(state_bench_path, num_tasks_per_domain, dry_run=False, save_p
     # Stats Tracker
     global_results = {
         "semantic": {"recall@1": [], "recall@3": [], "recall@5": [], "type_recall@1": [], "type_recall@3": [], "type_recall@5": [], "f1": [], "latency": []},
-        "gravity": {"recall@1": [], "recall@3": [], "recall@5": [], "type_recall@1": [], "type_recall@3": [], "type_recall@5": [], "f1": [], "latency": []}
+        "gravity": {"recall@1": [], "recall@3": [], "recall@5": [], "type_recall@1": [], "type_recall@3": [], "type_recall@5": [], "f1": [], "latency": []},
+        "preconscious": {"recall@1": [], "recall@3": [], "recall@5": [], "type_recall@1": [], "type_recall@3": [], "type_recall@5": [], "f1": [], "latency": []}
     }
 
     # Setup temporary directory for Helix DBs
@@ -270,6 +271,42 @@ def run_evaluation(state_bench_path, num_tasks_per_domain, dry_run=False, save_p
             grav_res = physics.query_neighborhood(query, k=5)
             grav_latency = (time.perf_counter() - t0) * 1000.0
 
+            # --- Query Preconscious (Combined) ---
+            t0 = time.perf_counter()
+            # 1. 384D Semantic search for up to 100 candidates
+            pre_sem_res = memory_manager.search_semantic(query, limit=100)
+            # 2. Project question into 8D
+            query_pos = physics.embed_and_project(query)
+            # 3. Rank anchored candidates by Verlinde gravity in 8D
+            pre_scored = []
+            memory_space = physics.spatial_mind.memory_space
+            for r in pre_sem_res:
+                content = r["content"]
+                tid = parse_task_id(content)
+                pt = None
+                if tid:
+                    pt = memory_space.get_point(f"mem_{tid}")
+                if not pt:
+                    for pid, p in memory_space._points.items():
+                        if p.get("content") == content:
+                            pt = p
+                            break
+                if pt:
+                    mass = memory_space._compute_structural_mass(pt)
+                    temperature = memory_space._compute_temperature(pt)
+                    pos_8d = pt.get("position")
+                    dist_sq = float(np.sum((pos_8d - query_pos) ** 2))
+                    gravity = (temperature * mass) / (dist_sq + 1e-4)
+                else:
+                    gravity = 0.0
+                pre_scored.append({
+                    "content": content,
+                    "gravity": gravity
+                })
+            pre_scored.sort(key=lambda x: x["gravity"], reverse=True)
+            pre_res = pre_scored[:5]
+            pre_latency = (time.perf_counter() - t0) * 1000.0
+
             # Parse search results
             sem_task_ids = []
             sem_task_types = []
@@ -296,10 +333,23 @@ def run_evaluation(state_bench_path, num_tasks_per_domain, dry_run=False, save_p
                         grav_task_types.append(matching_task["task_type"])
                 grav_texts.append(r["content"])
 
+            pre_task_ids = []
+            pre_task_types = []
+            pre_texts = []
+            for r in pre_res:
+                tid = parse_task_id(r["content"])
+                if tid:
+                    pre_task_ids.append(tid)
+                    matching_task = next((t for t in all_eval_tasks if t["task_id"] == tid), None)
+                    if matching_task:
+                        pre_task_types.append(matching_task["task_type"])
+                pre_texts.append(r["content"])
+
             # --- Score Retrieval ---
             for mode, retrieved_ids, retrieved_types, retrieved_texts, latency, target_dict in [
                 ("semantic", sem_task_ids, sem_task_types, sem_texts, sem_latency, global_results["semantic"]),
-                ("gravity", grav_task_ids, grav_task_types, grav_texts, grav_latency, global_results["gravity"])
+                ("gravity", grav_task_ids, grav_task_types, grav_texts, grav_latency, global_results["gravity"]),
+                ("preconscious", pre_task_ids, pre_task_types, pre_texts, pre_latency, global_results["preconscious"])
             ]:
                 # Task-level Recall (exact match)
                 r1 = int(task["task_id"] in retrieved_ids[:1])
@@ -335,8 +385,8 @@ def run_evaluation(state_bench_path, num_tasks_per_domain, dry_run=False, save_p
 
     report_lines.append("## Global Metrics Summary")
     report_lines.append("")
-    report_lines.append("| Metric | 384D Semantic Search | 8D Physics Manifold | Description |")
-    report_lines.append("| :--- | :---: | :---: | :--- |")
+    report_lines.append("| Metric | 384D Semantic Search | 8D Physics Manifold | Preconscious (Combined) | Description |")
+    report_lines.append("| :--- | :---: | :---: | :---: | :--- |")
     
     for metric_name, key in [
         ("Task Recall@1", "recall@1"),
@@ -349,11 +399,13 @@ def run_evaluation(state_bench_path, num_tasks_per_domain, dry_run=False, save_p
     ]:
         sem_mean = np.mean(global_results["semantic"][key]) * 100.0
         grav_mean = np.mean(global_results["gravity"][key]) * 100.0
-        report_lines.append(f"| {metric_name} | {sem_mean:.2f}% | {grav_mean:.2f}% | Recall accuracy or trace token overlap F1. |")
+        pre_mean = np.mean(global_results["preconscious"][key]) * 100.0
+        report_lines.append(f"| {metric_name} | {sem_mean:.2f}% | {grav_mean:.2f}% | {pre_mean:.2f}% | Recall accuracy or trace token overlap F1. |")
 
     sem_lat = np.mean(global_results["semantic"]["latency"])
     grav_lat = np.mean(global_results["gravity"]["latency"])
-    report_lines.append(f"| Avg Query Latency | {sem_lat:.2f} ms | {grav_lat:.2f} ms | Execution time in milliseconds. |")
+    pre_lat = np.mean(global_results["preconscious"]["latency"])
+    report_lines.append(f"| Avg Query Latency | {sem_lat:.2f} ms | {grav_lat:.2f} ms | {pre_lat:.2f} ms | Execution time in milliseconds. |")
     report_lines.append("")
 
     report_lines.append("## Observations & Insights")

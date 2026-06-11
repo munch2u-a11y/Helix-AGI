@@ -130,7 +130,8 @@ def run_evaluation(dataset_path, num_dialogues, dry_run=False, save_path=None):
     # Global Stats
     global_results = {
         "semantic": {"recall@1": [], "recall@3": [], "recall@5": [], "f1": [], "latency": []},
-        "gravity": {"recall@1": [], "recall@3": [], "recall@5": [], "f1": [], "latency": []}
+        "gravity": {"recall@1": [], "recall@3": [], "recall@5": [], "f1": [], "latency": []},
+        "preconscious": {"recall@1": [], "recall@3": [], "recall@5": [], "f1": [], "latency": []}
     }
     
     # Per-category Stats
@@ -138,7 +139,8 @@ def run_evaluation(dataset_path, num_dialogues, dry_run=False, save_path=None):
     for cat in range(1, 6):
         cat_results[cat] = {
             "semantic": {"recall@1": [], "recall@3": [], "recall@5": [], "f1": []},
-            "gravity": {"recall@1": [], "recall@3": [], "recall@5": [], "f1": []}
+            "gravity": {"recall@1": [], "recall@3": [], "recall@5": [], "f1": []},
+            "preconscious": {"recall@1": [], "recall@3": [], "recall@5": [], "f1": []}
         }
 
     # Evaluate each selected dialogue
@@ -234,6 +236,42 @@ def run_evaluation(dataset_path, num_dialogues, dry_run=False, save_path=None):
                 grav_res = physics.query_neighborhood(question, k=5)
                 grav_latency = (time.perf_counter() - t0) * 1000.0
 
+                # --- Query Preconscious (Combined) ---
+                t0 = time.perf_counter()
+                # 1. 384D Semantic search for up to 100 candidates
+                pre_sem_res = memory_manager.search_semantic(question, limit=100)
+                # 2. Project question into 8D
+                query_pos = physics.embed_and_project(question)
+                # 3. Rank anchored candidates by Verlinde gravity in 8D
+                pre_scored = []
+                memory_space = physics.spatial_mind.memory_space
+                for r in pre_sem_res:
+                    content = r["content"]
+                    did = parse_dia_id(content)
+                    pt = None
+                    if did:
+                        pt = memory_space.get_point(f"mem_{did}")
+                    if not pt:
+                        for pid, p in memory_space._points.items():
+                            if p.get("content") == content:
+                                pt = p
+                                break
+                    if pt:
+                        mass = memory_space._compute_structural_mass(pt)
+                        temperature = memory_space._compute_temperature(pt)
+                        pos_8d = pt.get("position")
+                        dist_sq = float(np.sum((pos_8d - query_pos) ** 2))
+                        gravity = (temperature * mass) / (dist_sq + 1e-4)
+                    else:
+                        gravity = 0.0
+                    pre_scored.append({
+                        "content": content,
+                        "gravity": gravity
+                    })
+                pre_scored.sort(key=lambda x: x["gravity"], reverse=True)
+                pre_res = pre_scored[:5]
+                pre_latency = (time.perf_counter() - t0) * 1000.0
+
                 # Extract retrieved dialogue IDs
                 sem_ids = []
                 sem_texts = []
@@ -251,10 +289,19 @@ def run_evaluation(dataset_path, num_dialogues, dry_run=False, save_path=None):
                         grav_ids.append(did)
                     grav_texts.append(r["content"])
 
+                pre_ids = []
+                pre_texts = []
+                for r in pre_res:
+                    did = parse_dia_id(r["content"])
+                    if did:
+                        pre_ids.append(did)
+                    pre_texts.append(r["content"])
+
                 # --- Score Retrieval ---
                 for mode, retrieved_ids, retrieved_texts, latency, target_dict in [
                     ("semantic", sem_ids, sem_texts, sem_latency, global_results["semantic"]),
-                    ("gravity", grav_ids, grav_texts, grav_latency, global_results["gravity"])
+                    ("gravity", grav_ids, grav_texts, grav_latency, global_results["gravity"]),
+                    ("preconscious", pre_ids, pre_texts, pre_latency, global_results["preconscious"])
                 ]:
                     # Recall@K (evidence overlap check)
                     r1 = int(any(eid in retrieved_ids[:1] for eid in evidence)) if evidence else 1
@@ -298,17 +345,19 @@ def run_evaluation(dataset_path, num_dialogues, dry_run=False, save_path=None):
     report_lines.append("")
 
     report_lines.append("## Global Metrics Summary")
-    report_lines.append("| Metric | Semantic Index (384D) | Spatial Mind (8D Manifold) |")
-    report_lines.append("|---|---|---|")
+    report_lines.append("| Metric | Semantic Index (384D) | Spatial Mind (8D Manifold) | Preconscious (Combined) |")
+    report_lines.append("|---|---|---|---|")
     
     for metric in ["recall@1", "recall@3", "recall@5", "f1"]:
         sem_val = np.mean(global_results["semantic"][metric])
         grav_val = np.mean(global_results["gravity"][metric])
-        report_lines.append(f"| Average {metric.title()} | {sem_val:.4f} | {grav_val:.4f} |")
+        pre_val = np.mean(global_results["preconscious"][metric])
+        report_lines.append(f"| Average {metric.title()} | {sem_val:.4f} | {grav_val:.4f} | {pre_val:.4f} |")
         
     sem_lat = np.mean(global_results["semantic"]["latency"])
     grav_lat = np.mean(global_results["gravity"]["latency"])
-    report_lines.append(f"| Avg Latency (ms) | {sem_lat:.2f} ms | {grav_lat:.2f} ms |")
+    pre_lat = np.mean(global_results["preconscious"]["latency"])
+    report_lines.append(f"| Avg Latency (ms) | {sem_lat:.2f} ms | {grav_lat:.2f} ms | {pre_lat:.2f} ms |")
     report_lines.append("")
 
     report_lines.append("## Category-Specific Breakdown")
@@ -330,6 +379,19 @@ def run_evaluation(dataset_path, num_dialogues, dry_run=False, save_path=None):
     report_lines.append("|---|---|---|---|---|---|")
     for cat in range(1, 6):
         cat_dict = cat_results[cat]["gravity"]
+        count = len(cat_dict["f1"])
+        if count > 0:
+            report_lines.append(
+                f"| {category_names[cat]} | {count} | {np.mean(cat_dict['recall@1']):.4f} | "
+                f"{np.mean(cat_dict['recall@3']):.4f} | {np.mean(cat_dict['recall@5']):.4f} | {np.mean(cat_dict['f1']):.4f} |"
+            )
+    report_lines.append("")
+
+    report_lines.append("### Preconscious (Combined)")
+    report_lines.append("| Category | Count | Recall@1 | Recall@3 | Recall@5 | Token F1 |")
+    report_lines.append("|---|---|---|---|---|---|")
+    for cat in range(1, 6):
+        cat_dict = cat_results[cat]["preconscious"]
         count = len(cat_dict["f1"])
         if count > 0:
             report_lines.append(
