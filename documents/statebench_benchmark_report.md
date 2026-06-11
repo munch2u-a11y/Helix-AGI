@@ -1,19 +1,19 @@
 # Helix Memory Retrieval Benchmark Report (STATE-Bench)
-**Date**: 2026-06-09 12:32:38
+**Date**: 2026-06-11 16:59:37
 **Tasks Evaluated per Domain**: 5 (Total: 15)
 
 ## Global Metrics Summary
 
 | Metric | 384D Semantic Search | 8D Physics Manifold | Description |
 | :--- | :---: | :---: | :--- |
-| Task Recall@1 | 93.33% | 40.00% | Recall accuracy or trace token overlap F1. |
+| Task Recall@1 | 93.33% | 33.33% | Recall accuracy or trace token overlap F1. |
 | Task Recall@3 | 100.00% | 53.33% | Recall accuracy or trace token overlap F1. |
-| Task Recall@5 | 100.00% | 73.33% | Recall accuracy or trace token overlap F1. |
-| Task-Type Recall@1 | 100.00% | 66.67% | Recall accuracy or trace token overlap F1. |
+| Task Recall@5 | 100.00% | 60.00% | Recall accuracy or trace token overlap F1. |
+| Task-Type Recall@1 | 100.00% | 60.00% | Recall accuracy or trace token overlap F1. |
 | Task-Type Recall@3 | 100.00% | 80.00% | Recall accuracy or trace token overlap F1. |
 | Task-Type Recall@5 | 100.00% | 80.00% | Recall accuracy or trace token overlap F1. |
-| Procedural Trace Token F1 | 48.71% | 3.12% | Recall accuracy or trace token overlap F1. |
-| Avg Query Latency | 221.23 ms | 220.87 ms | Execution time in milliseconds. |
+| Procedural Trace Token F1 | 48.71% | 51.22% | Recall accuracy or trace token overlap F1. |
+| Avg Query Latency | 137.58 ms | 137.51 ms | Execution time in milliseconds. |
 
 ## Observations & Insights
 - **Task-level Recall** measures whether the exact historical execution trajectory for the user's scenario is retrieved.
