@@ -506,6 +506,9 @@ class HelixApp(QMainWindow):
         if idx > 0:
             self.page_stack.setCurrentIndex(idx - 1)
             self.progress_bar.set_step(idx - 1)
+            prev_widget = self.page_stack.currentWidget()
+            if hasattr(prev_widget, "on_enter"):
+                prev_widget.on_enter()
 
     def finish_wizard(self):
         """Called when user clicks 'Create <Agent Name>' on summary page."""

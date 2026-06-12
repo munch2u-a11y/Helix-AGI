@@ -103,6 +103,7 @@ class ContextCompressor:
         protect_first_n: int = 2,
         summary_target_ratio: float = 0.20,
         auxiliary_model: str = "gemini-3.1-flash-lite-preview",
+        summarizer_fn=None,
     ):
         self.context_length = context_length
         self.threshold_percent = threshold_percent
@@ -110,6 +111,19 @@ class ContextCompressor:
         self.protect_first_n = protect_first_n
         self.summary_target_ratio = max(0.10, min(summary_target_ratio, 0.80))
         self.auxiliary_model = auxiliary_model
+        self._summarizer_fn = summarizer_fn  # Injectable summarizer callback
+
+        # Adaptive thresholds for small context windows (local models)
+        self._small_window = context_length < 200_000
+        if self._small_window:
+            # Tighter limits for local models with 8K-128K windows
+            self._prune_result_threshold = 100   # chars before pruning tool results
+            self._truncate_args_limit = 200       # chars before truncating call args
+            max_summary_ceil = 1500
+        else:
+            self._prune_result_threshold = 200
+            self._truncate_args_limit = 500
+            max_summary_ceil = _SUMMARY_TOKENS_CEILING
 
         # Computed thresholds
         self.threshold_tokens = int(context_length * threshold_percent)
@@ -120,7 +134,7 @@ class ContextCompressor:
             self.threshold_tokens * self.summary_target_ratio
         )
         self.max_summary_tokens = min(
-            int(context_length * 0.05), _SUMMARY_TOKENS_CEILING
+            int(context_length * 0.05), max_summary_ceil
         )
 
         # State
@@ -131,10 +145,11 @@ class ContextCompressor:
 
         logger.info(
             "ContextCompressor initialized: context=%d threshold=%d (%.0f%%) "
-            "emergency=%d tail_budget=%d aux_model=%s",
+            "emergency=%d tail_budget=%d small_window=%s summarizer=%s",
             context_length, self.threshold_tokens,
             threshold_percent * 100, self.emergency_tokens,
-            self.tail_token_budget, auxiliary_model,
+            self.tail_token_budget, self._small_window,
+            "custom" if summarizer_fn else auxiliary_model,
         )
 
     def should_compress(self, prompt_tokens: int) -> bool:
@@ -225,7 +240,7 @@ class ContextCompressor:
                     response = fr.get("response", {})
                     result_str = str(response.get("result", ""))
 
-                    if len(result_str) > 200:
+                    if len(result_str) > self._prune_result_threshold:
                         summary = self._summarize_tool_result(name, result_str)
                         new_parts.append({
                             "function_response": {
@@ -256,7 +271,7 @@ class ContextCompressor:
                     fc = part["function_call"]
                     args = fc.get("args", {})
                     args_str = json.dumps(args, default=str)
-                    if len(args_str) > 500:
+                    if len(args_str) > self._truncate_args_limit:
                         # Truncate large string values in args
                         truncated_args = self._truncate_args(args)
                         new_parts.append({
@@ -427,6 +442,17 @@ Target ~{summary_budget} tokens. Only output the recollection, no preamble."""
             )
 
         try:
+            full_prompt = prompt
+
+            # Use injectable summarizer if provided
+            if self._summarizer_fn:
+                summary_text = self._summarizer_fn(full_prompt)
+                if summary_text:
+                    self._previous_summary = summary_text
+                    return f"{SUMMARY_PREFIX}\n\n{summary_text}"
+                logger.warning("Custom summarizer returned None — falling back")
+
+            # Fallback: try Gemini directly (backwards compatibility)
             from google import genai
             import os
 
@@ -438,7 +464,7 @@ Target ~{summary_budget} tokens. Only output the recollection, no preamble."""
             client = genai.Client(api_key=key)
             response = client.models.generate_content(
                 model=self.auxiliary_model,
-                contents=prompt,
+                contents=full_prompt,
             )
 
             summary_text = response.text.strip()

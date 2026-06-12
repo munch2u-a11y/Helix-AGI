@@ -123,6 +123,17 @@ class PulseLoop:
         else:
             logger.warning("No LLM provider available — running without conscious model")
 
+        # Local vs API provider detection — determines pulse cadence mode
+        _LOCAL_PROVIDERS = {"ollama", "llama_cpp"}
+        self._is_local = (
+            self._provider_config is not None
+            and self._provider_config.provider_type in _LOCAL_PROVIDERS
+        )
+        if self._is_local:
+            logger.info("⚡ Flow mode (local) — continuous 30s pulse, no resting intervals")
+        else:
+            logger.info("📡 Pulse mode (API) — tiered cadence with resting intervals")
+
         # Journal directory
         self._journal_dir = Path(journal_dir)
         self._journal_dir.mkdir(parents=True, exist_ok=True)
@@ -175,11 +186,21 @@ class PulseLoop:
         context_window = (
             provider_config.context_window if provider_config else 1_000_000
         )
+
+        # Local models have smaller context windows — compress earlier
+        if self._is_local:
+            compress_threshold = 0.40
+            emergency_threshold = 0.65
+        else:
+            compress_threshold = 0.50
+            emergency_threshold = 0.80
+
         self._compressor = ContextCompressor(
             context_length=context_window,
-            threshold_percent=0.50,
-            emergency_percent=0.80,
+            threshold_percent=compress_threshold,
+            emergency_percent=emergency_threshold,
             protect_first_n=2,
+            summarizer_fn=self._summarize_for_compressor,
         )
 
         # Dynamic toolset state — load from config instead of hardcoding
@@ -210,6 +231,51 @@ class PulseLoop:
         # 429 rate-limit flag — when set, forces fallback model usage
         # and blocks the success-path restore. Cleared on morning wake-up.
         self._rate_limited = False
+
+    def _summarize_for_compressor(self, prompt: str) -> Optional[str]:
+        """Summarize text for context compression using the active provider.
+
+        Used as a callback by ContextCompressor instead of hardcoding Gemini.
+        For API providers, uses a lightweight auxiliary model.
+        For local providers, uses the same local model.
+        """
+        try:
+            if self._is_local:
+                # Local: summarize through the same Ollama/llama.cpp endpoint
+                if not self._provider_config:
+                    return None
+                summary_session = create_session(
+                    config=ProviderConfig(
+                        provider_type=self._provider_config.provider_type,
+                        model=self._provider_config.model,
+                        context_window=self._provider_config.context_window,
+                        temperature=0.3,
+                        max_output_tokens=2048,
+                        options=self._provider_config.options,
+                    ),
+                    system_instruction=(
+                        "You are compressing a conversation history. "
+                        "Write as the speaker naturally recalling what just happened. "
+                        "Be concise and preserve key facts."
+                    ),
+                )
+                return summary_session.send_message(prompt)
+            else:
+                # API: use Gemini Flash Lite for cheap summarization
+                import os
+                from google import genai
+                key = os.environ.get("GEMINI_API_KEY", "")
+                if not key:
+                    return None
+                client = genai.Client(api_key=key)
+                response = client.models.generate_content(
+                    model="gemini-3.1-flash-lite-preview",
+                    contents=prompt,
+                )
+                return response.text.strip()
+        except Exception as e:
+            logger.warning("Summarizer callback failed: %s", e)
+            return None
 
     def set_dream_engine(self, daemon):
         """Wire the background daemon for rollover snapshots."""
@@ -395,11 +461,19 @@ class PulseLoop:
         )
 
         # Resting pulse rate (how often the agent thinks autonomously when idle)
-        resting_minutes = cfg.get("resting_pulse_minutes", 15)
-        resting_minutes = max(5, min(60, resting_minutes))  # Clamp to 5-60
-        self.RESTING_INTERVAL = resting_minutes * 60
-        if resting_minutes != 15:
-            logger.info(f"Resting pulse rate: every {resting_minutes} min ({self.RESTING_INTERVAL}s)")
+        if self._is_local:
+            # Local providers: continuous flow mode — no long resting intervals
+            self.RESTING_INTERVAL = self.REGULAR_INTERVAL  # 30s
+            logger.info(
+                "Flow mode: resting interval = REGULAR (%ds) — no API cost throttling",
+                self.REGULAR_INTERVAL,
+            )
+        else:
+            resting_minutes = cfg.get("resting_pulse_minutes", 15)
+            resting_minutes = max(5, min(60, resting_minutes))  # Clamp to 5-60
+            self.RESTING_INTERVAL = resting_minutes * 60
+            if resting_minutes != 15:
+                logger.info(f"Resting pulse rate: every {resting_minutes} min ({self.RESTING_INTERVAL}s)")
 
     def _load_toolsets_from_config(self) -> set:
         """Load tool_set from config/config.json.
@@ -564,9 +638,10 @@ class PulseLoop:
                     logger.info("ACTIVE → REGULAR (2 min no incoming)")
 
             elif self._state == "REGULAR":
-                if time.time() - self._last_activity_time > self.REGULAR_TIMEOUT:
+                if not self._is_local and time.time() - self._last_activity_time > self.REGULAR_TIMEOUT:
                     self._state = "RESTING"
                     logger.info("REGULAR → RESTING (10 min no activity)")
+                # Local providers stay at REGULAR — no RESTING transition
 
             # ── Idle Consolidation (Curator-Style) ───────────────
             #    When idle for 2+ hours, run lightweight belief

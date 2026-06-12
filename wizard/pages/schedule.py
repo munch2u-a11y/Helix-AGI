@@ -171,14 +171,33 @@ class SchedulePage(QWidget):
             pulse_ticks.addWidget(lbl, stretch=1)
         pulse_container.addLayout(pulse_ticks)
 
-        pulse_desc = QLabel(
+        self.pulse_desc = QLabel(
             "How often your agent thinks autonomously when idle. "
             "Lower = more active (costs more API tokens). "
             "Higher = more energy-efficient."
         )
-        pulse_desc.setStyleSheet("font-size: 11px; color: #8888aa;")
-        pulse_desc.setWordWrap(True)
-        pulse_container.addWidget(pulse_desc)
+        self.pulse_desc.setStyleSheet("font-size: 11px; color: #8888aa;")
+        self.pulse_desc.setWordWrap(True)
+        pulse_container.addWidget(self.pulse_desc)
+
+        # Flow mode notice for local providers
+        self.flow_mode_label = QLabel(
+            "🔄  Local provider detected — Flow Mode active!\n"
+            "Your agent will maintain a continuous 30-second pulse with no long "
+            "resting intervals. No API costs to worry about."
+        )
+        self.flow_mode_label.setStyleSheet(
+            "font-size: 11px; color: #4ade80; padding: 8px; "
+            "background: rgba(74, 222, 128, 0.08); "
+            "border: 1px solid rgba(74, 222, 128, 0.25); "
+            "border-radius: 8px;"
+        )
+        self.flow_mode_label.setWordWrap(True)
+        self.flow_mode_label.setVisible(False)
+        pulse_container.addWidget(self.flow_mode_label)
+
+        # Check if current provider is local
+        self._update_pulse_mode()
 
         schedule_layout.addLayout(pulse_container)
 
@@ -257,8 +276,15 @@ class SchedulePage(QWidget):
             active_hours = (1440 - wake + sleep) / 60
             sleep_hours = 24 - active_hours
 
-        # Estimate daily pulses
-        daily_pulses = int(active_hours * 60 / pulse)
+        is_local = self.wizard.config.get("llm_provider", "gemini") in ("ollama", "llama_cpp")
+
+        if is_local:
+            pulse_text = "Resting pulse: continuous flow (30s)"
+            daily_text = ""
+        else:
+            daily_pulses = int(active_hours * 60 / pulse)
+            pulse_text = f"Resting pulse: every {pulse} min (~{daily_pulses} autonomous pulses/day)"
+            daily_text = ""
 
         status = ""
         if sleep_hours < 3:
@@ -271,9 +297,38 @@ class SchedulePage(QWidget):
         self.summary_label.setText(
             f"Active: {active_hours:.1f} hours  ·  Sleep: {sleep_hours:.1f} hours\n"
             f"Wake {_minutes_to_time(wake)} → Sleep {_minutes_to_time(sleep)}\n"
-            f"Resting pulse: every {pulse} min (~{daily_pulses} autonomous pulses/day)\n\n"
+            f"{pulse_text}\n\n"
             f"{status}"
         )
+
+    def _update_pulse_mode(self):
+        """Show/hide pulse slider based on whether provider is local."""
+        provider = self.wizard.config.get("llm_provider", "gemini")
+        is_local = provider in ("ollama", "llama_cpp")
+
+        self.pulse_slider.setEnabled(not is_local)
+        self.pulse_desc.setVisible(not is_local)
+        self.flow_mode_label.setVisible(is_local)
+
+        if is_local:
+            self.pulse_label.setText("30s")
+            self.pulse_label.setStyleSheet(
+                "font-family: 'JetBrains Mono', monospace; font-size: 18px; "
+                "color: #4ade80; font-weight: 700;"
+            )
+        else:
+            pulse_val = self.pulse_slider.value()
+            self.pulse_label.setText(f"{pulse_val} min")
+            self.pulse_label.setStyleSheet(
+                "font-family: 'JetBrains Mono', monospace; font-size: 18px; "
+                "color: #f59e0b; font-weight: 700;"
+            )
+
+        self._update_summary()
+
+    def on_enter(self):
+        """Called when user navigates to this page — refresh pulse mode."""
+        self._update_pulse_mode()
 
     def _save_and_next(self):
         wake = self.wake_slider.value()
