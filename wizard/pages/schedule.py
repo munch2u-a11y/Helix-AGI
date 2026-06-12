@@ -171,14 +171,30 @@ class SchedulePage(QWidget):
             pulse_ticks.addWidget(lbl, stretch=1)
         pulse_container.addLayout(pulse_ticks)
 
-        pulse_desc = QLabel(
+        self.pulse_desc = QLabel(
             "How often your agent thinks autonomously when idle. "
             "Lower = more active (costs more API tokens). "
             "Higher = more energy-efficient."
         )
-        pulse_desc.setStyleSheet("font-size: 11px; color: #8888aa;")
-        pulse_desc.setWordWrap(True)
-        pulse_container.addWidget(pulse_desc)
+        self.pulse_desc.setStyleSheet("font-size: 11px; color: #8888aa;")
+        self.pulse_desc.setWordWrap(True)
+        pulse_container.addWidget(self.pulse_desc)
+
+        # Flow mode notice for local providers
+        self.flow_mode_label = QLabel(
+            "🔄  Local provider detected — Flow Mode active!\n"
+            "Your agent will maintain a continuous 30-second pulse with no long "
+            "resting intervals. No API costs to worry about."
+        )
+        self.flow_mode_label.setStyleSheet(
+            "font-size: 11px; color: #4ade80; padding: 8px; "
+            "background: rgba(74, 222, 128, 0.08); "
+            "border: 1px solid rgba(74, 222, 128, 0.25); "
+            "border-radius: 8px;"
+        )
+        self.flow_mode_label.setWordWrap(True)
+        self.flow_mode_label.setVisible(False)
+        pulse_container.addWidget(self.flow_mode_label)
 
         schedule_layout.addLayout(pulse_container)
 
@@ -192,8 +208,10 @@ class SchedulePage(QWidget):
             border-radius: 10px;
             padding: 16px;
         """)
-        self._update_summary()
         schedule_layout.addWidget(self.summary_label)
+
+        # Check if current provider is local and update summary
+        self._update_pulse_mode()
 
         layout.addWidget(schedule_group)
 
