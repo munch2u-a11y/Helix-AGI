@@ -4,17 +4,17 @@
 
 Run all tests:
 ```bash
-python scripts/run_all_tests.py
+python tests/run_all_tests.py
 ```
 
 Run only quick tests (validation + core):
 ```bash
-python scripts/run_all_tests.py --quick
+python tests/run_all_tests.py --quick
 ```
 
 Run a specific test:
 ```bash
-python scripts/run_all_tests.py --script test_tool_executor.py
+python tests/run_all_tests.py --script test_tool_executor.py
 ```
 
 ## Test Scripts Overview
@@ -27,7 +27,7 @@ Validates system configuration before running:
 - Tool schema completeness
 - Python dependencies
 
-**Run:** `python scripts/validate_config.py`
+**Run:** `python tests/validate_config.py`
 
 ### 2. **test_integration.py** - Integration Tests
 End-to-end integration testing:
@@ -37,7 +37,7 @@ End-to-end integration testing:
 - Memory retrieval and semantic search
 - Tool registration and execution with context
 
-**Run:** `python scripts/test_integration.py`
+**Run:** `python tests/test_integration.py`
 
 ### 3. **test_tool_executor.py** - Tool Executor Tests
 Tests tool execution functionality:
@@ -49,7 +49,7 @@ Tests tool execution functionality:
 - Context injection
 - Memory access
 
-**Run:** `python scripts/test_tool_executor.py`
+**Run:** `python tests/test_tool_executor.py`
 
 ### 4. **test_belief_operations.py** - Belief Operations Tests
 Tests belief system functionality:
@@ -58,7 +58,7 @@ Tests belief system functionality:
 - Belief mass calculations and normalization
 - Belief merging and composition
 
-**Run:** `python scripts/test_belief_operations.py`
+**Run:** `python tests/test_belief_operations.py`
 
 ### 5. **test_channel_router.py** - Channel Router Tests
 Tests communication pipeline:
@@ -68,7 +68,7 @@ Tests communication pipeline:
 - Message delivery callbacks
 - Contact organization by channel
 
-**Run:** `python scripts/test_channel_router.py`
+**Run:** `python tests/test_channel_router.py`
 
 ### 6. **test_preconscious_injection.py** - Preconscious Context Builder
 Tests context window assembly:
@@ -78,7 +78,7 @@ Tests context window assembly:
 - Context window overflow handling
 - Token counting and compression
 
-**Run:** `python scripts/test_preconscious_injection.py`
+**Run:** `python tests/test_preconscious_injection.py`
 
 ### 7. **simulate_memory_operations.py** - Memory Simulator
 Simulates memory system operations:
@@ -87,7 +87,7 @@ Simulates memory system operations:
 - Semantic indexing patterns
 - Data persistence and integrity verification
 
-**Run:** `python scripts/simulate_memory_operations.py`
+**Run:** `python tests/simulate_memory_operations.py`
 
 ### 8. **simulate_physics.py** - Physics Engine Simulator
 Simulates 8D manifold and semantic indexing:
@@ -98,7 +98,7 @@ Simulates 8D manifold and semantic indexing:
 - Manifold evolution over multiple pulses
 - Attractor dynamics and center of mass calculations
 
-**Run:** `python scripts/simulate_physics.py`
+**Run:** `python tests/simulate_physics.py`
 
 ### 9. **stress_test_pulse.py** - Pulse Loop Stress Test
 Stress tests pulse loop behavior:
@@ -108,7 +108,7 @@ Stress tests pulse loop behavior:
 - Pulse time variability analysis
 - Sustained load over 500+ pulses
 
-**Run:** `python scripts/stress_test_pulse.py`
+**Run:** `python tests/stress_test_pulse.py`
 
 ### 10. **load_test.py** - Load Test Suite
 Performance and load testing:
@@ -124,7 +124,7 @@ Measures:
 - Error rates
 - Resource saturation
 
-**Run:** `python scripts/load_test.py`
+**Run:** `python tests/load_test.py`
 
 ### 11. **run_all_tests.py** - Master Test Runner
 Orchestrates all test suites with:
@@ -133,7 +133,7 @@ Orchestrates all test suites with:
 - Summary reporting
 - Exit codes for CI/CD integration
 
-**Run:** `python scripts/run_all_tests.py`
+**Run:** `python tests/run_all_tests.py`
 
 ## Test Categories
 
@@ -183,7 +183,7 @@ Orchestrates all test suites with:
 
 For CI/CD pipelines, use quick mode:
 ```bash
-python scripts/run_all_tests.py --quick
+python tests/run_all_tests.py --quick
 ```
 
 This runs only validation and core tests (60-90 seconds total).
@@ -192,7 +192,7 @@ This runs only validation and core tests (60-90 seconds total).
 
 If tests fail:
 
-1. **Configuration errors**: Run `python scripts/validate_config.py` first
+1. **Configuration errors**: Run `python tests/validate_config.py` first
 2. **Import errors**: Ensure all dependencies are installed (`pip install -r requirements.txt`)
 3. **Memory issues**: Close other applications before running load tests
 4. **Timeout errors**: Increase timeout values in test scripts if running on slow systems
@@ -201,10 +201,10 @@ If tests fail:
 
 To add a new test:
 
-1. Create `scripts/test_<feature>.py` following the existing pattern
+1. Create `tests/test_<feature>.py` following the existing pattern
 2. Use `unittest.TestCase` for unit tests
 3. Include a `run_<feature>_tests()` function
-4. Add to `scripts/run_all_tests.py` in the `test_scripts` list
+4. Add to `tests/run_all_tests.py` in the `test_scripts` list
 
 ## Performance Baselines
 

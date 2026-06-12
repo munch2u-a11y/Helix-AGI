@@ -19,13 +19,13 @@ class TestSuiteRunner:
     
     def __init__(self):
         """Initialize test runner."""
-        self.scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        self.tests_dir = os.path.dirname(os.path.abspath(__file__))
         self.results = []
         self.start_time = datetime.now()
     
     def run_test_script(self, script_name, description):
         """Run a single test script."""
-        script_path = os.path.join(self.scripts_dir, script_name)
+        script_path = os.path.join(self.tests_dir, script_name)
         
         print(f"\n{'=' * 70}")
         print(f"Running: {description}")
