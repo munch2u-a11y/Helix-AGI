@@ -434,6 +434,7 @@ class HelixApp(QMainWindow):
         from wizard.pages.schedule import SchedulePage
         from wizard.pages.summary import SummaryPage
         from wizard.orb_animation import OrbOverlay
+        from wizard.assistant_panel import AssistantPanel
 
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -445,6 +446,11 @@ class HelixApp(QMainWindow):
         step_names = ["Welcome", "Credentials", "Identity", "Tools", "Safety", "Schedule", "Review"]
         self.progress_bar = WizardProgressBar(step_names)
         layout.addWidget(self.progress_bar)
+
+        # Horizontal layout: page stack + assistant panel
+        content_row = QHBoxLayout()
+        content_row.setContentsMargins(0, 0, 0, 0)
+        content_row.setSpacing(0)
 
         # Page stack
         self.page_stack = QStackedWidget()
@@ -460,7 +466,16 @@ class HelixApp(QMainWindow):
         for page in self.pages:
             self.page_stack.addWidget(page)
 
-        layout.addWidget(self.page_stack, stretch=1)
+        content_row.addWidget(self.page_stack, stretch=1)
+
+        # AI Setup Assistant panel (right side)
+        self.assistant_panel = AssistantPanel(self)
+        self.assistant_panel.setVisible(
+            self.config.get("ai_assist", False)
+        )
+        content_row.addWidget(self.assistant_panel)
+
+        layout.addLayout(content_row, stretch=1)
 
         # Orb animation overlay — sits on top of everything
         self.orb_overlay = OrbOverlay(container)
@@ -500,12 +515,20 @@ class HelixApp(QMainWindow):
             # Refresh AI helper visibility
             if hasattr(next_page, "ai_banner"):
                 next_page.ai_banner.refresh()
+            # Notify assistant panel of page change
+            if hasattr(self, 'assistant_panel'):
+                self.assistant_panel.refresh()
+                self.assistant_panel.notify_page_change(idx + 1)
 
     def prev_page(self):
         idx = self.page_stack.currentIndex()
         if idx > 0:
             self.page_stack.setCurrentIndex(idx - 1)
             self.progress_bar.set_step(idx - 1)
+            # Notify assistant panel of page change
+            if hasattr(self, 'assistant_panel'):
+                self.assistant_panel.refresh()
+                self.assistant_panel.notify_page_change(idx - 1)
 
     def finish_wizard(self):
         """Called when user clicks 'Create <Agent Name>' on summary page."""
