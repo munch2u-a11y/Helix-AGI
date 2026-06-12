@@ -11,9 +11,9 @@ One specific iteration boosts the music-player skill belief to test
 distraction immunity of the preconscious injection system.
 
 Usage:
-    python scripts/tool_extrapolation_benchmark.py                  # 10 runs
-    python scripts/tool_extrapolation_benchmark.py --runs 5         # 5 runs
-    python scripts/tool_extrapolation_benchmark.py --runs 3 --distraction-run 1
+    python tests/tool_extrapolation_benchmark.py                  # 10 runs
+    python tests/tool_extrapolation_benchmark.py --runs 5         # 5 runs
+    python tests/tool_extrapolation_benchmark.py --runs 3 --distraction-run 1
 """
 
 import os, sys, json, re, time, copy, random, argparse, tempfile, logging

@@ -188,6 +188,8 @@ helix_agi/
 │
 ├── scripts/                   # Agent utility scripts
 │
+├── tests/                     # Test framework, benchmarks, and sandboxes
+│
 ├── data/                      # Runtime data (gitignored, created by setup.py)
 │   ├── beliefs/               #   7 category JSON files
 │   ├── memory/                #   JSONL Journal and FAISS index
