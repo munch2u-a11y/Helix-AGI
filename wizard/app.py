@@ -912,22 +912,32 @@ class HelixApp(QMainWindow):
 
     def _create_desktop_shortcuts(self, wizard_shortcut: bool, agent_shortcut: bool):
         """Create Linux desktop shortcuts for Setup Wizard and Agent Launcher."""
+        import shutil
         apps_dir = Path(os.path.expanduser("~/.local/share/applications"))
         apps_dir.mkdir(parents=True, exist_ok=True)
         
         desktop_dir = Path(os.path.expanduser("~/Desktop"))
         
-        logo_icon_path = str(BASE_DIR / "wizard" / "assets" / "helix_logo.png")
+        # Copy to local share icons to avoid space/parenthesis path issues in desktop files
+        try:
+            icons_dir = Path(os.path.expanduser("~/.local/share/icons"))
+            icons_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(str(BASE_DIR / "wizard" / "assets" / "helix_logo.png"), str(icons_dir / "helix_logo.png"))
+        except Exception as e:
+            logger.warning(f"Failed to copy icon to system directory: {e}")
+
+        python_exe = sys.executable
+        run_wizard_py = BASE_DIR / "run_wizard.py"
+        main_py = BASE_DIR / "main.py"
 
         if wizard_shortcut:
-            wizard_sh = BASE_DIR / "Helix Setup Wizard.sh"
             content = f"""[Desktop Entry]
 Version=1.0
 Type=Application
 Name=Helix Setup Wizard
 Comment=Configure Helix AGI settings
-Exec=bash "{wizard_sh}"
-Icon={logo_icon_path}
+Exec="{python_exe}" "{run_wizard_py}" --wizard
+Icon=helix_logo
 Terminal=false
 Categories=Utility;Settings;
 """
@@ -951,15 +961,14 @@ Categories=Utility;Settings;
                     logger.error(f"Failed to create setup wizard desktop shortcut: {e}")
 
         if agent_shortcut:
-            agent_sh = BASE_DIR / "Launch Helix Agent.sh"
             content = f"""[Desktop Entry]
 Version=1.0
 Type=Application
 Name=Launch Helix Agent & Dashboard
 Comment=Start the Helix AGI agent and open dashboard
-Exec=bash "{agent_sh}"
-Icon={logo_icon_path}
-Terminal=true
+Exec="{python_exe}" "{main_py}"
+Icon=helix_logo
+Terminal=false
 Categories=Utility;
 """
             # Write to applications menu
@@ -992,8 +1001,47 @@ Categories=Utility;
         event.accept()
 
 
+def ensure_icon_and_desktop_entry():
+    """Ensure the Helix AGI logo is in the system icon directory and create the desktop entry at startup."""
+    import shutil
+    try:
+        logo_src = BASE_DIR / "wizard" / "assets" / "helix_logo.png"
+        if not logo_src.exists():
+            return
+            
+        # 1. Copy icon to ~/.local/share/icons/
+        icons_dir = Path(os.path.expanduser("~/.local/share/icons"))
+        icons_dir.mkdir(parents=True, exist_ok=True)
+        dest_icon = icons_dir / "helix_logo.png"
+        shutil.copy(str(logo_src), str(dest_icon))
+        
+        # 2. Write setup wizard desktop entry to ~/.local/share/applications/
+        apps_dir = Path(os.path.expanduser("~/.local/share/applications"))
+        apps_dir.mkdir(parents=True, exist_ok=True)
+        
+        python_exe = sys.executable
+        run_wizard_py = BASE_DIR / "run_wizard.py"
+        
+        content = f"""[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Helix Setup Wizard
+Comment=Configure Helix AGI settings
+Exec="{python_exe}" "{run_wizard_py}" --wizard
+Icon=helix_logo
+Terminal=false
+Categories=Utility;Settings;
+"""
+        desktop_file = apps_dir / "helix_setup_wizard.desktop"
+        desktop_file.write_text(content)
+        desktop_file.chmod(0o755)
+    except Exception as e:
+        logger.warning(f"Failed to initialize startup desktop entry: {e}")
+
+
 # ── Entry Point ───────────────────────────────────────────────────────
 def main():
+    ensure_icon_and_desktop_entry()
     import argparse
     import subprocess
     import os
@@ -1043,7 +1091,7 @@ def main():
             pass
     elif sys.platform == "linux":
         try:
-            app.setDesktopFileName("helix_setup_wizard.desktop")
+            app.setDesktopFileName("helix_setup_wizard")
         except Exception:
             pass
 
