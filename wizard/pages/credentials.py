@@ -107,10 +107,15 @@ class CredentialsPage(QWidget):
         self.alibaba_key.setPlaceholderText("Alibaba DashScope API key (Qwen models)")
         llm_form.addRow("Alibaba (Qwen):", self.alibaba_key)
 
-        # ── Local Provider ────────────────────────────────────────────
-        local_label = QLabel("🖥️  Local Provider")
+        # ── Local Providers ────────────────────────────────────────────
+        local_label = QLabel("🖥️  Local Providers")
         local_label.setStyleSheet("font-weight: 600; font-size: 12px; color: #4ade80; margin-top: 8px;")
         llm_form.addRow(local_label)
+
+        # Ollama
+        ollama_sub = QLabel("Ollama  (runs models via ollama service)")
+        ollama_sub.setStyleSheet("font-size: 11px; color: #a78bfa; font-weight: 600;")
+        llm_form.addRow(ollama_sub)
 
         self.ollama_url = QLineEdit()
         self.ollama_url.setPlaceholderText("http://localhost:11434  (default Ollama URL)")
@@ -118,17 +123,50 @@ class CredentialsPage(QWidget):
         llm_form.addRow("Ollama URL:", self.ollama_url)
 
         self.ollama_model = QLineEdit()
-        self.ollama_model.setPlaceholderText("e.g. llama3, qwen2.5, gemma2, mistral...")
+        self.ollama_model.setPlaceholderText("e.g. llama3, qwen2.5, gemma4, mistral...")
         self.ollama_model.setText(self.wizard.config.get("ollama_model", ""))
         llm_form.addRow("Ollama Model:", self.ollama_model)
 
         ollama_hint = QLabel(
             "💡 Ollama runs models locally — no API costs. Install from ollama.com\n"
-            "   then pull a model: ollama pull llama3"
+            "   then pull a model: ollama pull gemma4"
         )
         ollama_hint.setWordWrap(True)
         ollama_hint.setStyleSheet("font-size: 10px; color: #666688; padding-left: 4px;")
         llm_form.addRow(ollama_hint)
+
+        # llama.cpp / GGUF
+        gguf_sub = QLabel("llama.cpp  (run GGUF model files directly)")
+        gguf_sub.setStyleSheet("font-size: 11px; color: #4ade80; font-weight: 600; margin-top: 6px;")
+        llm_form.addRow(gguf_sub)
+
+        # Auto-detect GGUF files
+        from wizard.model_detector import detect_gguf_models
+        from wizard.app import BASE_DIR
+        gguf_models = detect_gguf_models(BASE_DIR)
+
+        if gguf_models:
+            gguf_status = QLabel(
+                f"✅  Found {len(gguf_models)} model(s) in models/:\n"
+                f"   {', '.join(gguf_models)}"
+            )
+            gguf_status.setStyleSheet("font-size: 11px; color: #4ade80; padding-left: 4px;")
+        else:
+            gguf_status = QLabel(
+                "No .gguf files found in models/ directory.\n"
+                "Download GGUF models from huggingface.co and place them in models/"
+            )
+            gguf_status.setStyleSheet("font-size: 11px; color: #666688; padding-left: 4px;")
+        gguf_status.setWordWrap(True)
+        llm_form.addRow(gguf_status)
+
+        gguf_hint = QLabel(
+            "💡 llama.cpp runs GGUF models directly on your GPU/CPU — no Ollama needed.\n"
+            "   Select 'llama.cpp (Local GGUF)' as primary provider below, then click Detect Models."
+        )
+        gguf_hint.setWordWrap(True)
+        gguf_hint.setStyleSheet("font-size: 10px; color: #666688; padding-left: 4px;")
+        llm_form.addRow(gguf_hint)
 
         # ── Primary Provider Selector ─────────────────────────────────
         provider_label = QLabel("⭐  Primary Provider")
@@ -136,8 +174,21 @@ class CredentialsPage(QWidget):
         llm_form.addRow(provider_label)
 
         self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["gemini", "anthropic", "openai", "alibaba", "ollama", "llama_cpp"])
-        self.provider_combo.setCurrentText(self.wizard.config.get("llm_provider", "gemini"))
+        self._provider_map = {
+            "Gemini (Google)": "gemini",
+            "Claude (Anthropic)": "anthropic",
+            "GPT (OpenAI)": "openai",
+            "Qwen (Alibaba)": "alibaba",
+            "Ollama (Local)": "ollama",
+            "llama.cpp (Local GGUF)": "llama_cpp",
+        }
+        self._provider_reverse = {v: k for k, v in self._provider_map.items()}
+        self.provider_combo.addItems(list(self._provider_map.keys()))
+
+        # Set current from config
+        saved_provider = self.wizard.config.get("llm_provider", "gemini")
+        display_name = self._provider_reverse.get(saved_provider, "Gemini (Google)")
+        self.provider_combo.setCurrentText(display_name)
 
         # Provider description that updates on selection
         self.provider_desc = QLabel()
@@ -252,6 +303,11 @@ class CredentialsPage(QWidget):
         field.setPlaceholderText("Paste your API key here")
         return field
 
+    def _get_provider(self) -> str:
+        """Get the internal provider key from the display label."""
+        display = self.provider_combo.currentText()
+        return self._provider_map.get(display, "gemini")
+
     def _update_provider_desc(self, provider: str):
         """Update the description label based on selected provider."""
         descs = {
@@ -264,14 +320,15 @@ class CredentialsPage(QWidget):
         }
         self.provider_desc.setText(descs.get(provider, ""))
 
-    def _on_provider_changed(self, provider: str):
+    def _on_provider_changed(self, display_name: str):
         """Handle LLM provider selection changes."""
+        provider = self._provider_map.get(display_name, "gemini")
         self._update_provider_desc(provider)
         self._update_models_list()
 
     def _update_models_list(self):
         """Load default models for the selected provider into the dropdown."""
-        provider = self.provider_combo.currentText()
+        provider = self._get_provider()
         from wizard.model_detector import get_default_models
         defaults = get_default_models(provider)
         
@@ -282,14 +339,13 @@ class CredentialsPage(QWidget):
         creds = _load_existing_creds()
         config_model = self.wizard.config.get("llm_model") or creds.get("HELIX_MODEL", "")
         if config_model:
-            # Check if current provider matches the loaded config provider
             config_provider = self.wizard.config.get("llm_provider") or creds.get("HELIX_PROVIDER", "gemini")
             if provider == config_provider:
                 self.model_combo.setEditText(config_model)
 
     def _on_detect_clicked(self):
         """Trigger dynamic discovery of models for the selected provider."""
-        provider = self.provider_combo.currentText()
+        provider = self._get_provider()
         from wizard.model_detector import (
             detect_ollama_models,
             detect_gguf_models,
@@ -355,7 +411,11 @@ class CredentialsPage(QWidget):
         if creds.get("HELIX_VISION_PROVIDER"):
             self.vision_combo.setCurrentText(creds["HELIX_VISION_PROVIDER"])
         if creds.get("HELIX_PROVIDER"):
-            self.provider_combo.setCurrentText(creds["HELIX_PROVIDER"])
+            display = self._provider_reverse.get(
+                creds["HELIX_PROVIDER"],
+                "Gemini (Google)"
+            )
+            self.provider_combo.setCurrentText(display)
         
         # Load model list and set current edit text
         self._update_models_list()
@@ -368,7 +428,7 @@ class CredentialsPage(QWidget):
         cfg["openai_api_key"] = self.openai_key.text().strip()
         cfg["alibaba_api_key"] = self.alibaba_key.text().strip()
         cfg["ollama_url"] = self.ollama_url.text().strip() or "http://localhost:11434"
-        cfg["llm_provider"] = self.provider_combo.currentText()
+        cfg["llm_provider"] = self._get_provider()
         cfg["llm_model"] = self.model_combo.currentText().strip()
         
         # For legacy compatibility, save to ollama_model if ollama is selected
