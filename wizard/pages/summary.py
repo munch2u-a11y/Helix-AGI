@@ -7,7 +7,7 @@ Displays a review of all configuration choices and a final
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QSpacerItem, QSizePolicy, QFrame,
+    QScrollArea, QSpacerItem, QSizePolicy, QFrame, QCheckBox,
 )
 from PyQt6.QtCore import Qt
 from wizard.ai_helper import AiHelperBanner
@@ -53,6 +53,20 @@ class SummaryPage(QWidget):
         self.summary_layout.setSpacing(12)
         scroll.setWidget(self.summary_widget)
         layout.addWidget(scroll, stretch=1)
+
+        # Checkboxes for desktop shortcuts
+        self.shortcuts_layout = QVBoxLayout()
+        self.shortcuts_layout.setSpacing(8)
+        self.shortcuts_layout.setContentsMargins(0, 8, 0, 8)
+
+        self.shortcut_wizard_chk = QCheckBox("  Create Desktop Shortcut for Setup Wizard")
+        self.shortcut_wizard_chk.setChecked(True)
+        self.shortcut_agent_chk = QCheckBox("  Create Desktop Shortcut to Launch Helix Agent & Dashboard")
+        self.shortcut_agent_chk.setChecked(True)
+
+        self.shortcuts_layout.addWidget(self.shortcut_wizard_chk)
+        self.shortcuts_layout.addWidget(self.shortcut_agent_chk)
+        layout.addLayout(self.shortcuts_layout)
 
         # Launch button (dynamically named)
         self.launch_btn = QPushButton("Create Agent")

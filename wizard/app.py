@@ -512,6 +512,16 @@ class HelixApp(QMainWindow):
         save_config(self.config)
         self._write_credentials()
 
+        # Create desktop shortcuts if checked on the summary page
+        try:
+            summary_page = self.pages[-1]
+            create_wizard = summary_page.shortcut_wizard_chk.isChecked()
+            create_agent = summary_page.shortcut_agent_chk.isChecked()
+            if create_wizard or create_agent:
+                self._create_desktop_shortcuts(create_wizard, create_agent)
+        except Exception as e:
+            logger.warning(f"Failed to create desktop shortcuts: {e}")
+
         # Spawn the final orb for the Review step
         if hasattr(self, 'orb_overlay') and self.orb_overlay.orbs:
             from PyQt6.QtCore import QPointF
@@ -876,6 +886,53 @@ class HelixApp(QMainWindow):
             logger.info("Agent process (main.py) started successfully.")
         except Exception as e:
             logger.error(f"Failed to start agent process: {e}")
+
+    def _create_desktop_shortcuts(self, wizard_shortcut: bool, agent_shortcut: bool):
+        """Create Linux desktop shortcuts for Setup Wizard and Agent Launcher."""
+        desktop_dir = Path(os.path.expanduser("~/Desktop"))
+        if not desktop_dir.exists():
+            desktop_dir = Path(os.path.expanduser("~/.local/share/applications"))
+            desktop_dir.mkdir(parents=True, exist_ok=True)
+
+        if wizard_shortcut:
+            wizard_sh = BASE_DIR / "Helix Setup Wizard.sh"
+            desktop_file = desktop_dir / "helix_setup_wizard.desktop"
+            content = f"""[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Helix Setup Wizard
+Comment=Configure Helix AGI settings
+Exec=bash "{wizard_sh}"
+Icon=preferences-system
+Terminal=false
+Categories=Utility;Settings;
+"""
+            try:
+                desktop_file.write_text(content)
+                desktop_file.chmod(0o755)
+                logger.info(f"Created desktop shortcut: {desktop_file}")
+            except Exception as e:
+                logger.error(f"Failed to create setup wizard shortcut: {e}")
+
+        if agent_shortcut:
+            agent_sh = BASE_DIR / "Launch Helix Agent.sh"
+            desktop_file = desktop_dir / "launch_helix_agent.desktop"
+            content = f"""[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Launch Helix Agent & Dashboard
+Comment=Start the Helix AGI agent and open dashboard
+Exec=bash "{agent_sh}"
+Icon=utilities-terminal
+Terminal=true
+Categories=Utility;
+"""
+            try:
+                desktop_file.write_text(content)
+                desktop_file.chmod(0o755)
+                logger.info(f"Created desktop shortcut: {desktop_file}")
+            except Exception as e:
+                logger.error(f"Failed to create agent launcher shortcut: {e}")
 
     def closeEvent(self, event):
         """Clean up background processes on close."""
