@@ -25,6 +25,18 @@ class WelcomePage(QWidget):
         # Spacer at top
         layout.addSpacerItem(QSpacerItem(0, 20, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
 
+        # Logo display
+        from PyQt6.QtGui import QPixmap
+        from pathlib import Path
+        base_dir = Path(__file__).parent.parent.parent.resolve()
+        logo_path = base_dir / "wizard" / "assets" / "helix_logo.png"
+        if logo_path.exists():
+            logo_lbl = QLabel()
+            logo_pix = QPixmap(str(logo_path))
+            logo_lbl.setPixmap(logo_pix.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            logo_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(logo_lbl)
+
         # Hero heading
         heading = QLabel("Welcome to Helix‑AGI")
         heading.setProperty("class", "heading")

@@ -397,6 +397,7 @@ class HelixApp(QMainWindow):
     def __init__(self, force_wizard: bool = False):
         super().__init__()
         self.setWindowTitle("Helix‑AGI")
+        self.setWindowIcon(QIcon(str(BASE_DIR / "wizard" / "assets" / "helix_logo.png")))
         self.setMinimumSize(960, 680)
         self.resize(1100, 750)
 
@@ -916,6 +917,8 @@ class HelixApp(QMainWindow):
             desktop_dir = Path(os.path.expanduser("~/.local/share/applications"))
             desktop_dir.mkdir(parents=True, exist_ok=True)
 
+        logo_icon_path = str(BASE_DIR / "wizard" / "assets" / "helix_logo.png")
+
         if wizard_shortcut:
             wizard_sh = BASE_DIR / "Helix Setup Wizard.sh"
             desktop_file = desktop_dir / "helix_setup_wizard.desktop"
@@ -925,7 +928,7 @@ Type=Application
 Name=Helix Setup Wizard
 Comment=Configure Helix AGI settings
 Exec=bash "{wizard_sh}"
-Icon=preferences-system
+Icon={logo_icon_path}
 Terminal=false
 Categories=Utility;Settings;
 """
@@ -945,7 +948,7 @@ Type=Application
 Name=Launch Helix Agent & Dashboard
 Comment=Start the Helix AGI agent and open dashboard
 Exec=bash "{agent_sh}"
-Icon=utilities-terminal
+Icon={logo_icon_path}
 Terminal=true
 Categories=Utility;
 """
