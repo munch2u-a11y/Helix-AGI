@@ -223,7 +223,10 @@ source venv/bin/activate  # Linux/macOS
 
 pip install -r requirements.txt
 
-# Interactive first-run setup — configures credentials and bootstraps seed beliefs
+# Run the Graphical PyQt6 Setup Wizard (Recommended)
+./install.sh
+
+# Or run the legacy command-line setup
 python setup.py
 
 # Start the continuous cognitive pulse loop
@@ -264,12 +267,15 @@ The dashboard launches automatically when you run `main.py` — no separate term
 To change the port, set `HELIX_DASHBOARD_PORT=8080` in your environment.
 
 The dashboard provides:
-- **Thought Stream** — Filtered log tails (thoughts, tools, beliefs, spatial activity)
-- **Chat** — Bidirectional messaging with Helix through the web UI
-- **3D Mind Space** — Interactive Three.js visualization of the 8D cognitive manifold (rotate, zoom, pan)
-- **Lagrangian Gauges** — Real-time Ω stability, γ inertia, belief category breakdown
+- **Thoughts Tab** — Live, real-time tail of the agent's internal monologue and thoughts.
+- **Tools Tab** — Dynamic list of registry toolsets (highlighting active ones), blinking indicators for currently running tools, and a running execution duration log.
+- **Spatial Tab** — Live breakdown of preconscious belief and memory injections, active concept extraction keywords, somatic state telemetry (Ω, s_total, severity), and the active Plutchik affect vector.
+- **3D Mind Space** — Interactive Three.js visualization of the 8D cognitive manifold (rotate, zoom, pan).
+- **Lagrangian Gauges** — Real-time Ω stability, γ inertia, belief category breakdown.
+- **Affective Sentinel Indicator** — A mildly animated emoji in the bottom-right corner that shifts in real time based on the agent's dominant Plutchik affect state (Joy, Trust, Fear, Surprise, Sadness, Disgust, Anger, Anticipation).
+- **Chat** — Bidirectional messaging with Helix through the web UI using the same event queue as Telegram and Discord.
 
-The dashboard is read-only for monitoring — the chat channel is the only write path, and it uses the same event queue as Telegram and Discord.
+The dashboard is read-only for monitoring — the chat channel is the only write path.
 
 ---
 
