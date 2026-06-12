@@ -196,9 +196,6 @@ class SchedulePage(QWidget):
         self.flow_mode_label.setVisible(False)
         pulse_container.addWidget(self.flow_mode_label)
 
-        # Check if current provider is local
-        self._update_pulse_mode()
-
         schedule_layout.addLayout(pulse_container)
 
         # ── Summary Readout ───────────────────────────────────────────
@@ -211,8 +208,10 @@ class SchedulePage(QWidget):
             border-radius: 10px;
             padding: 16px;
         """)
-        self._update_summary()
         schedule_layout.addWidget(self.summary_label)
+
+        # Check if current provider is local and update summary
+        self._update_pulse_mode()
 
         layout.addWidget(schedule_group)
 
