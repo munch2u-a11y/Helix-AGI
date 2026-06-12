@@ -34,12 +34,6 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
-
-try:
-    from llm.providers.gemini_provider import GeminiProvider
-except ImportError:
-    GeminiProvider = None
-
 logger = logging.getLogger("helix.brain.sensory_cortex")
 
 # Ollama vision model
@@ -583,27 +577,33 @@ class SensoryCortex:
         based on the configured provider.
         """
         if self._provider == "gemini":
-            if GeminiProvider and os.environ.get("GEMINI_API_KEY"):
-                from google.genai import types
-                provider = GeminiProvider(model=self._model)
-                
-                prompt_parts = [
-                    types.Part.from_text(text=prompt),
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                ]
-                response = provider.client.models.generate_content(
-                    model=self._model,
-                    contents=prompt_parts,
-                    config=types.GenerateContentConfig(temperature=0.2),
-                )
-                description = response.text.strip() if response.text else "(no description generated)"
-                logger.info(
-                    f"Gemini vision analysis ({self._model}): {len(description)} chars"
-                )
-                return description
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if api_key:
+                try:
+                    from google import genai
+                    from google.genai import types
+                    client = genai.Client(api_key=api_key)
+                    
+                    prompt_parts = [
+                        types.Part.from_text(text=prompt),
+                        types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                    ]
+                    response = client.models.generate_content(
+                        model=self._model,
+                        contents=prompt_parts,
+                        config=types.GenerateContentConfig(temperature=0.2),
+                    )
+                    description = response.text.strip() if response.text else "(no description generated)"
+                    logger.info(
+                        f"Gemini vision analysis ({self._model}): {len(description)} chars"
+                    )
+                    return description
+                except Exception as e:
+                    logger.error(f"Gemini vision analysis failed: {e}. Falling back to local.")
+                    return self._analyze_local(image_bytes, prompt)
             else:
                 logger.warning(
-                    "Gemini requested for vision, but GeminiProvider or GEMINI_API_KEY is missing. "
+                    "Gemini requested for vision, but GEMINI_API_KEY is missing. "
                     "Falling back to local."
                 )
                 return self._analyze_local(image_bytes, prompt)
@@ -832,7 +832,7 @@ class SensoryCortex:
                 # Use the local Ollama vision model
                 self._ensure_model()
                 prompt = "Describe exactly what you see right now in 1 sentence. Be factual and direct. Ignore the timestamp."
-                visual_desc = self._analyze(frame, prompt)
+                visual_desc = self._analyze_image(frame, prompt)
             except Exception as e:
                 logger.error(f"Background vision parsing failed: {e}")
                 

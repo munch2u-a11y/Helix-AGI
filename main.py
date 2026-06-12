@@ -106,6 +106,8 @@ def on_thought(pulse_number: int, thought: str, events: list):
     """Callback for each pulse — prints internal monologue to console."""
     state_tag = "💬" if events else "💭"
     print(f"\n  {state_tag} [Pulse {pulse_number}] {thought}")
+    import logging
+    logging.getLogger("helix.core.pulse_loop").info(f"[thought] [Pulse {pulse_number}] {thought}")
 
 
 def on_delivery(recipient: str, message: str):
@@ -353,6 +355,34 @@ def main_loop():
 
     # Start sentinel monitoring thread
     sentinel.start()
+
+    # Start Dashboard communication poller thread
+    def poll_dashboard():
+        from dashboard.dashboard_comms import get_comms
+        comms = get_comms()
+        import logging
+        poller_logger = logging.getLogger("helix.main.dashboard_poller")
+        while pulse_loop._running:
+            try:
+                messages = comms.pop_inbound()
+                for msg in messages:
+                    poller_logger.info(f"Dashboard inbound message from {msg['sender']}: {msg['content'][:100]}")
+                    pulse_loop.emit(
+                        "user_message",
+                        {
+                            "sender": msg["sender"],
+                            "content": msg["content"],
+                            "channel": "dashboard",
+                            "chat_id": 0,
+                        }
+                    )
+            except Exception as e:
+                poller_logger.error(f"Error polling dashboard: {e}")
+            time.sleep(1)
+
+    import threading
+    t = threading.Thread(target=poll_dashboard, daemon=True, name="helix-dashboard-poller")
+    t.start()
 
     # Start the pulse loop in background
     pulse_loop.wake("system_boot")

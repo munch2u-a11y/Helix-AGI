@@ -35,7 +35,7 @@ from datetime import datetime
 logger = logging.getLogger("helix.core.batch_service")
 
 # Unified LLM dispatch — routes to Gemini or Anthropic based on HELIX_PROVIDER
-from llm.llm_dispatch import call_llm as _call_llm
+_call_llm = None
 
 # ── Configuration ────────────────────────────────────────────────────
 
@@ -313,6 +313,8 @@ def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
         logger.warning("Gemini API call failed: %s", e)
 
     return None
+
+_call_llm = _call_gemini
 
 
 # ── Response Parser ─────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Helix — Cognitive Dashboard</title>
+<title>Cognitive Dashboard</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Inter:wght@300;400;500;600&display=swap');
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -189,11 +189,198 @@
     transition: background 0.2s;
   }
   .chat-input-bar button:hover { background: #2563eb; }
+
+  /* Tools & Spatial Panels */
+  .tools-panel, .spatial-panel {
+    flex: 1; overflow-y: auto; padding: 12px;
+    background: var(--bg); display: flex; flex-direction: column; gap: 16px;
+    min-height: 0;
+  }
+  .tools-panel::-webkit-scrollbar, .spatial-panel::-webkit-scrollbar { width: 6px; }
+  .tools-panel::-webkit-scrollbar-thumb, .spatial-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .panel-section {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px;
+  }
+  .panel-section h3 {
+    font-size: 11px; letter-spacing: 1.5px; color: var(--dim);
+    margin-bottom: 8px; font-weight: 600; text-transform: uppercase;
+  }
+
+  /* Toolset Cards Grid */
+  .toolsets-grid {
+    display: grid; grid-template-columns: 1fr; gap: 10px;
+  }
+  .toolset-card {
+    background: rgba(30, 41, 59, 0.2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; opacity: 0.5;
+    transition: all 0.3s ease;
+  }
+  .toolset-card.enabled {
+    opacity: 1; border-color: rgba(59, 130, 246, 0.4);
+    background: rgba(59, 130, 246, 0.03);
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.05);
+  }
+  .toolset-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 6px;
+  }
+  .toolset-name { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .toolset-badge {
+    font-size: 8px; padding: 1px 4px; border-radius: 4px;
+    background: var(--border); color: var(--dim);
+  }
+  .toolset-card.enabled .toolset-badge {
+    background: rgba(74, 222, 128, 0.15); color: var(--green);
+  }
+  .tool-list {
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .tool-badge {
+    font-family: 'JetBrains Mono', monospace; font-size: 9px;
+    padding: 2px 6px; border-radius: 4px; background: rgba(30, 41, 59, 0.6);
+    color: var(--dim); border: 1px solid rgba(255,255,255,0.03);
+    transition: all 0.2s;
+  }
+  .toolset-card.enabled .tool-badge {
+    color: var(--text); background: rgba(30, 41, 59, 0.9);
+  }
+  
+  /* Blinking active tool animation */
+  @keyframes blink-glowing {
+    0% { background-color: rgba(59, 130, 246, 0.2); border-color: var(--accent); color: var(--accent); box-shadow: 0 0 4px var(--accent); }
+    50% { background-color: rgba(59, 130, 246, 0.7); border-color: #60a5fa; color: #fff; box-shadow: 0 0 12px #60a5fa; }
+    100% { background-color: rgba(59, 130, 246, 0.2); border-color: var(--accent); color: var(--accent); box-shadow: 0 0 4px var(--accent); }
+  }
+  .tool-badge.running {
+    animation: blink-glowing 1s infinite;
+  }
+
+  /* Recent Tools Log */
+  .recent-tools-list {
+    display: flex; flex-direction: column; gap: 4px;
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  }
+  .recent-tool-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 6px; background: rgba(30, 41, 59, 0.3); border-radius: 4px;
+  }
+  .recent-tool-name { color: var(--accent); font-weight: 500; }
+  .recent-tool-time { color: var(--dim); }
+  .recent-tool-duration { color: var(--gold); }
+
+  /* Spatial Panel Layout */
+  .concepts-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .concept-badge {
+    padding: 3px 8px; border-radius: 6px; background: rgba(167, 139, 250, 0.1);
+    border: 1px solid rgba(167, 139, 250, 0.25); color: var(--purple);
+    font-size: 10px; font-weight: 500;
+  }
+  .somatic-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    font-size: 11px;
+  }
+  .somatic-item {
+    padding: 6px 8px; background: rgba(30, 41, 59, 0.3); border-radius: 4px;
+    display: flex; justify-content: space-between;
+  }
+  .somatic-label { color: var(--dim); }
+  .somatic-val { font-weight: 500; font-family: 'JetBrains Mono', monospace; }
+  
+  .spatial-list {
+    display: flex; flex-direction: column; gap: 6px;
+    max-height: 200px; overflow-y: auto;
+  }
+  .spatial-item-card {
+    padding: 6px 8px; border-radius: 4px;
+    font-size: 10px; line-height: 1.4;
+    border-left: 3px solid var(--border);
+    background: rgba(30, 41, 59, 0.2);
+  }
+  .spatial-item-card.vivid { border-left-color: var(--accent); background: rgba(59, 130, 246, 0.05); }
+  .spatial-item-card.related { border-left-color: var(--purple); }
+  .spatial-item-card.faint { border-left-color: var(--dim); opacity: 0.7; }
+  .spatial-item-card.before, .spatial-item-card.after { border-left-color: var(--gold); border-left-style: dashed; padding-left: 14px; opacity: 0.8; }
+  
+  .belief-pill {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 6px; margin-bottom: 4px; border-radius: 4px;
+    background: rgba(30, 41, 59, 0.25); font-size: 10px;
+  }
+  .belief-pill-text { flex: 1; margin-right: 10px; line-height: 1.3; }
+  .belief-pill-meta { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--dim); flex-shrink: 0; }
+
+  /* Affect Sentinel Emoji Section */
+  .affect-sentinel-box {
+    margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; text-align: center;
+  }
+  .affect-emoji {
+    font-size: 48px; line-height: 1; transition: all 0.3s ease;
+    user-select: none; filter: drop-shadow(0 0 12px rgba(255,255,255,0.05));
+    display: inline-block;
+  }
+  .affect-label {
+    font-size: 10px; font-weight: 600; letter-spacing: 2px;
+    color: var(--dim); text-transform: uppercase;
+  }
+  
+  /* Animations */
+  @keyframes emoji-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px) scaleY(1.05); }
+  }
+  @keyframes emoji-shiver {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    20% { transform: translate(-2px, 1px) rotate(-1deg); }
+    40% { transform: translate(1px, -1px) rotate(1deg); }
+    60% { transform: translate(-1px, -1px) rotate(-1deg); }
+    80% { transform: translate(2px, 1px) rotate(1deg); }
+  }
+  @keyframes emoji-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+  }
+  @keyframes emoji-pop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.3) translateY(-4px); }
+    100% { transform: scale(1); }
+  }
+  @keyframes emoji-droop {
+    0%, 100% { transform: translateY(0) rotate(0); }
+    50% { transform: translateY(2px) rotate(3deg); }
+  }
+  @keyframes emoji-rumble {
+    0%, 100% { transform: translate(0, 0); }
+    25% { transform: translate(-1px, -1px); }
+    75% { transform: translate(1px, 1px); }
+  }
+  @keyframes emoji-scan {
+    0%, 100% { transform: translateX(0); }
+    33% { transform: translateX(-3px); }
+    66% { transform: translateX(3px); }
+  }
+  @keyframes emoji-breath {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.03); }
+  }
+
+  .affect-joy { animation: emoji-bounce 1.5s infinite ease-in-out; }
+  .affect-trust { animation: emoji-pulse 2.5s infinite ease-in-out; }
+  .affect-fear { animation: emoji-shiver 0.15s infinite linear; }
+  .affect-surprise { animation: emoji-pop 0.8s ease-in-out; }
+  .affect-sadness { animation: emoji-droop 3s infinite ease-in-out; }
+  .affect-disgust { animation: emoji-droop 2s infinite ease-in-out; }
+  .affect-anger { animation: emoji-rumble 0.2s infinite linear; }
+  .affect-anticipation { animation: emoji-scan 3s infinite ease-in-out; }
+  .affect-neutral { animation: emoji-breath 4s infinite ease-in-out; }
 </style>
 </head>
 <body>
 <header>
-  <h1>HELIX COGNITIVE DASHBOARD</h1>
+  <h1 id="dashboard-title">COGNITIVE DASHBOARD</h1>
   <span id="state-badge" class="status-badge">UNKNOWN</span>
   <span class="pulse-count">Pulse <span id="pulse-num">—</span></span>
 </header>
@@ -212,8 +399,43 @@
       <div id="chat-messages" class="chat-messages"></div>
       <div class="chat-input-bar">
         <input type="text" id="chat-sender" class="sender-input" placeholder="Name" />
-        <input type="text" id="chat-input" placeholder="Talk to Helix..." />
+        <input type="text" id="chat-input" placeholder="Say something..." />
         <button id="chat-send">Send</button>
+      </div>
+    </div>
+    <div id="tools-panel" class="tools-panel" style="display: none;">
+      <div class="panel-section" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+        <h3>Registry Toolsets</h3>
+        <div id="toolsets-grid" class="toolsets-grid" style="flex: 1; overflow-y: auto;"></div>
+      </div>
+      <div class="panel-section" style="height: 180px; display: flex; flex-direction: column;">
+        <h3>Recent Tool Executions</h3>
+        <div id="recent-tools-list" class="recent-tools-list" style="flex: 1; overflow-y: auto;"></div>
+      </div>
+    </div>
+    <div id="spatial-panel" class="spatial-panel" style="display: none;">
+      <div class="panel-section">
+        <h3>Extracted Concepts</h3>
+        <div id="spatial-concepts" class="concepts-list"></div>
+      </div>
+      <div class="panel-section">
+        <h3>Somatic & Affect State</h3>
+        <div class="somatic-grid">
+          <div class="somatic-item"><span class="somatic-label">Stability (Ω)</span><span id="som-omega" class="somatic-val">—</span></div>
+          <div class="somatic-item"><span class="somatic-label">Entropy (S)</span><span id="som-s-total" class="somatic-val">—</span></div>
+          <div class="somatic-item"><span class="somatic-label">Severity</span><span id="som-severity" class="somatic-val">—</span></div>
+          <div class="somatic-item"><span class="somatic-label">Lagrangian Mode</span><span id="som-mode" class="somatic-val">—</span></div>
+          <div class="somatic-item"><span class="somatic-label">Dominant Affect</span><span id="aff-dominant" class="somatic-val" style="color:var(--purple);">neutral</span></div>
+          <div class="somatic-item"><span class="somatic-label">Affect Intensity</span><span id="aff-intensity" class="somatic-val">—</span></div>
+        </div>
+      </div>
+      <div class="panel-section" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+        <h3>Injected Memories (8D Neighborhood)</h3>
+        <div id="spatial-memories-list" class="spatial-list" style="flex: 1; overflow-y: auto;"></div>
+      </div>
+      <div class="panel-section" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+        <h3>Injected Beliefs (Concept Grounding)</h3>
+        <div id="spatial-beliefs-list" class="spatial-list" style="flex: 1; overflow-y: auto;"></div>
       </div>
     </div>
   </div>
@@ -245,6 +467,11 @@
       <h3>BELIEF CATEGORIES</h3>
       <ul class="cat-list" id="cat-list"></ul>
     </div>
+    <div class="affect-sentinel-box">
+      <h3>AFFECT SENTINEL</h3>
+      <div id="affect-emoji" class="affect-emoji affect-neutral">😐</div>
+      <div id="affect-label" class="affect-label">NEUTRAL</div>
+    </div>
   </div>
 </div>
 
@@ -268,18 +495,31 @@ const CAT_COLORS = {
 // ── Log Tabs ──
 const logContent = document.getElementById('log-content');
 const chatPanel = document.getElementById('chat-panel');
+const toolsPanel = document.getElementById('tools-panel');
+const spatialPanel = document.getElementById('spatial-panel');
 
 document.querySelectorAll('.tab-bar button').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelector('.tab-bar button.active').classList.remove('active');
     btn.classList.add('active');
     currentTab = btn.dataset.tab;
+    
+    // Hide all panels
+    logContent.style.display = 'none';
+    chatPanel.classList.remove('visible');
+    toolsPanel.style.display = 'none';
+    spatialPanel.style.display = 'none';
+    
     if (currentTab === 'chat') {
-      logContent.style.display = 'none';
       chatPanel.classList.add('visible');
+    } else if (currentTab === 'tools') {
+      toolsPanel.style.display = 'flex';
+      fetchTools();
+    } else if (currentTab === 'spatial') {
+      spatialPanel.style.display = 'flex';
+      fetchSpatialInjection();
     } else {
       logContent.style.display = '';
-      chatPanel.classList.remove('visible');
       logTotal[currentTab] = 0;
       logContent.innerHTML = '';
       fetchLogs();
@@ -308,6 +548,138 @@ function fetchLogs() {
       });
       logTotal[currentTab] = data.total;
       el.scrollTop = el.scrollHeight;
+    })
+    .catch(() => {});
+}
+
+function fetchTools() {
+  if (currentTab !== 'tools') return;
+  fetch('/api/tools')
+    .then(r => r.json())
+    .then(data => {
+      // 1. Render toolsets
+      const grid = document.getElementById('toolsets-grid');
+      grid.innerHTML = '';
+      
+      const runningTools = data.running_tools || [];
+      
+      (data.toolsets || []).forEach(ts => {
+        const card = document.createElement('div');
+        card.className = 'toolset-card' + (ts.enabled ? ' enabled' : '');
+        
+        const header = document.createElement('div');
+        header.className = 'toolset-header';
+        
+        const name = document.createElement('span');
+        name.className = 'toolset-name';
+        name.textContent = ts.name;
+        
+        const badge = document.createElement('span');
+        badge.className = 'toolset-badge';
+        badge.textContent = ts.enabled ? 'Enabled' : (ts.available ? 'Available' : 'Unavailable');
+        
+        header.appendChild(name);
+        header.appendChild(badge);
+        card.appendChild(header);
+        
+        const toolList = document.createElement('div');
+        toolList.className = 'tool-list';
+        
+        (ts.tools || []).forEach(tool => {
+          const badge = document.createElement('span');
+          badge.className = 'tool-badge' + (runningTools.includes(tool.toLowerCase()) || runningTools.includes(tool) ? ' running' : '');
+          badge.textContent = tool;
+          toolList.appendChild(badge);
+        });
+        
+        card.appendChild(toolList);
+        grid.appendChild(card);
+      });
+      
+      // 2. Render recent tools log
+      const list = document.getElementById('recent-tools-list');
+      list.innerHTML = '';
+      if (!data.recent_tools || data.recent_tools.length === 0) {
+        list.innerHTML = '<div style="color:var(--dim);font-style:italic;padding:4px;">No recent tool executions.</div>';
+      } else {
+        data.recent_tools.forEach(rt => {
+          const item = document.createElement('div');
+          item.className = 'recent-tool-item';
+          item.innerHTML = `
+            <span class="recent-tool-name">${rt.name}</span>
+            <div>
+              <span class="recent-tool-duration">${rt.duration}s</span>
+              <span class="recent-tool-time" style="margin-left: 8px;">${rt.time}</span>
+            </div>
+          `;
+          list.appendChild(item);
+        });
+      }
+    })
+    .catch(() => {});
+}
+
+function fetchSpatialInjection() {
+  if (currentTab !== 'spatial') return;
+  fetch('/api/spatial_injection')
+    .then(r => r.json())
+    .then(data => {
+      // 1. Concepts
+      const conceptsList = document.getElementById('spatial-concepts');
+      conceptsList.innerHTML = '';
+      if (!data.concepts || data.concepts.length === 0) {
+        conceptsList.innerHTML = '<span style="color:var(--dim);font-style:italic;font-size:10px;">No concepts extracted in latest pulse.</span>';
+      } else {
+        data.concepts.forEach(c => {
+          const span = document.createElement('span');
+          span.className = 'concept-badge';
+          span.textContent = c;
+          conceptsList.appendChild(span);
+        });
+      }
+      
+      // 2. Somatic State
+      document.getElementById('som-omega').textContent = data.somatic.omega !== undefined ? data.somatic.omega.toFixed(3) : '—';
+      document.getElementById('som-s-total').textContent = data.somatic.s_total !== undefined ? data.somatic.s_total.toFixed(3) : '—';
+      document.getElementById('som-severity').textContent = data.somatic.severity || '—';
+      document.getElementById('som-mode').textContent = data.somatic.mode || '—';
+      
+      // Plutchik Affect
+      const affect = data.affect || {};
+      document.getElementById('aff-dominant').textContent = affect.dominant || 'neutral';
+      document.getElementById('aff-intensity').textContent = affect.intensity !== undefined ? affect.intensity.toFixed(2) : '0.00';
+      
+      // 3. Memories
+      const memList = document.getElementById('spatial-memories-list');
+      memList.innerHTML = '';
+      if (!data.memories || data.memories.length === 0) {
+        memList.innerHTML = '<div style="color:var(--dim);font-style:italic;font-size:10px;padding:4px;">No memories recalled.</div>';
+      } else {
+        data.memories.forEach(m => {
+          const div = document.createElement('div');
+          div.className = `spatial-item-card ${m.type}`;
+          div.textContent = `[${m.type}] ${m.content}`;
+          memList.appendChild(div);
+        });
+      }
+      
+      // 4. Beliefs
+      const belList = document.getElementById('spatial-beliefs-list');
+      belList.innerHTML = '';
+      if (!data.beliefs || data.beliefs.length === 0) {
+        belList.innerHTML = '<div style="color:var(--dim);font-style:italic;font-size:10px;padding:4px;">No beliefs grounding this pulse.</div>';
+      } else {
+        data.beliefs.forEach(b => {
+          const div = document.createElement('div');
+          div.className = 'belief-pill';
+          const color = CAT_COLORS[b.category] || '#666';
+          div.innerHTML = `
+            <span class="belief-pill-text"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};margin-right:6px;"></span>${b.content}</span>
+            <span class="belief-pill-meta">g=${b.gravity.toFixed(2)} m=${b.mass.toFixed(1)}</span>
+          `;
+          belList.appendChild(div);
+        });
+      }
     })
     .catch(() => {});
 }
@@ -465,6 +837,32 @@ function updateGauges(data) {
       catList.appendChild(li);
     });
   }
+
+  // Update Affect Sentinel Emoji
+  const affect = data.affect || {};
+  const dom = (affect.dominant || 'neutral').toLowerCase();
+  const AFFECT_EMOJIS = {
+    joy: { emoji: '😊', label: 'JOY', class: 'affect-joy' },
+    trust: { emoji: '😇', label: 'TRUST', class: 'affect-trust' },
+    fear: { emoji: '😰', label: 'FEAR', class: 'affect-fear' },
+    surprise: { emoji: '😲', label: 'SURPRISE', class: 'affect-surprise' },
+    sadness: { emoji: '😢', label: 'SADNESS', class: 'affect-sadness' },
+    disgust: { emoji: '🤢', label: 'DISGUST', class: 'affect-disgust' },
+    anger: { emoji: '😠', label: 'ANGER', class: 'affect-anger' },
+    anticipation: { emoji: '🧐', label: 'ANTICIPATION', class: 'affect-anticipation' },
+    neutral: { emoji: '😐', label: 'NEUTRAL', class: 'affect-neutral' }
+  };
+  const cfg = AFFECT_EMOJIS[dom] || AFFECT_EMOJIS.neutral;
+  const emoEl = document.getElementById('affect-emoji');
+  if (emoEl) {
+    emoEl.textContent = cfg.emoji;
+    emoEl.className = 'affect-emoji ' + cfg.class;
+  }
+  const lblEl = document.getElementById('affect-label');
+  if (lblEl) {
+    const intensityVal = affect.intensity !== undefined ? ` (${affect.intensity.toFixed(2)})` : '';
+    lblEl.textContent = cfg.label + intensityVal;
+  }
 }
 
 // ── Animation Loop ──
@@ -494,11 +892,22 @@ const chatInput = document.getElementById('chat-input');
 const chatSender = document.getElementById('chat-sender');
 const chatSendBtn = document.getElementById('chat-send');
 
-// Persist sender name
-chatSender.value = localStorage.getItem('helix_chat_sender') || 'Tester';
+// Persist sender name — use config name as default
+const defaultSender = (window.HELIX_CONFIG && window.HELIX_CONFIG.creatorName) || 'User';
+chatSender.value = localStorage.getItem('helix_chat_sender') || defaultSender;
 chatSender.addEventListener('change', () => {
   localStorage.setItem('helix_chat_sender', chatSender.value);
 });
+
+// Set dashboard title from config
+(function() {
+  const cfg = window.HELIX_CONFIG || {};
+  const name = (cfg.agentName || 'HELIX').toUpperCase();
+  document.getElementById('dashboard-title').textContent = name + ' COGNITIVE DASHBOARD';
+  document.title = cfg.agentName + ' — Cognitive Dashboard';
+  // Update chat placeholder
+  document.getElementById('chat-input').placeholder = 'Talk to ' + (cfg.agentName || 'Helix') + '...';
+})();
 
 function appendChatMsg(sender, content, type, ts) {
   const div = document.createElement('div');
@@ -512,7 +921,7 @@ function appendChatMsg(sender, content, type, ts) {
 function sendChatMessage() {
   const content = chatInput.value.trim();
   if (!content) return;
-  const sender = chatSender.value.trim() || 'Tester';
+  const sender = chatSender.value.trim() || defaultSender;
   fetch('/api/messages', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -532,8 +941,9 @@ function pollChatOutbound() {
   fetch(`/api/messages/outbound?since=${chatOutboundTotal}`)
     .then(r => r.json())
     .then(data => {
+      const agentName = (window.HELIX_CONFIG && window.HELIX_CONFIG.agentName) || 'Helix';
       (data.messages || []).forEach(msg => {
-        appendChatMsg('Helix', msg.content, 'outbound', msg.timestamp);
+        appendChatMsg(agentName, msg.content, 'outbound', msg.timestamp);
       });
       chatOutboundTotal = data.total || chatOutboundTotal;
     })
@@ -543,7 +953,16 @@ function pollChatOutbound() {
 setInterval(pollChatOutbound, 3000);
 
 // ── Polling ──
-setInterval(() => { if (currentTab !== 'chat') fetchLogs(); }, 3000);
+setInterval(() => {
+  if (currentTab === 'thoughts' || currentTab === 'beliefs') {
+    fetchLogs();
+  } else if (currentTab === 'tools') {
+    fetchTools();
+  } else if (currentTab === 'spatial') {
+    fetchSpatialInjection();
+  }
+}, 3000);
+
 setInterval(() => {
   fetch('/api/spatial').then(r=>r.json()).then(updateSpatial).catch(()=>{});
 }, 10000);

@@ -31,6 +31,17 @@ BASE_DIR = Path(__file__).parent.parent.resolve()
 LOG_PATH = BASE_DIR / "logs" / "helix.log"
 BELIEFS_DIR = BASE_DIR / "data" / "beliefs"
 SPATIAL_DIR = BASE_DIR / "data" / "spatial"
+CONFIG_PATH = BASE_DIR / "config" / "config.json"
+
+def _read_config() -> Dict[str, Any]:
+    """Read agent config for dashboard personalization."""
+    try:
+        if CONFIG_PATH.exists():
+            with open(CONFIG_PATH) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
 
 # Spatial state files written by SpatialMind.save_state()
 BELIEF_STATE = SPATIAL_DIR / "belief_space_state.json"
@@ -44,7 +55,8 @@ NOISE_PATTERNS = re.compile(
     r"telegram_bot|comms\.|chromadb|chroma_db|rate_limit|"
     r"429|socket|httpcore|httpx|urllib3|google\.auth|"
     r"werkzeug|PIL\.|fontTools|"
-    r"dashboard_comms|/api/messages|dashboard.*poll",
+    r"dashboard_comms|/api/messages|dashboard.*poll|"
+    r"faster_whisper|sensory_cortex|whisper",
     re.IGNORECASE,
 )
 
@@ -307,12 +319,25 @@ def read_status() -> Dict[str, Any]:
         except Exception:
             pass
 
+    # Load affect from spatial_injection.json if available
+    affect = {"dominant": "neutral", "intensity": 0.0}
+    status_path = SPATIAL_DIR / "spatial_injection.json"
+    if status_path.exists():
+        try:
+            with open(status_path) as f:
+                data = json.load(f)
+                if "affect" in data:
+                    affect = data["affect"]
+        except Exception:
+            pass
+
     return {
         "beliefs": stats,
         "omega": omega,
         "gamma": gamma,
         "pulse": pulse,
         "state": state,
+        "affect": affect,
     }
 
 
@@ -329,7 +354,20 @@ def create_app():
     @app.route("/")
     def index():
         html_path = Path(__file__).parent / "dashboard_ui.html"
-        return html_path.read_text(encoding="utf-8")
+        html = html_path.read_text(encoding="utf-8")
+        # Inject config values
+        cfg = _read_config()
+        agent_name = cfg.get("agent_name", "Helix")
+        creator_name = cfg.get("creator_name", "User")
+        inject = f"""<script>
+    window.HELIX_CONFIG = {{
+        agentName: {json.dumps(agent_name)},
+        creatorName: {json.dumps(creator_name)},
+    }};
+    </script>"""
+        # Insert before </head>
+        html = html.replace("</head>", inject + "\n</head>")
+        return html
 
     @app.route("/api/logs")
     def api_logs():
@@ -342,6 +380,39 @@ def create_app():
     def api_spatial():
         return jsonify(read_spatial())
 
+    @app.route("/api/tools")
+    def api_tools():
+        status_path = SPATIAL_DIR / "tools_status.json"
+        if status_path.exists():
+            try:
+                with open(status_path) as f:
+                    return jsonify(json.load(f))
+            except Exception:
+                pass
+        return jsonify({
+            "toolsets": [],
+            "running_tools": [],
+            "recent_tools": []
+        })
+
+    @app.route("/api/spatial_injection")
+    def api_spatial_injection():
+        status_path = SPATIAL_DIR / "spatial_injection.json"
+        if status_path.exists():
+            try:
+                with open(status_path) as f:
+                    return jsonify(json.load(f))
+            except Exception:
+                pass
+        return jsonify({
+            "concepts": [],
+            "memories": [],
+            "beliefs": [],
+            "somatic": {},
+            "affect": {}
+        })
+
+
     @app.route("/api/status")
     def api_status():
         return jsonify(read_status())
@@ -350,9 +421,10 @@ def create_app():
 
     @app.route("/api/messages", methods=["POST"])
     def api_send_message():
-        """Browser sends a message to Helix."""
+        """Browser sends a message to the agent."""
         data = request.get_json(force=True, silent=True) or {}
-        sender = (data.get("sender") or "Tester").strip()
+        cfg = _read_config()
+        sender = (data.get("sender") or cfg.get("creator_name", "User")).strip()
         content = (data.get("content") or "").strip()
         if not content:
             return jsonify({"error": "No content"}), 400

@@ -85,6 +85,70 @@ class ToolExecutor:
     def set_pulse_loop(self, pulse_loop):
         """Wire the pulse loop reference for context reset tool."""
         self._pulse_loop = pulse_loop
+        try:
+            self._update_tools_status()
+        except Exception as e:
+            logger.error(f"Failed to initialize tools status: {e}")
+
+    def _update_tools_status(self, running_tool=None, finished_tool=None, duration=0.0):
+        """Update data/spatial/tools_status.json file with current tool state."""
+        import json
+        from datetime import datetime
+        
+        status_path = os.path.join("data", "spatial", "tools_status.json")
+        os.makedirs(os.path.dirname(status_path), exist_ok=True)
+        
+        # Load existing status
+        status = {}
+        if os.path.exists(status_path):
+            try:
+                with open(status_path, "r") as f:
+                    status = json.load(f)
+            except Exception:
+                pass
+                
+        # Resolve active toolsets
+        active_toolsets = {"core"}
+        if self._pulse_loop and hasattr(self._pulse_loop, "_active_toolsets"):
+            active_toolsets = self._pulse_loop._active_toolsets
+            
+        # Get registry toolsets
+        toolset_info = []
+        if hasattr(self, '_registry'):
+            toolset_info = self._registry.get_toolset_info(active_toolsets)
+        else:
+            from tools.tool_registry import registry
+            toolset_info = registry.get_toolset_info(active_toolsets)
+            
+        status["toolsets"] = toolset_info
+        
+        # Update running tools list
+        running = status.get("running_tools", [])
+        if running_tool:
+            if running_tool not in running:
+                running.append(running_tool)
+        if finished_tool:
+            running = [r for r in running if r != finished_tool]
+        status["running_tools"] = running
+        
+        # Update recent tools list
+        recent = status.get("recent_tools", [])
+        if finished_tool:
+            now_str = datetime.now().strftime("%H:%M:%S")
+            recent.insert(0, {
+                "name": finished_tool,
+                "time": now_str,
+                "duration": round(duration, 3)
+            })
+            recent = recent[:15]  # Keep last 15
+        status["recent_tools"] = recent
+        
+        # Write back to file
+        try:
+            with open(status_path, "w") as f:
+                json.dump(status, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to write tools_status.json: {e}")
 
     # ── Registry Population ──────────────────────────────────────────
 
@@ -371,25 +435,32 @@ class ToolExecutor:
         Returns:
             Result string from the tool execution.
         """
-        # Primary: registry dispatch (check_fn + TTL caching)
-        if hasattr(self, '_registry'):
-            entry = self._registry.get_entry(name)
-            if entry:
-                try:
-                    return entry.handler(args)
-                except Exception as e:
-                    logger.error(f"Tool {name} failed: {e}")
-                    return f"Tool error ({name}): {e}"
-
-        # Fallback: legacy dispatch dict
-        handler = getattr(self, "_FC_DISPATCH", {}).get(name)
-        if handler is None:
-            return f"Unknown tool: {name}"
+        import time
+        self._update_tools_status(running_tool=name)
+        start_time = time.monotonic()
         try:
-            return handler(self, args)
-        except Exception as e:
-            logger.error(f"Tool {name} failed: {e}")
-            return f"Tool error ({name}): {e}"
+            # Primary: registry dispatch (check_fn + TTL caching)
+            if hasattr(self, '_registry'):
+                entry = self._registry.get_entry(name)
+                if entry:
+                    try:
+                        return entry.handler(args)
+                    except Exception as e:
+                        logger.error(f"Tool {name} failed: {e}")
+                        return f"Tool error ({name}): {e}"
+
+            # Fallback: legacy dispatch dict
+            handler = getattr(self, "_FC_DISPATCH", {}).get(name)
+            if handler is None:
+                return f"Unknown tool: {name}"
+            try:
+                return handler(self, args)
+            except Exception as e:
+                logger.error(f"Tool {name} failed: {e}")
+                return f"Tool error ({name}): {e}"
+        finally:
+            duration = time.monotonic() - start_time
+            self._update_tools_status(finished_tool=name, duration=duration)
 
     # ── FC Handlers (structured args) ────────────────────────────────
 
@@ -1165,7 +1236,12 @@ class ToolExecutor:
 
     def _dispatch(self, tag: ActionTag) -> str:
         """Route a tag to its implementation."""
-        handlers = {
+        name = tag.tag.lower()
+        import time
+        self._update_tools_status(running_tool=name)
+        start_time = time.monotonic()
+        try:
+            handlers = {
             # Core tools
             "TERMINAL": self._exec_terminal,
             "SEARCH": self._exec_search,
@@ -1249,10 +1325,14 @@ class ToolExecutor:
             "BROWSE_INTERACT": self._exec_browser,
             "BROWSE_SCREENSHOT": self._exec_browser,
         }
-        handler = handlers.get(tag.tag)
-        if not handler:
-            return f"Unknown tool: {tag.tag}"
-        return handler(tag)
+            handler = handlers.get(tag.tag)
+            if not handler:
+                return f"Unknown tool: {tag.tag}"
+            return handler(tag)
+        finally:
+            duration = time.monotonic() - start_time
+            self._update_tools_status(finished_tool=name, duration=duration)
+
 
     # ── Terminal ──────────────────────────────────────────────────────
 

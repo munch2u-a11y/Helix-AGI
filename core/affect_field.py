@@ -373,14 +373,18 @@ class AffectField:
         T = snapshot.get("T", 1.0)
         s_total = snapshot.get("s_total", 0.0)
 
-        # Deltas from previous pulse
-        delta_s = s_total - self._prev_s_total
-        omega_vel = omega - self._prev_omega
+        # Deltas from previous pulse (gate first pulse to avoid startup spikes)
+        if self.current_pulse == 0 or self._prev_s_total == 0.0:
+            delta_s = 0.0
+            omega_vel = 0.0
+        else:
+            delta_s = s_total - self._prev_s_total
+            omega_vel = omega - self._prev_omega
 
         # ── Base mappings (existing) ─────────────────────────────────
         joy = omega
         trust = 1.0 - D_KL
-        fear = max(0.0, delta_s) * 5.0
+        fear = max(0.0, delta_s - omega_vel) * 5.0
         surprise = abs(delta_s) * 5.0
         sadness = max(0.0, -omega_vel) * 10.0
         disgust = self._stagnation_counter / 10.0
@@ -391,7 +395,7 @@ class AffectField:
 
         # High entropy (scattered attention) → anxious, fearful
         # The mind is spread thin — things feel ungraspable
-        fear += H * 0.3
+        fear += H * (1.0 - omega) * 0.3
 
         # Identity drift → anticipation (exploring) or fear (lost)
         # Moderate drift is exciting; extreme drift is distressing
@@ -399,7 +403,7 @@ class AffectField:
             anticipation += D_KL * 0.5  # Exploring = anticipatory
             if D_KL > 1.5:
                 # Too far from self — the discomfort of being lost
-                fear += (D_KL - 1.5) * 0.3
+                fear += (D_KL - 1.5) * (1.0 - omega) * 0.3
 
         # Local temperature (cognitive volatility) → surprise + anticipation
         # Volatile regions feel surprising and charged with possibility

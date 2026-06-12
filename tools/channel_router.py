@@ -138,6 +138,9 @@ class ChannelRouter:
                     "channel_id": kwargs["channel_id"],
                 }
                 new_contact["default_channel"] = "discord"
+            elif channel == "dashboard":
+                new_contact["channels"]["dashboard"] = {}
+                new_contact["default_channel"] = "dashboard"
 
             self.contacts[name_lower] = new_contact
             self._save_contacts()
@@ -252,6 +255,16 @@ class ChannelRouter:
         self, recipient: str, message: str, channel: str, channel_data: dict
     ) -> bool:
         """Dispatch to the appropriate channel sender."""
+        if channel == "dashboard":
+            try:
+                from dashboard.dashboard_comms import get_comms
+                get_comms().push_outbound(recipient, message)
+                logger.info(f"Dashboard outbound → {recipient}: {message[:80]}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to send dashboard message: {e}")
+                return False
+
         if channel == "telegram":
             chat_id = channel_data.get("chat_id")
             if not chat_id:

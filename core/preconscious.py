@@ -132,6 +132,11 @@ class Preconscious:
         lexicon_keys = set(self._lexicon_lookup.keys())
         self._concept_extractor = ConceptExtractor(lexicon_keys=lexicon_keys)
 
+        # Temporary variables to track injection state across helper methods
+        self._last_concepts = []
+        self._last_neighbors = []
+        self._last_selected_beliefs = []
+
     def _load_layer2_anchors(self):
         """Load Layer 2 beliefs as priority injection anchors.
 
@@ -283,6 +288,11 @@ class Preconscious:
                 selected belief clusters (used to steer the spatial mind's
                 attention center toward actual knowledge, not raw text midpoints).
         """
+        # Reset injection stats tracking for the current pulse
+        self._last_concepts = []
+        self._last_neighbors = []
+        self._last_selected_beliefs = []
+
         parts = []
         injected_belief_ids = []
 
@@ -396,9 +406,11 @@ class Preconscious:
             parts.append(f"(trail: {flash_text})")
 
         if not parts:
+            self._save_injection_state()
             return "", [], None
 
         inner = "\n".join(parts)
+        self._save_injection_state()
         # Wrap in context fencing so the LLM distinguishes recalled
         # spatial awareness from new sensory input (inspired by Hermes's
         # <memory-context> fencing in memory_manager.py)
@@ -768,6 +780,7 @@ class Preconscious:
             k=k,
             exclude_trails=True,
         )
+        self._last_neighbors = neighbors
 
         if not neighbors:
             return ""
@@ -1248,6 +1261,8 @@ class Preconscious:
             # cases like very short inputs or heavy stop-word text.
             concepts = [trigger_text[:200]] if trigger_text.strip() else []
 
+        self._last_concepts = concepts
+
         if not concepts:
             return "", []
 
@@ -1363,6 +1378,7 @@ class Preconscious:
         # Combine selection and re-sort by gravity
         final_selection = selected_skills + selected_other
         final_selection.sort(key=lambda x: x["gravity"], reverse=True)
+        self._last_selected_beliefs = final_selection
 
         # Update access in spatial mind for selected beliefs
         belief_space = self.physics.spatial_mind.belief_space
@@ -1526,3 +1542,85 @@ class Preconscious:
                 return text[:idx + 1].strip()
 
         return text[:max_len].strip() + "…"
+
+    def _save_injection_state(self):
+        """Save structured injection state for the dashboard UI."""
+        import json
+        from datetime import datetime
+        
+        status_path = os.path.join("data", "spatial", "spatial_injection.json")
+        os.makedirs(os.path.dirname(status_path), exist_ok=True)
+        
+        concepts = getattr(self, "_last_concepts", [])
+        neighbors = getattr(self, "_last_neighbors", [])
+        beliefs = getattr(self, "_last_selected_beliefs", [])
+        
+        # Format memories
+        memories = []
+        for n in neighbors:
+            rel = n.get("relevance", 0.0)
+            if rel > 5.0:
+                type_str = "vivid"
+            elif rel > 1.0:
+                type_str = "related"
+            else:
+                type_str = "faint"
+            memories.append({
+                "type": type_str,
+                "content": n.get("content", ""),
+                "relevance": round(rel, 2)
+            })
+            
+        # Format beliefs
+        belief_list = []
+        for b in beliefs:
+            belief_list.append({
+                "content": b.get("content", ""),
+                "category": b.get("category", ""),
+                "gravity": round(b.get("gravity", 0.0), 2),
+                "mass": round(b.get("mass", 0.0), 2)
+            })
+            
+        # Somatic state
+        somatic = {}
+        if self.sentinel:
+            try:
+                somatic = {
+                    "omega": round(self.sentinel.omega, 3),
+                    "s_total": round(self.sentinel.s_total, 3),
+                    "severity": self.sentinel.get_severity(),
+                    "mode": self.sentinel.get_generation_params().get("mode", "tonic")
+                }
+            except Exception:
+                pass
+                
+        # Affect state
+        affect = {}
+        try:
+            from core.affect_hook import get_last_result
+            res = get_last_result()
+            if res:
+                affect = {
+                    "dominant": res.dominant_affect,
+                    "intensity": round(res.field_intensity, 2),
+                    "packets": res.contributing_packets
+                }
+        except Exception:
+            pass
+            
+        data = {
+            "concepts": concepts,
+            "memories": memories,
+            "beliefs": belief_list,
+            "somatic": somatic,
+            "affect": affect,
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
+            "pulse": self.physics._pulse_count if self.physics else 0
+        }
+        
+        try:
+            with open(status_path, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to write spatial_injection.json: {e}")
+
