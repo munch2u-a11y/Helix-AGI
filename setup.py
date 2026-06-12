@@ -34,6 +34,7 @@ def main():
     parser.add_argument("--moltbook-key", default="", help="Moltbook API Key")
     parser.add_argument("--profile", choices=["birth", "prepared", "developed"], default="prepared", help="Cognitive bootstrap profile")
     parser.add_argument("--personality", choices=["curious", "friendly", "safe", "professional"], default="curious", help="Cognitive personality archetype")
+    parser.add_argument("--vision-provider", choices=["local", "gemini"], default="local", help="Vision provider (local model or Gemini)")
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent.resolve()
@@ -60,6 +61,7 @@ def main():
         telegram_owner_id = args.telegram_owner
         discord_token = args.discord_token
         moltbook_key = args.moltbook_key
+        vision_provider = args.vision_provider
 
         # Track which comms channels the user enables
         enabled_channels = ["dashboard"]  # Dashboard is always enabled
@@ -72,6 +74,14 @@ def main():
             gemini_api_key = input("  Gemini API key: ").strip()
             anthropic_api_key = input("  Anthropic API key (optional): ").strip()
             openai_api_key = input("  OpenAI API key (optional): ").strip()
+
+            print("\n" + "-"*40)
+            print("  [Vision Configuration]")
+            print("  Helix can use either a local vision model (Ollama/Gemma3) or Gemini Flash.")
+            print("  Using the local model is free and cost-efficient.")
+            vision_provider = input("  Vision provider (local/gemini) [default: local]: ").strip().lower()
+            if vision_provider not in ['local', 'gemini']:
+                vision_provider = 'local'
 
             print("\n" + "-"*40)
             print("  [Communication Channels]")
@@ -110,6 +120,9 @@ def main():
             f.write(f"HELIX_DISCORD_TOKEN={discord_token}\n")
             f.write(f"MOLTBOOK_API_KEY={moltbook_key}\n")
             f.write(f"HELIX_COMMS_CHANNELS={comms_channels}\n")
+            f.write(f"HELIX_PROVIDER=gemini\n")
+            f.write(f"HELIX_VISION_PROVIDER={vision_provider}\n")
+            f.write(f"HELIX_VISION_MODEL=gemini-2.5-flash\n")
 
         print(f"  ✓ Created {cred_path}")
         print(f"  ✓ Enabled comms channels: {comms_channels}")

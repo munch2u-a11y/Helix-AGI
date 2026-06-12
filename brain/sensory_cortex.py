@@ -94,11 +94,13 @@ class SensoryCortex:
         # Ensure model for background audio
         self._whisper_model = None
 
-
+        # Provider settings: default to 'local' for cost efficiency
+        self._provider = os.environ.get("HELIX_VISION_PROVIDER", "local").lower()
+        self._model = os.environ.get("HELIX_VISION_MODEL", "gemini-2.5-flash")
 
         logger.info(
             f"Vision Cortex initialized (camera={self.camera_device}, "
-            f"model={_OLLAMA_MODEL} via Ollama)"
+            f"provider={self._provider}, model={self._model})"
         )
 
     def _auto_detect_camera(self, default_index: int = 0) -> int:
@@ -212,23 +214,7 @@ class SensoryCortex:
             prompt += "\nNote any changes from the previous observation."
 
         try:
-            # Prefer Gemini Flash for active tools if available, fallback to Ollama
-            if GeminiProvider and os.environ.get("GEMINI_API_KEY"):
-                from google.genai import types
-                provider = GeminiProvider(model="gemini-2.5-flash")
-                
-                prompt_parts = [
-                    types.Part.from_text(text=prompt),
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                ]
-                response = provider.client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt_parts,
-                    config=types.GenerateContentConfig(temperature=0.2),
-                )
-                description = response.text.strip() if response.text else "(no description generated)"
-            else:
-                description = self._analyze(image_bytes, prompt)
+            description = self._analyze_image(image_bytes, prompt)
         except Exception as e:
             return f"Vision analysis failed: {e}"
 
@@ -382,7 +368,7 @@ class SensoryCortex:
                 )
 
             try:
-                desc = self._analyze(image_bytes, prompt)
+                desc = self._analyze_image(image_bytes, prompt)
                 observations.append((ts_label, desc))
                 previous_desc = desc
             except Exception as e:
@@ -540,7 +526,7 @@ class SensoryCortex:
     # INTERNAL: ANALYSIS (Gemma3 via Ollama)
     # ══════════════════════════════════════════════════════════════════
 
-    def _analyze(self, image_bytes: bytes, prompt: str) -> str:
+    def _analyze_local(self, image_bytes: bytes, prompt: str) -> str:
         """Analyze an image using the Ollama vision model.
 
         Sends the image as base64 to Ollama's chat API with the
@@ -591,6 +577,38 @@ class SensoryCortex:
         )
 
         return result if result else "(no description generated)"
+
+    def _analyze_image(self, image_bytes: bytes, prompt: str) -> str:
+        """Analyze an image using either the Gemini API or the local Ollama model
+        based on the configured provider.
+        """
+        if self._provider == "gemini":
+            if GeminiProvider and os.environ.get("GEMINI_API_KEY"):
+                from google.genai import types
+                provider = GeminiProvider(model=self._model)
+                
+                prompt_parts = [
+                    types.Part.from_text(text=prompt),
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                ]
+                response = provider.client.models.generate_content(
+                    model=self._model,
+                    contents=prompt_parts,
+                    config=types.GenerateContentConfig(temperature=0.2),
+                )
+                description = response.text.strip() if response.text else "(no description generated)"
+                logger.info(
+                    f"Gemini vision analysis ({self._model}): {len(description)} chars"
+                )
+                return description
+            else:
+                logger.warning(
+                    "Gemini requested for vision, but GeminiProvider or GEMINI_API_KEY is missing. "
+                    "Falling back to local."
+                )
+                return self._analyze_local(image_bytes, prompt)
+        else:
+            return self._analyze_local(image_bytes, prompt)
 
     # ══════════════════════════════════════════════════════════════════
     # INTERNAL: VISUAL MEMORY
