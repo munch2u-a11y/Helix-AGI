@@ -897,6 +897,18 @@ class HelixApp(QMainWindow):
         except Exception as e:
             logger.error(f"Failed to start agent process: {e}")
 
+    def restart_agent_process(self):
+        """Terminate the running agent process and start a new one to apply configuration changes."""
+        logger.info("Restarting agent process...")
+        if self._agent_process and self._agent_process.poll() is None:
+            self._agent_process.terminate()
+            try:
+                self._agent_process.wait(timeout=2)
+            except Exception:
+                self._agent_process.kill()
+            self._agent_process = None
+        self._start_agent_process()
+
     def _create_desktop_shortcuts(self, wizard_shortcut: bool, agent_shortcut: bool):
         """Create Linux desktop shortcuts for Setup Wizard and Agent Launcher."""
         desktop_dir = Path(os.path.expanduser("~/Desktop"))

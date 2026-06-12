@@ -66,8 +66,8 @@ def _load_credentials():
     # Try python-dotenv first
     try:
         from dotenv import load_dotenv
-        load_dotenv(cred_path, override=False)
-        print(f"  Credentials: loaded via dotenv")
+        load_dotenv(cred_path, override=True)
+        print(f"  Credentials: loaded via dotenv (override=True)")
         return
     except ImportError:
         pass
@@ -83,10 +83,10 @@ def _load_credentials():
                 key, _, value = line.partition('=')
                 key = key.strip()
                 value = value.strip().strip('"').strip("'")
-                if key and value and key not in os.environ:
+                if key and value:
                     os.environ[key] = value
                     loaded += 1
-    print(f"  Credentials: loaded {loaded} keys")
+    print(f"  Credentials: loaded/updated {loaded} keys")
 
 
 # Load credentials BEFORE any imports that use env vars

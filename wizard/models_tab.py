@@ -252,6 +252,28 @@ class ModelsTab(QWidget):
         # Write credentials.env file
         try:
             self.app._write_credentials()
-            QMessageBox.information(self, "Saved", "Model settings saved and synchronized successfully!")
+            
+            # Check if an agent process is currently running
+            has_running_agent = (
+                hasattr(self.app, "_agent_process")
+                and self.app._agent_process is not None
+                and self.app._agent_process.poll() is None
+            )
+            
+            if has_running_agent:
+                reply = QMessageBox.question(
+                    self,
+                    "Saved & Synchronized",
+                    "Model settings saved successfully!\n\n"
+                    "Would you like to restart the running Helix agent process to apply these changes immediately?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self.app.restart_agent_process()
+                    QMessageBox.information(self, "Restarted", "Helix agent process has been restarted with the new configuration.")
+            else:
+                QMessageBox.information(self, "Saved", "Model settings saved and synchronized successfully!")
+                
         except Exception as e:
             QMessageBox.critical(self, "Error Saving", f"Failed to write configuration: {e}")
