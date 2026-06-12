@@ -912,16 +912,15 @@ class HelixApp(QMainWindow):
 
     def _create_desktop_shortcuts(self, wizard_shortcut: bool, agent_shortcut: bool):
         """Create Linux desktop shortcuts for Setup Wizard and Agent Launcher."""
+        apps_dir = Path(os.path.expanduser("~/.local/share/applications"))
+        apps_dir.mkdir(parents=True, exist_ok=True)
+        
         desktop_dir = Path(os.path.expanduser("~/Desktop"))
-        if not desktop_dir.exists():
-            desktop_dir = Path(os.path.expanduser("~/.local/share/applications"))
-            desktop_dir.mkdir(parents=True, exist_ok=True)
-
+        
         logo_icon_path = str(BASE_DIR / "wizard" / "assets" / "helix_logo.png")
 
         if wizard_shortcut:
             wizard_sh = BASE_DIR / "Helix Setup Wizard.sh"
-            desktop_file = desktop_dir / "helix_setup_wizard.desktop"
             content = f"""[Desktop Entry]
 Version=1.0
 Type=Application
@@ -932,16 +931,27 @@ Icon={logo_icon_path}
 Terminal=false
 Categories=Utility;Settings;
 """
+            # Write to applications menu
             try:
-                desktop_file.write_text(content)
-                desktop_file.chmod(0o755)
-                logger.info(f"Created desktop shortcut: {desktop_file}")
+                app_file = apps_dir / "helix_setup_wizard.desktop"
+                app_file.write_text(content)
+                app_file.chmod(0o755)
+                logger.info(f"Created applications shortcut: {app_file}")
             except Exception as e:
-                logger.error(f"Failed to create setup wizard shortcut: {e}")
+                logger.error(f"Failed to create setup wizard application shortcut: {e}")
+
+            # Write to Desktop if it exists
+            if desktop_dir.exists():
+                try:
+                    desk_file = desktop_dir / "helix_setup_wizard.desktop"
+                    desk_file.write_text(content)
+                    desk_file.chmod(0o755)
+                    logger.info(f"Created desktop shortcut: {desk_file}")
+                except Exception as e:
+                    logger.error(f"Failed to create setup wizard desktop shortcut: {e}")
 
         if agent_shortcut:
             agent_sh = BASE_DIR / "Launch Helix Agent.sh"
-            desktop_file = desktop_dir / "launch_helix_agent.desktop"
             content = f"""[Desktop Entry]
 Version=1.0
 Type=Application
@@ -952,12 +962,24 @@ Icon={logo_icon_path}
 Terminal=true
 Categories=Utility;
 """
+            # Write to applications menu
             try:
-                desktop_file.write_text(content)
-                desktop_file.chmod(0o755)
-                logger.info(f"Created desktop shortcut: {desktop_file}")
+                app_file = apps_dir / "launch_helix_agent.desktop"
+                app_file.write_text(content)
+                app_file.chmod(0o755)
+                logger.info(f"Created applications shortcut: {app_file}")
             except Exception as e:
-                logger.error(f"Failed to create agent launcher shortcut: {e}")
+                logger.error(f"Failed to create agent launcher application shortcut: {e}")
+
+            # Write to Desktop if it exists
+            if desktop_dir.exists():
+                try:
+                    desk_file = desktop_dir / "launch_helix_agent.desktop"
+                    desk_file.write_text(content)
+                    desk_file.chmod(0o755)
+                    logger.info(f"Created desktop shortcut: {desk_file}")
+                except Exception as e:
+                    logger.error(f"Failed to create agent launcher desktop shortcut: {e}")
 
     def closeEvent(self, event):
         """Clean up background processes on close."""
@@ -1011,6 +1033,19 @@ def main():
         except Exception as e2:
             print(f"❌ Error running CLI setup: {e2}")
         return
+
+    # Set app user model ID for taskbar grouping and icons (Windows & Linux)
+    if sys.platform == "win32":
+        import ctypes
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("munch2u.helix.agi.wizard")
+        except Exception:
+            pass
+    elif sys.platform == "linux":
+        try:
+            app.setDesktopFileName("helix_setup_wizard.desktop")
+        except Exception:
+            pass
 
     app.setApplicationName("Helix‑AGI")
     app.setStyleSheet(Theme.stylesheet())
