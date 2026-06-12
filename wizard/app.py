@@ -948,9 +948,26 @@ Categories=Utility;
 # ── Entry Point ───────────────────────────────────────────────────────
 def main():
     import argparse
+    import subprocess
+    import os
     parser = argparse.ArgumentParser(description="Helix‑AGI Setup Wizard & Dashboard")
     parser.add_argument("--wizard", action="store_true", help="Force wizard mode")
     args = parser.parse_args()
+
+    # Headless detection on non-Windows systems
+    is_headless = False
+    if sys.platform != "win32":
+        if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            is_headless = True
+
+    if is_headless:
+        print("\n⚠ No graphical display detected. Falling back to CLI Setup...")
+        setup_path = BASE_DIR / "setup.py"
+        try:
+            subprocess.run([sys.executable, str(setup_path)], check=True)
+        except Exception as e:
+            print(f"❌ Error running CLI setup: {e}")
+        return
 
     # WebEngine requires this BEFORE QApplication is created
     try:
@@ -958,7 +975,18 @@ def main():
     except ImportError:
         pass
 
-    app = QApplication(sys.argv)
+    try:
+        app = QApplication(sys.argv)
+    except Exception as e:
+        print(f"\n⚠ Failed to initialize PyQt6 GUI: {e}")
+        print("Falling back to CLI Setup...")
+        setup_path = BASE_DIR / "setup.py"
+        try:
+            subprocess.run([sys.executable, str(setup_path)], check=True)
+        except Exception as e2:
+            print(f"❌ Error running CLI setup: {e2}")
+        return
+
     app.setApplicationName("Helix‑AGI")
     app.setStyleSheet(Theme.stylesheet())
 

@@ -53,8 +53,15 @@ def _load_credentials():
     """
     cred_path = os.path.expanduser("~/.config/helix/credentials.env")
     if not os.path.exists(cred_path):
-        print(f"  ⚠ No credentials file at {cred_path}")
-        return
+        print("\n" + "="*70)
+        print("  ⚠  HELIX AGI IS NOT CONFIGURED YET!")
+        print("="*70)
+        print("  Please run the Setup Wizard first to configure credentials and seed beliefs:")
+        print("    - GUI Wizard (Recommended):  ./install.sh")
+        print("    - CLI Setup:                 python setup.py")
+        print("="*70 + "\n")
+        import sys
+        sys.exit(1)
 
     # Try python-dotenv first
     try:
