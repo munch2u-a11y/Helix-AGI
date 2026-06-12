@@ -249,7 +249,26 @@ def _find_matches(
 # ── Gemini API ───────────────────────────────────────────────────────
 
 def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
-    """Single Gemini API call. Mirrors batch_service._call_gemini."""
+    """Single LLM call for belief consolidation.
+
+    Routes through the auxiliary LLM client when available (supports
+    local providers). Falls back to direct Gemini API call.
+    """
+    # Try auxiliary client first (supports local providers)
+    try:
+        from core.auxiliary_llm import get_auxiliary_client
+        aux = get_auxiliary_client()
+        if aux:
+            return aux.generate(
+                prompt,
+                system_instruction=system,
+                temperature=0.15,
+                max_output_tokens=512,
+            )
+    except Exception:
+        pass
+
+    # Fallback: direct Gemini API call
     try:
         from google import genai
 
@@ -273,7 +292,7 @@ def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
             return response.text.strip()
 
     except Exception as e:
-        logger.warning("Gemini consolidation call failed: %s", e)
+        logger.warning("Consolidation LLM call failed: %s", e)
 
     return None
 

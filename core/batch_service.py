@@ -281,11 +281,26 @@ def _faiss_dedup(
 # ── Gemini API Client ───────────────────────────────────────────────
 
 def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
-    """Make a single Gemini API call for belief processing.
+    """Make a single LLM call for belief processing.
 
-    Uses the google.genai SDK, same pattern as gemini_provider.py.
-    Returns the text response, or None on failure.
+    Routes through the auxiliary LLM client when available (supports
+    local providers). Falls back to direct Gemini API call.
     """
+    # Try auxiliary client first (supports local providers)
+    try:
+        from core.auxiliary_llm import get_auxiliary_client
+        aux = get_auxiliary_client()
+        if aux:
+            return aux.generate(
+                prompt,
+                system_instruction=system,
+                temperature=0.15,
+                max_output_tokens=2048,
+            )
+    except Exception:
+        pass
+
+    # Fallback: direct Gemini API call
     try:
         from google import genai
 
@@ -301,7 +316,7 @@ def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
             contents=prompt,
             config={
                 "system_instruction": system,
-                "temperature": 0.15,  # Low temp for formatting precision
+                "temperature": 0.15,
                 "max_output_tokens": 2048,
             },
         )
@@ -310,7 +325,7 @@ def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
             return response.text.strip()
 
     except Exception as e:
-        logger.warning("Gemini API call failed: %s", e)
+        logger.warning("LLM API call failed: %s", e)
 
     return None
 

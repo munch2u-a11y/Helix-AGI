@@ -233,46 +233,27 @@ class PulseLoop:
         self._rate_limited = False
 
     def _summarize_for_compressor(self, prompt: str) -> Optional[str]:
-        """Summarize text for context compression using the active provider.
+        """Summarize text for context compression using the auxiliary LLM.
 
-        Used as a callback by ContextCompressor instead of hardcoding Gemini.
-        For API providers, uses a lightweight auxiliary model.
-        For local providers, uses the same local model.
+        Delegates to the shared auxiliary client, which uses a SEPARATE
+        session from the main consciousness (critical for local providers
+        so the main agent's context isn't polluted with summarization).
         """
         try:
-            if self._is_local:
-                # Local: summarize through the same Ollama/llama.cpp endpoint
-                if not self._provider_config:
-                    return None
-                summary_session = create_session(
-                    config=ProviderConfig(
-                        provider_type=self._provider_config.provider_type,
-                        model=self._provider_config.model,
-                        context_window=self._provider_config.context_window,
-                        temperature=0.3,
-                        max_output_tokens=2048,
-                        options=self._provider_config.options,
-                    ),
+            from core.auxiliary_llm import get_auxiliary_client
+            aux = get_auxiliary_client()
+            if aux:
+                return aux.generate(
+                    prompt,
                     system_instruction=(
                         "You are compressing a conversation history. "
                         "Write as the speaker naturally recalling what just happened. "
                         "Be concise and preserve key facts."
                     ),
+                    temperature=0.3,
+                    max_output_tokens=2048,
                 )
-                return summary_session.send_message(prompt)
-            else:
-                # API: use Gemini Flash Lite for cheap summarization
-                import os
-                from google import genai
-                key = os.environ.get("GEMINI_API_KEY", "")
-                if not key:
-                    return None
-                client = genai.Client(api_key=key)
-                response = client.models.generate_content(
-                    model="gemini-3.1-flash-lite-preview",
-                    contents=prompt,
-                )
-                return response.text.strip()
+            return None
         except Exception as e:
             logger.warning("Summarizer callback failed: %s", e)
             return None

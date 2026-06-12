@@ -258,34 +258,33 @@ def setup_helix(data_dir: str = "data"):
     orchestrator = LLMOrchestrator(pulse_loop, memory_manager)
 
     # ── 7. Background Daemon (Dream Engine) ────────────────────────
-    #    The Curator needs an llm_client with .generate(prompt, system_instruction)
-    #    for Phase 2 (belief extraction) and Phase 3 (compound synthesis).
-    curator_llm = None
-    try:
-        from google import genai as _genai
-        _curator_client = _genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+    #    Initialize the auxiliary LLM client for all subconscious tasks.
+    #    For local providers, this creates a SEPARATE session from the
+    #    main consciousness so summarization/consolidation doesn't
+    #    pollute the primary context window.
+    from core.auxiliary_llm import init_auxiliary_client
+    aux_client = init_auxiliary_client(provider_config)
 
+    # Wrap the auxiliary client in a .generate() interface for the Curator
+    curator_llm = None
+    if aux_client:
         class _CuratorLLM:
-            """Lightweight wrapper giving the Curator a .generate() interface."""
-            _model = "gemini-2.5-flash"
+            """Adapter giving the Curator a .generate() interface via auxiliary LLM."""
             def generate(self, prompt: str, system_instruction: str = ""):
-                from google.genai import types as _types
-                config = _types.GenerateContentConfig(
-                    system_instruction=system_instruction or None,
+                result = aux_client.generate(
+                    prompt,
+                    system_instruction=system_instruction,
                     temperature=0.3,
                     max_output_tokens=2048,
                 )
-                resp = _curator_client.models.generate_content(
-                    model=self._model,
-                    contents=[_types.Content(role="user", parts=[_types.Part(text=prompt)])],
-                    config=config,
-                )
-                return resp.candidates[0].content.parts[0]
+                # Curator expects a Part-like object with .text
+                class _TextPart:
+                    def __init__(self, text):
+                        self.text = text or ""
+                return _TextPart(result)
 
         curator_llm = _CuratorLLM()
-        print("  Curator LLM: ready (gemini-2.5-flash)")
-    except Exception as e:
-        print(f"  Curator LLM: unavailable ({e})")
+        print(f"  Curator LLM: ready (auxiliary — {'local' if aux_client._is_local else 'API'})")
 
     daemon = BackgroundDaemon(
         physics_engine=physics,
