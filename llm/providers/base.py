@@ -136,51 +136,91 @@ def detect_available_provider() -> Optional[ProviderConfig]:
     """Auto-detect the best available LLM backend.
 
     Priority:
-      If HELIX_PROVIDER=anthropic: Anthropic Fable 5 (if key exists)
-      Default: Gemini API (if key exists) > Ollama > llama.cpp > None
-
-    Gemini is the default conscious mind. Anthropic activates only
-    when explicitly requested via HELIX_PROVIDER env var.
-    Ollama/llama.cpp are for subagents.
+      If HELIX_PROVIDER is set, try to use that provider and HELIX_MODEL.
+      Otherwise, fall back to auto-detecting in order:
+      Gemini API (if key exists) > Ollama > llama.cpp > None
     """
     import os
+    from pathlib import Path
 
-    # 0. Explicit provider override via HELIX_PROVIDER
     provider_pref = os.environ.get("HELIX_PROVIDER", "").lower()
+    model_pref = os.environ.get("HELIX_MODEL", "").strip()
 
-    # 1a. Anthropic — if explicitly requested
-    if provider_pref == "anthropic":
+    # 1. Handle Explicit Provider Preferences
+    if provider_pref == "gemini":
+        gemini_key = os.environ.get("GEMINI_API_KEY", "")
+        if gemini_key:
+            model = model_pref or "gemini-2.5-flash"
+            logger.info(f"Using explicitly configured Gemini provider with model: {model}")
+            return ProviderConfig(
+                provider_type="gemini",
+                model=model,
+                context_window=1_000_000,
+                temperature=0.8,
+                max_output_tokens=8192,
+            )
+        else:
+            logger.warning("HELIX_PROVIDER=gemini but GEMINI_API_KEY is missing.")
+
+    elif provider_pref == "anthropic":
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if anthropic_key:
-            logger.info(
-                "HELIX_PROVIDER=anthropic — using claude-fable-5"
-            )
+            model = model_pref or "claude-fable-5"
+            logger.info(f"Using explicitly configured Anthropic provider with model: {model}")
             return ProviderConfig(
                 provider_type="anthropic",
-                model="claude-fable-5",
+                model=model,
                 context_window=1_000_000,
                 temperature=0.8,
                 max_output_tokens=16384,
             )
         else:
-            logger.warning(
-                "HELIX_PROVIDER=anthropic but no ANTHROPIC_API_KEY found — "
-                "falling through to Gemini"
-            )
+            logger.warning("HELIX_PROVIDER=anthropic but ANTHROPIC_API_KEY is missing.")
 
-    # 1b. Gemini API — default conscious mind
+    elif provider_pref == "ollama":
+        url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+        model = model_pref or os.environ.get("OLLAMA_MODEL", "granite4.1:8b")
+        logger.info(f"Using explicitly configured Ollama provider with model: {model} at {url}")
+        return ProviderConfig(
+            provider_type="ollama",
+            model=model,
+            context_window=64_000,
+            options={"num_ctx": 64_000, "url": url},
+        )
+
+    elif provider_pref == "llama_cpp":
+        model = model_pref
+        if not model:
+            # Try to find a .gguf model in models/
+            models_dir = Path("models")
+            ggufs = list(models_dir.glob("*.gguf")) if models_dir.exists() else []
+            if ggufs:
+                model = str(ggufs[0])
+            else:
+                model = "/home/nemo/.ollama/models/blobs/sha256-afb54ad43a39f947407f5cabc59856348d70e072baa5c62d436332157c151bcd"
+        logger.info(f"Using explicitly configured llama_cpp provider with model: {model}")
+        return ProviderConfig(
+            provider_type="llama_cpp",
+            model=model,
+            context_window=64_000,
+            options={"n_gpu_layers": -1},
+        )
+
+    # 2. Auto-Detection Fallback (when no explicit provider_pref is set or it failed)
+    # 2a. Gemini API
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     if gemini_key:
-        logger.info("Auto-detected Gemini API key — using gemini-3-flash-preview")
+        model = model_pref or "gemini-3-flash-preview"
+        logger.info(f"Auto-detected Gemini API key — using {model}")
         return ProviderConfig(
             provider_type="gemini",
-            model="gemini-3-flash-preview",
+            model=model,
             context_window=1_000_000,
             temperature=0.8,
             max_output_tokens=8192,
         )
 
-    # 2. Ollama fallback (local models)
+    # 2b. Ollama
     try:
         import ollama
         models = ollama.list()
@@ -192,7 +232,7 @@ def detect_available_provider() -> Optional[ProviderConfig]:
         ]
         for pref in preferred:
             if pref in model_names:
-                logger.info(f"Auto-detected Ollama with {pref} (Gemini key not found)")
+                logger.info(f"Auto-detected Ollama with {pref}")
                 return ProviderConfig(
                     provider_type="ollama",
                     model=pref,
@@ -212,7 +252,7 @@ def detect_available_provider() -> Optional[ProviderConfig]:
     except Exception:
         pass
 
-    # 3. llama-cpp-python fallback
+    # 2c. llama-cpp-python
     try:
         import llama_cpp
         model_path = (

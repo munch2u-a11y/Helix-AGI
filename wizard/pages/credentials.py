@@ -136,7 +136,7 @@ class CredentialsPage(QWidget):
         llm_form.addRow(provider_label)
 
         self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["gemini", "anthropic", "openai", "alibaba", "ollama"])
+        self.provider_combo.addItems(["gemini", "anthropic", "openai", "alibaba", "ollama", "llama_cpp"])
         self.provider_combo.setCurrentText(self.wizard.config.get("llm_provider", "gemini"))
 
         # Provider description that updates on selection
@@ -144,10 +144,37 @@ class CredentialsPage(QWidget):
         self.provider_desc.setWordWrap(True)
         self.provider_desc.setStyleSheet("font-size: 10px; color: #8888aa; padding-left: 4px;")
         self._update_provider_desc(self.provider_combo.currentText())
-        self.provider_combo.currentTextChanged.connect(self._update_provider_desc)
+        self.provider_combo.currentTextChanged.connect(self._on_provider_changed)
 
         llm_form.addRow("Use as primary:", self.provider_combo)
         llm_form.addRow(self.provider_desc)
+
+        # ── Primary Model Selector ────────────────────────────────────
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_combo.setPlaceholderText("Select or type model name...")
+
+        detect_row = QHBoxLayout()
+        self.detect_btn = QPushButton("🔍  Detect Models")
+        self.detect_btn.setFixedHeight(30)
+        self.detect_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(167, 139, 250, 0.1);
+                border: 1px solid rgba(167, 139, 250, 0.4);
+                color: #c4b5fd;
+                border-radius: 6px;
+                padding: 0 12px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: rgba(167, 139, 250, 0.2);
+            }
+        """)
+        self.detect_btn.clicked.connect(self._on_detect_clicked)
+        detect_row.addWidget(self.model_combo, stretch=1)
+        detect_row.addWidget(self.detect_btn)
+
+        llm_form.addRow("Active Model:", detect_row)
 
         form_layout.addWidget(llm_group)
 
@@ -233,8 +260,74 @@ class CredentialsPage(QWidget):
             "openai": "OpenAI GPT — widely supported, strong general performance. Requires paid API key.",
             "alibaba": "Alibaba Qwen — competitive open-weight models via DashScope API.",
             "ollama": "Ollama (Local) — fully private, no API costs. Requires local GPU for best results.",
+            "llama_cpp": "llama.cpp (Local) — run GGUF models directly on CPU/GPU without external services.",
         }
         self.provider_desc.setText(descs.get(provider, ""))
+
+    def _on_provider_changed(self, provider: str):
+        """Handle LLM provider selection changes."""
+        self._update_provider_desc(provider)
+        self._update_models_list()
+
+    def _update_models_list(self):
+        """Load default models for the selected provider into the dropdown."""
+        provider = self.provider_combo.currentText()
+        from wizard.model_detector import get_default_models
+        defaults = get_default_models(provider)
+        
+        self.model_combo.clear()
+        self.model_combo.addItems(defaults)
+        
+        # Prefill from config/existing env if matching provider
+        creds = _load_existing_creds()
+        config_model = self.wizard.config.get("llm_model") or creds.get("HELIX_MODEL", "")
+        if config_model:
+            # Check if current provider matches the loaded config provider
+            config_provider = self.wizard.config.get("llm_provider") or creds.get("HELIX_PROVIDER", "gemini")
+            if provider == config_provider:
+                self.model_combo.setEditText(config_model)
+
+    def _on_detect_clicked(self):
+        """Trigger dynamic discovery of models for the selected provider."""
+        provider = self.provider_combo.currentText()
+        from wizard.model_detector import (
+            detect_ollama_models,
+            detect_gguf_models,
+            fetch_gemini_models
+        )
+        from PyQt6.QtWidgets import QMessageBox
+        
+        detected = []
+        if provider == "ollama":
+            url = self.ollama_url.text().strip() or "http://localhost:11434"
+            detected = detect_ollama_models(url)
+            if not detected:
+                QMessageBox.warning(self, "Detection Failed", f"Could not find any running Ollama models at {url}.")
+        elif provider == "llama_cpp":
+            from wizard.app import BASE_DIR
+            detected = detect_gguf_models(BASE_DIR)
+            if not detected:
+                QMessageBox.warning(self, "Detection Failed", "No .gguf models found in models/ directory.")
+        elif provider == "gemini":
+            key = self.gemini_key.text().strip()
+            if not key:
+                QMessageBox.warning(self, "Missing API Key", "Please enter a Gemini API Key first.")
+                return
+            detected = fetch_gemini_models(key)
+            if not detected:
+                QMessageBox.warning(self, "Detection Failed", "Could not fetch models. Check your API key and network connection.")
+        else:
+            QMessageBox.information(
+                self, "Auto-Detection",
+                f"Auto-detection is not supported for {provider.title()}. Please select or type the model name manually."
+            )
+            return
+            
+        if detected:
+            self.model_combo.clear()
+            self.model_combo.addItems(detected)
+            self.model_combo.setCurrentIndex(0)
+            QMessageBox.information(self, "Success", f"Detected {len(detected)} model(s) successfully!")
 
     def _load_existing(self):
         """Pre-populate from existing credentials.env."""
@@ -263,6 +356,9 @@ class CredentialsPage(QWidget):
             self.vision_combo.setCurrentText(creds["HELIX_VISION_PROVIDER"])
         if creds.get("HELIX_PROVIDER"):
             self.provider_combo.setCurrentText(creds["HELIX_PROVIDER"])
+        
+        # Load model list and set current edit text
+        self._update_models_list()
 
     def _save_and_next(self):
         """Save credential values to config and advance."""
@@ -272,8 +368,15 @@ class CredentialsPage(QWidget):
         cfg["openai_api_key"] = self.openai_key.text().strip()
         cfg["alibaba_api_key"] = self.alibaba_key.text().strip()
         cfg["ollama_url"] = self.ollama_url.text().strip() or "http://localhost:11434"
-        cfg["ollama_model"] = self.ollama_model.text().strip()
         cfg["llm_provider"] = self.provider_combo.currentText()
+        cfg["llm_model"] = self.model_combo.currentText().strip()
+        
+        # For legacy compatibility, save to ollama_model if ollama is selected
+        if cfg["llm_provider"] == "ollama":
+            cfg["ollama_model"] = cfg["llm_model"]
+        else:
+            cfg["ollama_model"] = self.ollama_model.text().strip()
+
         cfg["vision_provider"] = self.vision_combo.currentText()
         cfg["telegram_enabled"] = self.telegram_check.isChecked()
         cfg["telegram_token"] = self.telegram_token.text().strip()

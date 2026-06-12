@@ -704,6 +704,7 @@ class HelixApp(QMainWindow):
         creds["TELEGRAM_OWNER_ID"] = self.config.get("telegram_owner_id", creds.get("TELEGRAM_OWNER_ID", ""))
         creds["HELIX_DISCORD_TOKEN"] = self.config.get("discord_token", creds.get("HELIX_DISCORD_TOKEN", ""))
         creds["HELIX_PROVIDER"] = self.config.get("llm_provider", "gemini")
+        creds["HELIX_MODEL"] = self.config.get("llm_model", creds.get("HELIX_MODEL", ""))
         creds["HELIX_VISION_PROVIDER"] = self.config.get("vision_provider", "local")
 
         # Comms channels
@@ -766,6 +767,11 @@ class HelixApp(QMainWindow):
             fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
             tabs.addTab(fallback, "🧠  Dashboard")
             self._web_view = None
+
+        # Models tab
+        from wizard.models_tab import ModelsTab
+        models = ModelsTab(self)
+        tabs.addTab(models, "🤖  Models")
 
         # Settings tab
         from wizard.settings_tab import SettingsTab
