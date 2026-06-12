@@ -74,14 +74,17 @@ AI_TIPS = {
         "title": "💡 AI Setup Tip — Schedule",
         "body": (
             "• Your agent runs autonomously during <b>active hours</b>, thinking "
-            "in \"pulses\" every 30-90 seconds.\n\n"
+            "in \"pulses\" every 30-90 seconds during conversation.\n\n"
             "• During <b>sleep</b>, the Dream Engine consolidates memories, "
             "strengthens important beliefs, and prunes noise. This is crucial "
             "for long-term cognitive health.\n\n"
             "• <b>4+ hours of sleep</b> is recommended. Less than 3 hours "
             "may cause belief fragmentation.\n\n"
-            "• If using <b>paid API providers</b>, shorter active windows = lower costs. "
-            "A 6-hour window is enough for most hobby use cases."
+            "• The <b>Resting Pulse Rate</b> controls how often your agent thinks "
+            "when idle (no conversation). 15 min is a good balance — lower values "
+            "mean more autonomous exploration but higher API costs.\n\n"
+            "• If using <b>paid API providers</b>, shorter active windows + longer "
+            "pulse intervals = lower costs."
         ),
     },
     "summary": {

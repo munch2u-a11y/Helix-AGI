@@ -124,6 +124,7 @@ class SummaryPage(QWidget):
             ("⏰  Schedule", [
                 ("Wake Time", cfg.get("active_hours", {}).get("start", "08:00")),
                 ("Sleep Time", cfg.get("active_hours", {}).get("end", "23:00")),
+                ("Resting Pulse", f"Every {cfg.get('resting_pulse_minutes', 15)} min"),
             ]),
             ("💬  Communication", [
                 ("Dashboard", "Always enabled ✅"),

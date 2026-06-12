@@ -54,6 +54,7 @@ DEFAULT_CONFIG = {
     "safety_mode": True,
     "whitelist": [],
     "active_hours": {"start": "08:00", "end": "23:00"},
+    "resting_pulse_minutes": 15,
     "bootstrap_profile": "prepared",
     "personality": "curious",
     "vision_provider": "local",

@@ -120,6 +120,34 @@ class SettingsTab(QWidget):
         sleep_row.addWidget(self.sleep_label)
         schedule_layout.addLayout(sleep_row)
 
+        # Resting pulse rate
+        pulse_row = QHBoxLayout()
+        pulse_row.addWidget(QLabel("💓  Resting Pulse:"))
+        self.pulse_slider = QSlider(Qt.Orientation.Horizontal)
+        self.pulse_slider.setMinimum(5)
+        self.pulse_slider.setMaximum(60)
+        resting_min = cfg.get("resting_pulse_minutes", 15)
+        self.pulse_slider.setValue(resting_min)
+        self.pulse_slider.setSingleStep(1)
+        self.pulse_slider.setPageStep(5)
+        self.pulse_value_label = QLabel(f"{resting_min} min")
+        self.pulse_value_label.setStyleSheet(
+            "font-family: monospace; font-size: 14px; color: #f59e0b; "
+            "font-weight: 700; min-width: 55px;"
+        )
+        self.pulse_slider.valueChanged.connect(self._on_pulse_changed)
+        pulse_row.addWidget(self.pulse_slider, stretch=1)
+        pulse_row.addWidget(self.pulse_value_label)
+        schedule_layout.addLayout(pulse_row)
+
+        pulse_desc = QLabel(
+            "How often the agent pulses autonomously when idle (5–60 min). "
+            "Lower = more active, higher = more energy-efficient."
+        )
+        pulse_desc.setStyleSheet("font-size: 10px; color: #666688; padding-left: 28px;")
+        pulse_desc.setWordWrap(True)
+        schedule_layout.addWidget(pulse_desc)
+
         settings_layout.addWidget(schedule_group)
 
         # ── Tool Toggles ─────────────────────────────────────────────
@@ -231,6 +259,9 @@ class SettingsTab(QWidget):
             self.sleep_slider.blockSignals(False)
         self.sleep_label.setText(self._min_to_time(snapped))
 
+    def _on_pulse_changed(self, value):
+        self.pulse_value_label.setText(f"{value} min")
+
     def _save_settings(self):
         cfg = self.app.config
 
@@ -244,6 +275,7 @@ class SettingsTab(QWidget):
             "start": self._min_to_time(self.wake_slider.value()),
             "end": self._min_to_time(self.sleep_slider.value()),
         }
+        cfg["resting_pulse_minutes"] = self.pulse_slider.value()
 
         # Tools
         selected = []

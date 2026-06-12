@@ -266,6 +266,20 @@ def main():
 
     beliefs_dir = base_dir / "data" / "beliefs"
 
+    # ── Load schedule from config for dynamic belief text ─────────────
+    config_path = base_dir / "config" / "config.json"
+    sleep_time_str = "23:00"
+    wake_time_str = "08:00"
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                _cfg = json.load(f)
+            active_hours = _cfg.get("active_hours", {})
+            sleep_time_str = active_hours.get("end", "23:00")
+            wake_time_str = active_hours.get("start", "08:00")
+        except Exception:
+            pass
+
     # ── Personality archetype customized wording ──────────────────
     if personality == "friendly":
         self_desc = f"I am {agent_name}. I am an autonomous cognitive agent created by {creator_name} to collaborate, support, and build positive relationships."
@@ -402,7 +416,7 @@ def main():
                 _make_belief("pro_system_003",
                     "My cognitive retrieval uses gravity-based ranking: temperature times mass divided by distance squared. Recent, important, nearby concepts pull strongest."),
                 _make_belief("pro_system_004",
-                    "I have a sleep cycle (1-6 AM) where my dream engine consolidates and crystallizes beliefs from recent experience."),
+                    f"I have a sleep cycle ({sleep_time_str}–{wake_time_str}) where my dream engine consolidates and crystallizes beliefs from recent experience. Dream precipitation begins 5 minutes after sleep onset."),
             ])
             if profile == "developed":
                 beliefs.extend([

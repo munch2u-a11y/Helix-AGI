@@ -138,6 +138,50 @@ class SchedulePage(QWidget):
         sleep_container.addLayout(_make_tick_row())
         schedule_layout.addLayout(sleep_container)
 
+        # ── Resting Pulse Rate Slider ─────────────────────────────────
+        pulse_container = QVBoxLayout()
+        pulse_container.setSpacing(4)
+        pulse_header = QHBoxLayout()
+        pulse_header.addWidget(QLabel("💓  Resting Pulse Rate"))
+        resting_min = self.wizard.config.get("resting_pulse_minutes", 15)
+        self.pulse_label = QLabel(f"{resting_min} min")
+        self.pulse_label.setStyleSheet(
+            "font-family: 'JetBrains Mono', monospace; font-size: 18px; "
+            "color: #f59e0b; font-weight: 700;"
+        )
+        pulse_header.addStretch()
+        pulse_header.addWidget(self.pulse_label)
+        pulse_container.addLayout(pulse_header)
+
+        self.pulse_slider = QSlider(Qt.Orientation.Horizontal)
+        self.pulse_slider.setMinimum(5)
+        self.pulse_slider.setMaximum(60)
+        self.pulse_slider.setValue(resting_min)
+        self.pulse_slider.setSingleStep(1)
+        self.pulse_slider.setPageStep(5)
+        self.pulse_slider.valueChanged.connect(self._on_pulse_changed)
+        pulse_container.addWidget(self.pulse_slider)
+
+        pulse_ticks = QHBoxLayout()
+        pulse_ticks.setContentsMargins(0, 0, 0, 0)
+        for t in ["5 min", "15 min", "30 min", "60 min"]:
+            lbl = QLabel(t)
+            lbl.setStyleSheet("font-size: 10px; color: #666688;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            pulse_ticks.addWidget(lbl, stretch=1)
+        pulse_container.addLayout(pulse_ticks)
+
+        pulse_desc = QLabel(
+            "How often your agent thinks autonomously when idle. "
+            "Lower = more active (costs more API tokens). "
+            "Higher = more energy-efficient."
+        )
+        pulse_desc.setStyleSheet("font-size: 11px; color: #8888aa;")
+        pulse_desc.setWordWrap(True)
+        pulse_container.addWidget(pulse_desc)
+
+        schedule_layout.addLayout(pulse_container)
+
         # ── Summary Readout ───────────────────────────────────────────
         self.summary_label = QLabel()
         self.summary_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -155,8 +199,8 @@ class SchedulePage(QWidget):
 
         # Cost info
         cost_note = QLabel(
-            "💡 Tip: If you're using paid API providers, shorter active windows reduce costs.\n"
-            "The agent is fully autonomous during active hours — each pulse consumes API tokens."
+            "💡 Tip: If you're using paid API providers, shorter active windows and longer pulse\n"
+            "intervals reduce costs. Each pulse consumes API tokens."
         )
         cost_note.setStyleSheet("color: #8888aa; font-size: 11px; padding: 8px;")
         cost_note.setWordWrap(True)
@@ -198,15 +242,23 @@ class SchedulePage(QWidget):
         self.sleep_label.setText(_minutes_to_time(snapped))
         self._update_summary()
 
+    def _on_pulse_changed(self, value):
+        self.pulse_label.setText(f"{value} min")
+        self._update_summary()
+
     def _update_summary(self):
         wake = self.wake_slider.value()
         sleep = self.sleep_slider.value()
+        pulse = self.pulse_slider.value()
         if sleep > wake:
             active_hours = (sleep - wake) / 60
             sleep_hours = 24 - active_hours
         else:
             active_hours = (1440 - wake + sleep) / 60
             sleep_hours = 24 - active_hours
+
+        # Estimate daily pulses
+        daily_pulses = int(active_hours * 60 / pulse)
 
         status = ""
         if sleep_hours < 3:
@@ -218,7 +270,8 @@ class SchedulePage(QWidget):
 
         self.summary_label.setText(
             f"Active: {active_hours:.1f} hours  ·  Sleep: {sleep_hours:.1f} hours\n"
-            f"Wake {_minutes_to_time(wake)} → Sleep {_minutes_to_time(sleep)}\n\n"
+            f"Wake {_minutes_to_time(wake)} → Sleep {_minutes_to_time(sleep)}\n"
+            f"Resting pulse: every {pulse} min (~{daily_pulses} autonomous pulses/day)\n\n"
             f"{status}"
         )
 
@@ -229,4 +282,5 @@ class SchedulePage(QWidget):
             "start": _minutes_to_time(wake),
             "end": _minutes_to_time(sleep),
         }
+        self.wizard.config["resting_pulse_minutes"] = self.pulse_slider.value()
         self.wizard.next_page()

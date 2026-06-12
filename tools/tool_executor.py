@@ -34,8 +34,10 @@ Tags handled by pulse_loop.py (not processed here):
 
 import os
 import re
+import json
 import subprocess
 import logging
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
@@ -47,6 +49,57 @@ BLOCKED_WRITE_FILES = {"daemon.py", "main.py", "pulse_loop.py", "physics_engine.
 MAX_FILE_READ = 2_000_000  # 2MB
 MAX_FILE_WRITE = 500_000   # 500KB
 TERMINAL_TIMEOUT = 30      # seconds
+
+# Config path for safety mode / whitelist
+_BASE_DIR = Path(__file__).parent.parent.resolve()
+_CONFIG_PATH = _BASE_DIR / "config" / "config.json"
+
+
+def _load_config() -> dict:
+    """Load config/config.json if it exists."""
+    if _CONFIG_PATH.exists():
+        try:
+            with open(_CONFIG_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _is_command_allowed(command: str) -> bool:
+    """Check if a terminal command is allowed by the whitelist.
+
+    When safety_mode is off or whitelist is empty, all commands are allowed.
+    When safety_mode is on, the command must start with one of the
+    whitelisted command prefixes.
+    """
+    cfg = _load_config()
+    if not cfg.get("safety_mode", True):
+        return True  # Safety mode off — allow all
+
+    whitelist = cfg.get("whitelist", [])
+    if not whitelist:
+        return True  # No whitelist configured — allow all
+
+    # Extract command prefixes from whitelist
+    allowed_commands = set()
+    for entry in whitelist:
+        entry = entry.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        # Command entries: no dots, or have spaces
+        if "." not in entry or " " in entry:
+            allowed_commands.add(entry.lower())
+
+    if not allowed_commands:
+        return True  # No command entries in whitelist — allow all
+
+    # Check if the command starts with any whitelisted prefix
+    cmd_lower = command.strip().lower()
+    for allowed in allowed_commands:
+        if cmd_lower.startswith(allowed):
+            return True
+    return False
 
 
 @dataclass
@@ -518,6 +571,12 @@ class ToolExecutor:
                 return f"Command blocked: contains '{blocked}'"
         if cmd_lower.startswith("sudo"):
             return "sudo commands are not allowed."
+        # Safety mode whitelist check
+        if not _is_command_allowed(command):
+            return (
+                f"Command not on whitelist (safety mode is ON): {command.split()[0]}\n"
+                f"Allowed commands can be viewed and updated in Settings."
+            )
         cwd = args.get("cwd", "")
         cwd = cwd if cwd and os.path.isdir(cwd) else os.path.expanduser("~")
         try:
@@ -1349,6 +1408,13 @@ class ToolExecutor:
                 return f"Command blocked: contains '{blocked}'"
         if cmd_lower.startswith("sudo"):
             return "sudo commands are not allowed."
+
+        # Safety mode whitelist check
+        if not _is_command_allowed(command):
+            return (
+                f"Command not on whitelist (safety mode is ON): {command.split()[0]}\n"
+                f"Allowed commands can be viewed and updated in Settings."
+            )
 
         cwd = tag.param if tag.param and os.path.isdir(tag.param) else os.path.expanduser("~")
 

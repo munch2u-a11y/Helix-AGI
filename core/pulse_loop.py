@@ -18,7 +18,7 @@ Architecture:
   - Meta-actions via text tags: [NOTE:], [REMEMBER:], [JOURNAL:]
 
 States:
-  DORMANT    — sleeping (1-6 AM), auto-wakes at 6 AM
+  DORMANT    — sleeping (configurable via wizard), auto-wakes at configured time
   QUIET      — awake, NO pulses, waiting for external event
   ACTIVE     — 30s pulse cadence, processing conversation + follow-up
   EMERGENCE  — single autonomous pulse after 120 min inactivity
@@ -32,7 +32,7 @@ import logging
 import re
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Callable, Dict, Any, List
+from typing import Optional, Callable, Dict, Any, List, Tuple
 import numpy as np
 
 from memory.memory_manager import MemoryManager
@@ -61,7 +61,7 @@ class PulseLoop:
     # Pulse intervals (seconds) — 3-tier gradient
     ACTIVE_INTERVAL = 10       # 10s — fast response during conversation
     REGULAR_INTERVAL = 30      # 30s — autonomous task work
-    RESTING_INTERVAL = 900     # 15 min — idle background presence
+    RESTING_INTERVAL = 900     # 15 min default — overridden from config
     DORMANT_CHECK = 60         # How often to check for wake during sleep
 
     # Timeout durations for state transitions
@@ -72,9 +72,16 @@ class PulseLoop:
     FOCUS_DRIFT_THRESHOLD = 1.5
     TOKEN_WARNING_STEP = 500_000  # inject warning every 100k above this
 
-    # Sleep schedule (24h clock, local time)
-    SLEEP_START = 1   # 1:00 AM
-    SLEEP_END = 6     # 6:00 AM
+    # Sleep schedule — loaded dynamically from config/config.json
+    # Defaults (used when no config exists):
+    SLEEP_START_HOUR = 23   # 11:00 PM (active_hours.end)
+    SLEEP_START_MINUTE = 0
+    SLEEP_END_HOUR = 8      # 8:00 AM  (active_hours.start)
+    SLEEP_END_MINUTE = 0
+
+    # Dream precipitation delay — how many seconds after sleep onset
+    # before the dream engine spawns. Gives the system time to wind down.
+    DREAM_DELAY_SECONDS = 300  # 5 minutes
 
     def __init__(
         self,
@@ -175,9 +182,12 @@ class PulseLoop:
             protect_first_n=2,
         )
 
-        # Dynamic toolset state
-        self._active_toolsets = {"core"}  # Only core loaded by default
+        # Dynamic toolset state — load from config instead of hardcoding
+        self._active_toolsets = self._load_toolsets_from_config()
         self._pending_toolset_rebuild = False
+
+        # Load sleep schedule from config
+        self._load_schedule_from_config()
 
         # Share active toolsets reference with preconscious for
         # toolset awareness hints (Tier 1c of cognitive integration)
@@ -189,6 +199,10 @@ class PulseLoop:
         # Nightly dream cycle tracking — prevents repeated runs per night
         self._dream_cycle_ran_tonight = False
         self._dream_cycle_last_date = None
+
+        # Dream onset tracking — when the agent first entered DORMANT
+        # this sleep cycle, used to enforce the 5-minute dream delay
+        self._dormant_entry_time = None
 
         # Pending belief processing — runs once per sleep window
         self._pending_beliefs_ran_tonight = False
@@ -332,26 +346,114 @@ class PulseLoop:
 
     # ── Main Loop ────────────────────────────────────────────────────
 
+    @staticmethod
+    def _load_config() -> dict:
+        """Load config/config.json if it exists."""
+        config_path = Path(__file__).parent.parent / "config" / "config.json"
+        if config_path.exists():
+            try:
+                with open(config_path, "r") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _load_schedule_from_config(self):
+        """Load wake/sleep schedule from config/config.json → active_hours.
+
+        The wizard stores active hours (when the agent is awake).
+        Sleep is the inverse: from active_hours.end to active_hours.start.
+
+        Example: active_hours = {"start": "08:00", "end": "23:00"}
+          → Sleep window: 23:00 → 08:00
+          → SLEEP_START_HOUR=23, SLEEP_START_MINUTE=0
+          → SLEEP_END_HOUR=8, SLEEP_END_MINUTE=0
+        """
+        cfg = self._load_config()
+        active_hours = cfg.get("active_hours", {})
+        wake_str = active_hours.get("start", "08:00")
+        sleep_str = active_hours.get("end", "23:00")
+
+        try:
+            s_parts = sleep_str.split(":")
+            self.SLEEP_START_HOUR = int(s_parts[0])
+            self.SLEEP_START_MINUTE = int(s_parts[1]) if len(s_parts) > 1 else 0
+
+            w_parts = wake_str.split(":")
+            self.SLEEP_END_HOUR = int(w_parts[0])
+            self.SLEEP_END_MINUTE = int(w_parts[1]) if len(w_parts) > 1 else 0
+        except (ValueError, IndexError) as e:
+            logger.warning(f"Invalid schedule in config, using defaults: {e}")
+            self.SLEEP_START_HOUR = 23
+            self.SLEEP_START_MINUTE = 0
+            self.SLEEP_END_HOUR = 8
+            self.SLEEP_END_MINUTE = 0
+
+        logger.info(
+            f"Schedule loaded: sleep {self.SLEEP_START_HOUR:02d}:{self.SLEEP_START_MINUTE:02d}"
+            f" → wake {self.SLEEP_END_HOUR:02d}:{self.SLEEP_END_MINUTE:02d}"
+        )
+
+        # Resting pulse rate (how often the agent thinks autonomously when idle)
+        resting_minutes = cfg.get("resting_pulse_minutes", 15)
+        resting_minutes = max(5, min(60, resting_minutes))  # Clamp to 5-60
+        self.RESTING_INTERVAL = resting_minutes * 60
+        if resting_minutes != 15:
+            logger.info(f"Resting pulse rate: every {resting_minutes} min ({self.RESTING_INTERVAL}s)")
+
+    def _load_toolsets_from_config(self) -> set:
+        """Load tool_set from config/config.json.
+
+        Falls back to {"core"} if config doesn't exist or has no tool_set.
+        """
+        cfg = self._load_config()
+        tool_set = cfg.get("tool_set", ["core"])
+        toolsets = set(tool_set)
+        # Ensure core is always present
+        toolsets.add("core")
+        if toolsets != {"core"}:
+            logger.info(f"Toolsets loaded from config: {', '.join(sorted(toolsets))}")
+        return toolsets
+
     def _is_sleep_hours(self) -> bool:
-        """Check if current time is within the sleep window (1-6 AM)."""
-        hour = datetime.now().hour
-        return self.SLEEP_START <= hour < self.SLEEP_END
+        """Check if current time is within the sleep window.
+
+        Handles midnight-wrap correctly:
+          - sleep 23:00 → wake 08:00 (wraps midnight)
+          - sleep 01:00 → wake 06:00 (same side of midnight)
+        """
+        now = datetime.now()
+        current_minutes = now.hour * 60 + now.minute
+        sleep_start = self.SLEEP_START_HOUR * 60 + self.SLEEP_START_MINUTE
+        sleep_end = self.SLEEP_END_HOUR * 60 + self.SLEEP_END_MINUTE
+
+        if sleep_start <= sleep_end:
+            # Same side of midnight (e.g., 01:00 → 06:00)
+            return sleep_start <= current_minutes < sleep_end
+        else:
+            # Wraps midnight (e.g., 23:00 → 08:00)
+            return current_minutes >= sleep_start or current_minutes < sleep_end
 
     def _main_loop(self):
         """Main consciousness thread — event-driven state machine.
 
         States:
-          DORMANT  — 1-6 AM sleep, periodic wake check
+          DORMANT  — Sleep hours (configurable), periodic wake check
           RESTING  — Awake, 1 pulse per hour (autonomous thought)
           ACTIVE   — 30s pulses. Drops to RESTING after 2 min no I/O.
         """
         while self._running:
 
-            # ── Sleep Schedule: 1-6 AM ────────────────────────────
+            # ── Sleep Schedule (from config/config.json) ──────────
             if self._is_sleep_hours():
                 if self._state != "DORMANT":
-                    logger.info(f"{self._state} → DORMANT (sleep hours)")
+                    logger.info(
+                        f"{self._state} → DORMANT (sleep hours: "
+                        f"{self.SLEEP_START_HOUR:02d}:{self.SLEEP_START_MINUTE:02d}"
+                        f"–{self.SLEEP_END_HOUR:02d}:{self.SLEEP_END_MINUTE:02d})"
+                    )
                     self._state = "DORMANT"
+                    self._dormant_entry_time = time.time()
 
                 # ── Pending Belief Processing ──────────────────────
                 #    Now handled by the Curator as Phase 6, after it
@@ -364,11 +466,21 @@ class PulseLoop:
                 #    Full Phase 1-5: extraction, consolidation,
                 #    compounding, integration, lexicon sync.
                 #    Runs once per night in a daemon thread.
+                #    Delayed by DREAM_DELAY_SECONDS (5 min) after
+                #    sleep onset to allow proper wind-down.
                 current_date = datetime.now().date()
+                dormant_elapsed = (
+                    time.time() - self._dormant_entry_time
+                    if self._dormant_entry_time else float('inf')
+                )
                 if (self._dream_engine
-                        and getattr(self, "_dream_cycle_last_date", None) != current_date):
+                        and getattr(self, "_dream_cycle_last_date", None) != current_date
+                        and dormant_elapsed >= self.DREAM_DELAY_SECONDS):
                     self._dream_cycle_last_date = current_date
-                    logger.info("Sleep cycle: spawning nightly dream cycle")
+                    logger.info(
+                        f"Sleep cycle: spawning nightly dream cycle "
+                        f"({dormant_elapsed:.0f}s after sleep onset)"
+                    )
                     threading.Thread(
                         target=self._dream_engine.run_dream_cycle,
                         daemon=True,
@@ -385,6 +497,7 @@ class PulseLoop:
                 self._state = "RESTING"
                 self._last_event_time = time.time()
                 self._pending_beliefs_ran_tonight = False  # Reset for next night
+                self._dormant_entry_time = None  # Reset dream delay tracker
 
                 # Clear 429 rate-limit parking
                 if self._rate_limited:

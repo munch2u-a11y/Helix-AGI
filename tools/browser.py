@@ -9,6 +9,7 @@ Provides full browser automation via action tags:
 Uses Playwright for headless Chromium. Domain-whitelisted for security.
 """
 
+import json
 import logging
 from pathlib import Path
 
@@ -18,30 +19,79 @@ logger = logging.getLogger("helix.tools.browser")
 _browser = None
 _browser_page = None
 
-# Domain whitelist
-_DOMAIN_WHITELIST_FILE = Path("/home/nemo/Helix/data/domain_whitelist.txt")
+# Base directory for relative paths
+_BASE_DIR = Path(__file__).parent.parent.resolve()
+_CONFIG_PATH = _BASE_DIR / "config" / "config.json"
+
+
+def _load_config() -> dict:
+    """Load config/config.json if it exists."""
+    if _CONFIG_PATH.exists():
+        try:
+            with open(_CONFIG_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
 
 
 def _load_domain_whitelist() -> set:
-    """Load the domain whitelist from the plaintext file."""
+    """Load the domain whitelist from config/config.json.
+
+    The wizard stores a flat list of domains and commands in
+    config.whitelist[]. We filter for domain-like entries (contain '.').
+    """
+    cfg = _load_config()
+
+    # If safety mode is off, allow everything
+    if not cfg.get("safety_mode", True):
+        return set()  # Empty = allow all (fail-open)
+
+    whitelist = cfg.get("whitelist", [])
     domains = set()
-    if _DOMAIN_WHITELIST_FILE.exists():
-        try:
-            for line in _DOMAIN_WHITELIST_FILE.read_text().splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    domains.add(line.lower())
-        except Exception:
-            pass
+    for entry in whitelist:
+        entry = entry.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        # Domain entries contain a dot (e.g., "github.com")
+        # Command entries don't (e.g., "git status", "pip install")
+        if "." in entry and " " not in entry:
+            domains.add(entry.lower())
     return domains
 
 
+def _load_command_whitelist() -> set:
+    """Load the command whitelist from config/config.json.
+
+    Command entries are those that look like commands (no dots, or have spaces).
+    """
+    cfg = _load_config()
+
+    # If safety mode is off, allow everything
+    if not cfg.get("safety_mode", True):
+        return set()  # Empty = allow all
+
+    whitelist = cfg.get("whitelist", [])
+    commands = set()
+    for entry in whitelist:
+        entry = entry.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        # Commands typically have spaces or no dots
+        if "." not in entry or " " in entry:
+            commands.add(entry.lower())
+    return commands
+
+
 def _is_domain_allowed(url: str) -> bool:
-    """Check if a URL's domain is on the whitelist."""
+    """Check if a URL's domain is on the whitelist.
+
+    When safety_mode is off or whitelist is empty, all domains are allowed.
+    """
     from urllib.parse import urlparse
     allowed = _load_domain_whitelist()
     if not allowed:
-        return True  # If whitelist is empty/missing, allow all (fail-open)
+        return True  # If whitelist is empty/missing/safety-off, allow all
     try:
         parsed = urlparse(url if "://" in url else f"https://{url}")
         hostname = (parsed.hostname or "").lower()
@@ -80,7 +130,7 @@ def browse(url: str, wait_for: str = "") -> str:
     if not _is_domain_allowed(url):
         return (
             f"Domain not on whitelist. Access denied for: {url}\n"
-            f"Approved domains are listed in: data/domain_whitelist.txt"
+            f"Approved domains can be managed in Settings > Safety & Permissions."
         )
 
     try:
@@ -165,7 +215,7 @@ def browse_screenshot(full_page: bool = False) -> str:
 
     try:
         page = _browser_page
-        screenshot_dir = Path("/home/nemo/Helix/data/screenshots")
+        screenshot_dir = _BASE_DIR / "data" / "screenshots"
         screenshot_dir.mkdir(parents=True, exist_ok=True)
 
         from datetime import datetime
