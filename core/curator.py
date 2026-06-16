@@ -11,8 +11,8 @@ Key Architectural Upgrades:
 4. Co-Occurrence Wiring: Real-time Hebbian wiring via post-pulse hooks replaces batch UMAP/HDBSCAN.
    Nightly Phase 3 reads pre-built relation clusters for compound synthesis.
 5. Layer 2 Precipitation: UMAP/HDBSCAN clustering identifies dense belief
-   clusters that exceed the gravitational binding threshold (tied to expansion
-   rate). These collapse into Layer 2 beliefs (people, skills, desires, concepts).
+   clusters that exceed a density threshold. These are consolidated into
+   Layer 2 beliefs (people, skills, desires, concepts).
 """
 
 import json

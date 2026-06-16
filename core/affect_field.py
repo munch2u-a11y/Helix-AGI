@@ -1,30 +1,30 @@
 """
 Helix — Plutchik Affect Field (Layer 3)
 
-8D emotional wave packet field overlaid on the cognitive spatial mind.
-Implements Plutchik's wheel of emotions as a wave interference system
-where emotional events deposit packets that diffuse anisotropically,
-decay with importance weighting, and interfere constructively or
-destructively to produce emergent behavioral effects.
+8D emotional state tracker overlaid on the cognitive spatial mind.
+Maps Plutchik's 8 primary emotions as dimensions of a vector space.
+Emotional events are deposited as "wave packets" that:
+  - Diffuse per-dimension at different rates (e.g., surprise fades
+    in ~9 pulses, trust persists for ~139 pulses)
+  - Decay with importance-weighted halflife
+  - Interfere constructively/destructively when sampled at a point
+    (overlapping emotions amplify or cancel based on phase alignment)
 
 Architecture:
   - Every pulse: a Lagrangian snapshot is mapped to an 8D Plutchik
     vector and deposited as a wave packet.
-  - Every pulse: all packets diffuse (per-emotion rates), decay
-    (SDFT importance-weighted), and are pruned below threshold.
+  - Every pulse: all packets spread out (per-emotion rates), decay
+    (importance-weighted), and are pruned below threshold.
   - On sample: phase-coherent interference at the current attention
     position produces a steering vector, field intensity, and
     optionally surfaces dormant memories.
 
 The Lagrangian signals already ARE the emotional state. This module
-provides the interference dynamics that make those signals interact
+provides the interaction dynamics that make those signals combine
 over time — trust accumulates slowly, surprise fades fast, repeated
 joy constructively amplifies.
 
 No LLM calls. CPU-only. O(P) per pulse where P = active packets.
-
-Adapted from lilly-steering-master/core/affect/ with simplifications
-for Helix's architecture.
 """
 
 import json
@@ -55,14 +55,14 @@ NEUTRAL_BASELINES = {
 # Higher = faster diffusion = emotion fades quicker in that dimension.
 # These model real emotional persistence patterns.
 DIFFUSION_RATES = {
-    "joy": 0.008,          # ~87 pulses half-life (slow — joy lingers)
-    "trust": 0.005,        # ~139 pulses half-life (very slow — trust persists)
-    "fear": 0.06,          # ~12 pulses half-life (fast — fear fades quickly)
-    "surprise": 0.08,      # ~9 pulses half-life (very fast — surprise is transient)
-    "sadness": 0.008,      # ~87 pulses half-life (slow — sadness lingers)
-    "disgust": 0.03,       # ~23 pulses half-life (medium)
-    "anger": 0.05,         # ~14 pulses half-life (fast — anger burns out)
-    "anticipation": 0.01,  # ~69 pulses half-life (slow — anticipation builds)
+    "joy": 0.016,          # ~43 pulses half-life (moderate — joy lingers)
+    "trust": 0.010,        # ~69 pulses half-life (slow — trust persists)
+    "fear": 0.12,          # ~6 pulses half-life (very fast — fear fades quickly)
+    "surprise": 0.16,      # ~4 pulses half-life (very fast — surprise is transient)
+    "sadness": 0.016,      # ~43 pulses half-life (moderate — sadness lingers)
+    "disgust": 0.06,       # ~12 pulses half-life (medium)
+    "anger": 0.10,         # ~7 pulses half-life (fast — anger burns out)
+    "anticipation": 0.02,  # ~35 pulses half-life (moderate — anticipation builds)
 }
 
 # ── Phase Frequencies (rad/pulse) ────────────────────────────────────

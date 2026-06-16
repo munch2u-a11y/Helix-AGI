@@ -1,21 +1,17 @@
 """
 Helix_main — Spatial Mind
 
-The dual 8D cognitive field — Helix's conceptual dimension.
+The dual 8D cognitive field — the agent's conceptual dimension.
 
 Two independent 8D spaces (belief field and memory field) queried
 from a single shared attention center. The center is moved only by
 the conscious model's previous thought output.
 
-This module replaces:
-  - Keeper's horizon assembly / whisper generation
-  - Librarian's Flash sub-agent search reasoning
-  - Active recall tools (in normal operation)
-
-It preserves:
-  - Keeper's state board + belief formation
-  - Librarian's memory storage
-  - Sentinel's stability monitoring (enhanced with spatial probes)
+This module provides:
+  - Proximity-scored retrieval for beliefs and memories
+  - Attention dynamics (position, velocity, inertia)
+  - Identity center tracking (core belief centroid)
+  - Overnight dream trail integration
 """
 
 import json
@@ -454,7 +450,7 @@ class SpatialMind:
     # ── New Point Registration ────────────────────────────────────────
 
     def add_belief(self, belief_id: str, embedding: np.ndarray, **metadata):
-        """Add a new belief to the belief space. Called by the Keeper."""
+        """Add a new belief to the belief space."""
         self.belief_space.add_point(
             point_id=belief_id,
             embedding=embedding,
@@ -463,7 +459,7 @@ class SpatialMind:
         )
 
     def add_memory(self, memory_id: str, embedding: np.ndarray, **metadata):
-        """Add a new memory to the memory space. Called by the Librarian."""
+        """Add a new memory to the memory space."""
         self.memory_space.add_point(
             point_id=memory_id,
             embedding=embedding,

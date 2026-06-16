@@ -6,13 +6,12 @@ When a pattern repeats 3+ times within 24 hours, it crystallizes into a
 belief via the belief store.
 
 This is NOT hardcoded automation. The belief is passive — the preconscious
-will surface it when Helix enters a similar context, and Helix decides
-whether to follow the pattern or not. The belief describes what Helix
-TENDS TO DO, not what it MUST do.
+will surface it when the agent enters a similar context, and the agent
+decides whether to follow the pattern or not. The belief describes what
+the agent TENDS TO DO, not what it MUST do.
 
-Inspired by Claude Code's skillImprovement.ts — which watches for
-repeated corrections and rewrites skill files. Here, instead of
-rewriting files, we create beliefs in the gravitational field.
+When a pattern is detected, it is stored as a high-importance memory.
+The nightly curator will crystallize it into a formal belief.
 
 Example crystallized belief:
     "When researching a topic, I tend to: search the web → read relevant

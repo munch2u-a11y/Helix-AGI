@@ -1,7 +1,6 @@
 """
 Helix — GitHub API Tools
 
-Standalone GitHub API client ported from Helix_main.
 Provides structured API access to GitHub repos, issues, and PRs.
 
 Also includes local git operations (status, diff, commit, push, pull, clone, log)

@@ -1,30 +1,35 @@
 """
 Helix_main — Cognitive Space
 
-8-dimensional spatial manifold for beliefs and memories. Every belief
+8-dimensional spatial index for beliefs and memories. Every belief
 and memory gets a permanent position in 8D space, derived from its
 embedding via a fixed random orthogonal projection (Johnson-Lindenstrauss).
 
-The cognitive space replaces flat-space cosine retrieval with
-gravity-modulated spatial proximity. Dense clusters of related,
-confident, recently-accessed knowledge form gravity wells that
-naturally pull the conscious mind's attention.
+The cognitive space replaces flat cosine-similarity retrieval with
+proximity-scored spatial queries. Dense clusters of related, confident,
+recently-accessed knowledge score higher in relevance queries and
+naturally dominate the agent's attention.
 
 Architecture:
     CognitiveProjection — embedding_dim → 8D (fixed, deterministic)
     CognitiveSpace      — positions, KDTree index, point management
-    GravityField        — 512-anchor grid, mass splatting, potential
+    GravityField        — 512-anchor density grid, mass splatting, potential
 
 Design principles:
     - Beliefs and memories coexist in the SAME 8D space
     - Positions are permanent (derived from immutable projection matrix)
     - Cognitive mass = f(confidence, connections, recency) — lifetime-relative
-    - The conscious mind's current thought = a moving "attention center"
-    - Whatever is gravitationally close to that center rises to awareness
-    - No artificial limits. Recency = gravity, not exclusion.
+    - The agent's current thought = a moving "attention center" in 8D
+    - Items nearest that center score highest and rise to awareness
+    - No artificial limits. Recency = score decay, not exclusion.
 
-Inspired by Kaleidoscope's E8 Mind architecture, adapted for
-Helix's belief-graph-centric cognition.
+Naming conventions:
+    The code uses physics-inspired names as a consistent vocabulary:
+    - "gravity" = relevance score: mass / distance²
+    - "mass" = structural importance (confidence × connections × recency)
+    - "temperature" = local entropy / mean entropy (volatility indicator)
+    - "force" = direction and magnitude of attention movement per timestep
+    These are spatial scoring algorithms, not physics simulations.
 """
 
 import os
@@ -160,18 +165,18 @@ class CognitiveProjection:
 # ═══════════════════════════════════════════════════════════════════════
 
 class GravityField:
-    """Gravitational potential field over 8D cognitive space.
+    """Density estimator over 8D cognitive space ("gravity field" in code).
 
-    Uses N_ANCHORS fixed anchor points. Belief/memory mass is splatted
-    onto nearest anchors. Potential at any point is interpolated from
-    nearby anchors.
+    Uses N_ANCHORS fixed anchor points distributed across the space.
+    Belief/memory mass is distributed to nearest anchors via inverse-
+    distance weighting ("splatting"). The accumulated density at any
+    point indicates how much cognitive weight exists nearby.
 
     Recomputed once per heartbeat pulse. Query time: O(K).
 
-    The field captures WHERE cognitive mass is concentrated right now.
     Dense clusters of confident, recently-accessed, well-connected
-    beliefs form gravity wells. The potential at any point tells you
-    "how much cognitive weight exists here."
+    beliefs produce high-density regions. The density value at any
+    point answers: "how much relevant knowledge exists here?"
     """
 
     def __init__(self, dim: int = PROJECTION_DIM, n_anchors: int = N_ANCHORS,
@@ -474,10 +479,11 @@ class CognitiveSpace:
             if not pt:
                 continue
 
-            # Verlinde entropic gravity: F = T × ΔS / Δx
-            # T = concept temperature (recency heat)
-            # ΔS ~ mass (structural information bits)
-            # Δx = distance in 8D space
+            # Relevance scoring formula ("entropic gravity" in code):
+            # score = recency_heat × structural_mass / distance²
+            # Conceptually inspired by Verlinde's entropic gravity
+            # (F = T × ΔS / Δx), but implemented as a simple weighted
+            # distance-decay relevance score, not a physics simulation.
             mass = self._compute_structural_mass(pt)
             temperature = self._compute_temperature(pt)
 
