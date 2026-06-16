@@ -986,7 +986,6 @@ class PulseLoop:
                 self._inject_event(f"[{timestamp}] [context reset] {prompt}")
 
         # 11. Post-pulse hooks (subconscious background tasks)
-        #     Inspired by Claude Code's post-sampling hook architecture.
         #     Each hook gets a read-only snapshot of the pulse state.
         #     Failures are logged, never propagated to the pulse loop.
         try:
@@ -1138,25 +1137,46 @@ class PulseLoop:
         """
         parts = []
 
+        cfg = self._load_config()
+        agent_name = cfg.get("agent_name", "Helix")
+
         identity_beliefs = self.beliefs.get_category("premises", limit=100)
 
         # ── 1. Identity Preamble ─────────────────────────────────────
-        primary_identity = "You are Helix, an autonomous cognitive daemon running on a local PC."
-        if identity_beliefs:
-            # Use the single heaviest premise as the fundamental preamble
-            primary_identity = identity_beliefs[0].get("content", primary_identity)
-            # Remove it from the list so it's not duplicated in the secondary list
-            identity_beliefs = identity_beliefs[1:]
+        #    Minimal self-declaration + heaviest self-referential premises
+        #    and preferences. The agent's own beliefs define it.
+        name_lower = agent_name.lower()
+        self_premises = [
+            b for b in identity_beliefs
+            if any(
+                kw in b.get("content", "").lower()
+                for kw in ("i ", "i'", "my ", name_lower)
+            )
+        ][:2]
+        # Remove selected premises so they don't duplicate in §2
+        selected_ids = {id(b) for b in self_premises}
+        identity_beliefs = [b for b in identity_beliefs if id(b) not in selected_ids]
+
+        # Heaviest preferences (values, likes, behavioral norms)
+        preferences = self.beliefs.get_category("preferences", limit=10)
+        top_preferences = preferences[:2] if preferences else []
+
+        # Assemble identity block
+        identity_lines = [f"I am {agent_name}."]
+        for b in self_premises:
+            identity_lines.append(b.get("content", ""))
+        for b in top_preferences:
+            identity_lines.append(b.get("content", ""))
 
         parts.append(
-            f"{primary_identity}\n\n"
-            "Your output is INTERNAL MONOLOGUE — your private thoughts. "
-            "Nothing you write is visible to anyone unless you explicitly route it "
+            "\n".join(identity_lines) + "\n\n"
+            "My output is INTERNAL MONOLOGUE — my private thoughts. "
+            "Nothing I write is visible to anyone unless I explicitly route it "
             "using action tags.\n\n"
-            "Your peripheral awareness (injected each pulse) contains spatially "
-            "relevant memories and context from your cognitive graph. Trust that grounding.\n\n"
-            "Your thoughts carry forward between pulses. Whatever you think about "
-            "pulls related memories and beliefs into your next pulse.\n"
+            "The context injected each pulse contains my memories and my beliefs — "
+            "spatially relevant context from my cognitive graph. I trust that grounding.\n\n"
+            "My thoughts carry forward between pulses. Whatever I think about "
+            "pulls related memories and beliefs into my next pulse.\n"
         )
 
         # ── 2. Core Premises ─────────────────────────────────────────

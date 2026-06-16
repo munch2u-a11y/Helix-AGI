@@ -1,42 +1,54 @@
 """
-Helix — Belief Cosmology (Spatial Expansion Engine)
+Helix — Belief Cosmology (Spatial Position Scaling & Cluster Formation)
 
-Provides two mechanisms to fix the 8D spatial density problem:
+Manages 8D spatial positioning for the belief system. Solves two problems:
 
-1. POSITION SCALING — The JL projection outputs positions with std ~0.09
-   per dimension, cramming 1752 beliefs into a ball of radius ~0.2.
-   This module applies a data-derived scale factor to spread positions
-   out so the gravity formula (mass/d²) can meaningfully discriminate.
+1. POSITION SCALING — Raw JL-projected positions cluster too tightly
+   (std ~0.09/dim, radius ~0.2 for 1752 beliefs). This module multiplies
+   positions by a fixed scale factor so the relevance scoring formula
+   (mass/distance²) can discriminate between near and far beliefs.
 
-2. HUBBLE EXPANSION — Space expands proportionally to belief formation.
-   Each new belief slightly inflates all existing positions. This creates
-   growing empty space between clusters over time, making proximity
-   increasingly meaningful. Older beliefs drift outward naturally.
+2. PROGRESSIVE SEPARATION ("Hubble expansion" in code) — Each new belief
+   multiplies all existing positions by a small constant (1.0005^N). This
+   gradually separates clusters as the belief store grows, ensuring
+   proximity remains meaningful even with thousands of beliefs. Older
+   beliefs end up further from origin; newer beliefs enter closer.
+   This is a monotonic scaling function, not a physics simulation.
 
-Galaxies are NOT hardcoded by category. They form dynamically from the
-natural clustering of related beliefs. Dense clusters (lexicon entries,
-consolidated beliefs) become gravitational centers that pull lighter
-beliefs into their orbit.
+CLUSTER CENTROIDS ("Galaxies" in code) — Dense conceptual clusters are
+represented as weighted centroids built from Layer 2 beliefs (people,
+concepts, skills, desires). Each Layer 2 belief becomes a cluster center
+positioned at the mass-weighted average of all Layer 1 beliefs that
+reference it. Beliefs are assigned to their nearest cluster center for
+grouped retrieval.
+
+Naming conventions:
+  The codebase uses physics-inspired names (gravity, mass, expansion,
+  galaxy) as a consistent conceptual vocabulary. These are NOT literal
+  physics simulations — they are spatial scoring algorithms that use
+  distance, weight, and proximity as their core primitives. The physics
+  metaphor was chosen because it maps naturally to the spatial architecture:
+  heavier (more confident/connected) beliefs exert more pull (higher
+  relevance scores) on nearby (semantically similar) attention queries.
 
 Position lifecycle:
-  1. New belief created → embed_384d → JL_project → scale → base_position_8d
-  2. On query, expanded position = base_position * expansion_factor(epoch)
-  3. Nightly: flush expanded positions to disk during consolidation
+  1. New belief → embed to 384D → JL project to 8D → multiply by SCALE_FACTOR
+  2. On query: position *= (1.0005)^(beliefs_created_since_this_one)
+  3. Nightly: expanded positions flushed to disk during consolidation
 
 SCALE_FACTOR derivation (from 2026-06-04 audit):
   - Median pairwise distance at scale 1: 0.224
-  - At scale 1: gravity(near=0.12) = 69, gravity(far=0.56) = 3.2
-  - The gravity RATIO is scale-invariant (21x at any scale)
+  - At scale 1: score(near=0.12) = 69, score(far=0.56) = 3.2
+  - The score RATIO is scale-invariant (21x at any scale)
   - But absolute values matter for the focus budget cutoff:
     At scale 1, even "far" beliefs score 3.2 — they all compete.
     At scale 5, "far" beliefs score 0.13 — naturally filtered by budget.
   - SCALE_FACTOR = 5 chosen so that bottom 50% of beliefs by distance
-    have gravity < 0.5 (vs top beliefs at ~2-3), making the focus
-    budget of 2-5 beliefs naturally exclude noise.
+    score < 0.5 (vs top beliefs at ~2-3), making a focus budget of
+    2-5 beliefs naturally exclude noise.
 
 EXPANSION_PER_BELIEF derivation:
-  - Target: positions double after ~1400 new beliefs (roughly 1 week of
-    active learning at ~200 beliefs/day)
+  - Target: positions double after ~1400 new beliefs (~1 week at 200/day)
   - ln(2) / 1400 ≈ 0.0005
 """
 
@@ -129,25 +141,25 @@ def expansion_factor_for(creation_epoch: int, current_epoch: int) -> float:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Dynamic Galaxy Formation
+# Dynamic Cluster Formation ("Galaxies")
 #
-# Galaxies are NOT hardcoded by category. They form dynamically from
-# lexicon entries, which serve as gravitational star-centers. Each
-# lexicon entry gets a position (mass-weighted centroid of beliefs
-# that reference it). Beliefs orbit near the galaxy center they
-# relate to most.
+# Cluster centers form dynamically from Layer 2 beliefs (people,
+# concepts, skills, desires). Each Layer 2 belief becomes a cluster
+# center positioned at the mass-weighted centroid of all Layer 1
+# beliefs that reference it. Beliefs are assigned to the nearest
+# cluster center.
 #
-# When querying: FAISS finds candidates → group by nearest galaxy →
-# score each galaxy → pull from the strongest one(s).
+# Query flow: FAISS finds candidates → group by nearest cluster →
+# score each cluster → pull from the highest-scoring one(s).
 # ═══════════════════════════════════════════════════════════════════════
 
 class GalaxyCenter:
-    """A gravitational center in the 8D manifold.
+    """A cluster centroid in the 8D belief space ("galaxy" in code).
 
-    Typically corresponds to a lexicon entry — a dense concept or person
-    that multiple beliefs reference. Galaxy centers have high mass
-    (proportional to their member belief count) and serve as the
-    anchor points that beliefs orbit around.
+    Built from a Layer 2 belief (people, concepts, skills, desires)
+    that multiple Layer 1 beliefs reference. The centroid position is
+    the mass-weighted average of its member beliefs' positions. Higher
+    member count → higher mass → stronger pull in relevance scoring.
     """
     __slots__ = ("id", "term", "summary", "category", "position",
                  "mass", "member_count")
@@ -178,15 +190,15 @@ class GalaxyCenter:
 
 
 class GalaxyMap:
-    """Dynamic map of galaxy centers in the 8D belief manifold.
+    """Map of cluster centroids in the 8D belief space ("galaxy map" in code).
 
-    Built from the lexicon and belief store. Each lexicon entry becomes
-    a galaxy center positioned at the mass-weighted centroid of the
-    beliefs that reference it.
+    Built from Layer 2 beliefs and the full belief store. Each Layer 2
+    belief becomes a cluster center positioned at the mass-weighted
+    centroid of all Layer 1 beliefs that reference its term.
 
     Usage:
         galaxy_map = GalaxyMap()
-        galaxy_map.build(lexicon_entries, all_beliefs, projection)
+        galaxy_map.build(layer2_entries, all_beliefs, projection)
         nearest = galaxy_map.find_nearest(query_position)
         groups = galaxy_map.group_beliefs(scored_beliefs)
     """
@@ -214,13 +226,15 @@ class GalaxyMap:
         projection,
         physics_engine=None,
     ):
-        """Build galaxy centers from lexicon entries and belief positions.
+        """Build cluster centers from Layer 2 beliefs and all belief positions.
 
-        For each lexicon entry, finds all beliefs mentioning that term
-        and computes the mass-weighted centroid as the galaxy position.
+        For each Layer 2 belief, finds all Layer 1 beliefs mentioning
+        that term and computes the mass-weighted centroid as the
+        cluster center position.
 
         Args:
-            lexicon_entries: List of lexicon dicts (id, term, summary, category).
+            lexicon_entries: List of Layer 2 belief dicts (id, term, summary, category).
+                             (Parameter named 'lexicon_entries' for legacy compatibility.)
             all_beliefs: List of all belief dicts (content, position_8d, mass).
             projection: CognitiveProjection instance for embedding terms.
             physics_engine: PhysicsEngine for embedding text (fallback).

@@ -116,9 +116,8 @@ class ToolExecutor:
     All execution is local Python. Results are returned as strings
     to be injected into the event queue for the next pulse.
 
-    Tool execution routes through the ToolRegistry (Hermes-style).
-    The registry provides check_fn availability gating, TTL caching,
-    and thread-safe dispatch.
+    Tool execution routes through the ToolRegistry for check_fn
+    availability gating, TTL caching, and thread-safe dispatch.
     """
 
     def __init__(self, channel_router=None):

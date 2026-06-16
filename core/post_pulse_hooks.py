@@ -5,10 +5,6 @@ Lightweight hooks that run after each pulse completes, without blocking
 the next pulse. These are the "subconscious" background processes that
 observe patterns, update state, and maintain cognitive hygiene.
 
-Inspired by Claude Code's post-sampling hooks (backgroundHousekeeping.ts,
-skillImprovement.ts) — but simpler, because Helix is single-threaded
-with background tasks, not event-driven.
-
 Each hook receives a PostPulseHookContext containing:
   - thought: the model's output from this pulse
   - events: incoming events that triggered the pulse
