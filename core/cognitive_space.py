@@ -45,6 +45,19 @@ import numpy as np
 
 logger = logging.getLogger("helix.brain.cognitive_space")
 
+
+def _env_float(name: str, default: float) -> float:
+    """Parse a float env override, falling back safely on invalid values."""
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid float for %s=%r — using default %s", name, raw, default)
+        return default
+
+
 # ── Constants ────────────────────────────────────────────────────────
 PROJECTION_DIM = 8          # Target dimensionality
 N_ANCHORS = 512             # Fixed anchor grid size for gravity field
@@ -305,6 +318,31 @@ class CognitiveSpace:
         ranked = space.gravity_ranked_query(center, k=30)
     """
 
+    # ── Tunables ────────────────────────────────────────────────────
+    # These remain code-level tuning parameters rather than user-facing config.
+    # They can be overridden via environment variables for experiments.
+    RELIANCE_LOG_COEFF = _env_float("HELIX_RELIANCE_LOG_COEFF", 0.2)
+    SOMATIC_DEVIATION_COEFF = _env_float("HELIX_SOMATIC_DEVIATION_COEFF", 0.5)
+    BELIEF_STABILITY_MASS_BONUS = _env_float("HELIX_BELIEF_STABILITY_MASS_BONUS", 0.5)
+
+    # As the manifold grows, episodic memories need a broader recency basin
+    # to remain reachable through nearby competition. Growth is bounded.
+    GROWTH_TARGET_POINTS = _env_float("HELIX_SPACE_GROWTH_TARGET_POINTS", 4000.0)
+    MEMORY_RECENCY_BOOST_BASE = _env_float("HELIX_MEMORY_RECENCY_BOOST_BASE", 0.75)
+    MEMORY_RECENCY_BOOST_MAX = _env_float("HELIX_MEMORY_RECENCY_BOOST_MAX", 1.10)
+    MEMORY_RECENCY_WINDOW_BASE = _env_float("HELIX_MEMORY_RECENCY_WINDOW_BASE", 20.0)
+    MEMORY_RECENCY_WINDOW_MAX = _env_float("HELIX_MEMORY_RECENCY_WINDOW_MAX", 45.0)
+
+    BELIEF_TEMPERATURE_BASE = _env_float("HELIX_BELIEF_TEMPERATURE_BASE", 0.3)
+    BELIEF_TAU = _env_float("HELIX_BELIEF_TAU", 60.0)
+    TRAIL_TEMPERATURE_MULTIPLIER = _env_float("HELIX_TRAIL_TEMPERATURE_MULTIPLIER", 2.0)
+    TRAIL_TAU = _env_float("HELIX_TRAIL_TAU", 8.0)
+    MEMORY_TEMPERATURE_MULTIPLIER = _env_float("HELIX_MEMORY_TEMPERATURE_MULTIPLIER", 1.5)
+    MEMORY_TAU_BASE = _env_float("HELIX_MEMORY_TAU_BASE", 50.0)
+    MEMORY_TAU_MAX = _env_float("HELIX_MEMORY_TAU_MAX", 95.0)
+    MIN_IMPORTANCE_FOR_HEAT = _env_float("HELIX_MIN_IMPORTANCE_FOR_HEAT", 0.3)
+    MIN_BACKGROUND_TEMPERATURE = _env_float("HELIX_MIN_BACKGROUND_TEMPERATURE", 0.05)
+
     def __init__(self, embedding_dim: int = 384, base_dir: Path = None,
                  seed: int = PROJECTION_SEED):
         self.embedding_dim = embedding_dim
@@ -348,6 +386,21 @@ class CognitiveSpace:
             f"CognitiveSpace initialized: embedding_dim={embedding_dim}, "
             f"projection=8D, anchors={N_ANCHORS}"
         )
+
+    def _growth_maturity(self) -> float:
+        """Bounded 0-1 scale for how crowded this manifold has become."""
+        target = max(1.0, float(self.GROWTH_TARGET_POINTS))
+        if self.point_count <= 0:
+            return 0.0
+        return max(
+            0.0,
+            min(1.0, math.log1p(self.point_count) / math.log1p(target)),
+        )
+
+    def _scaled_tunable(self, base: float, max_value: float) -> float:
+        """Interpolate between base and max_value using bounded manifold growth."""
+        maturity = self._growth_maturity()
+        return float(base + (max_value - base) * maturity)
 
     # ── Point Management ──────────────────────────────────────────────
 
@@ -1027,7 +1080,7 @@ class CognitiveSpace:
         # 1. Reliance Multiplier (logarithmic in access_count and relations_count)
         access_count = point_data.get("access_count", 0)
         relations_count = point_data.get("relations_count", 0)
-        s_reliance = 1.0 + 0.2 * math.log(1.0 + access_count + relations_count)
+        s_reliance = 1.0 + self.RELIANCE_LOG_COEFF * math.log(1.0 + access_count + relations_count)
 
         # Recent episodic/task memories need enough mass to compete with
         # slower-cooling beliefs. Temperature still handles cooling, but
@@ -1039,16 +1092,28 @@ class CognitiveSpace:
         if self._current_pulse > 0:
             most_recent_pulse = max(creation_pulse, last_accessed_pulse)
             pulse_age = max(0, self._current_pulse - most_recent_pulse)
-            s_recency = 1.0 + 0.75 / (1.0 + (pulse_age / 20.0) ** 2)
+            if point_data["type"] == "memory":
+                recency_boost = self._scaled_tunable(
+                    self.MEMORY_RECENCY_BOOST_BASE,
+                    self.MEMORY_RECENCY_BOOST_MAX,
+                )
+                recency_window = self._scaled_tunable(
+                    self.MEMORY_RECENCY_WINDOW_BASE,
+                    self.MEMORY_RECENCY_WINDOW_MAX,
+                )
+            else:
+                recency_boost = self.MEMORY_RECENCY_BOOST_BASE
+                recency_window = self.MEMORY_RECENCY_WINDOW_BASE
+            s_recency = 1.0 + recency_boost / (1.0 + (pulse_age / max(recency_window, 1.0)) ** 2)
         else:
-            s_recency = 1.75
+            s_recency = 1.0 + self.MEMORY_RECENCY_BOOST_BASE
 
         # 2. Somatic Multiplier (deviation from homeostatic baseline omega = 0.5)
         omega = point_data.get("encoding_omega", 0.5)
-        s_somatic = 1.0 + 0.5 * abs(omega - 0.5)
+        s_somatic = 1.0 + self.SOMATIC_DEVIATION_COEFF * abs(omega - 0.5)
         if point_data["type"] == "belief":
             stability = point_data.get("stability_index", 0.5)
-            s_somatic *= (0.5 + stability)
+            s_somatic *= (self.BELIEF_STABILITY_MASS_BONUS + stability)
 
         mass = c * s_reliance * s_somatic * s_recency
         return max(0.01, mass)
@@ -1075,19 +1140,19 @@ class CognitiveSpace:
 
         if concept_type == "belief":
             c = point_data.get("confidence", 0.5)
-            T_0 = 0.3  # Beliefs are born cool — already crystallized
-            tau = 60.0  # Cool slowly over many pulses
+            T_0 = self.BELIEF_TEMPERATURE_BASE  # Beliefs are born cool — already crystallized
+            tau = self.BELIEF_TAU  # Cool slowly over many pulses
         elif concept_type == "trail":
             c = point_data.get("importance", 0.5)
-            T_0 = 2.0 * max(c, 0.3)  # Trail particles burn hot
-            tau = 8.0   # Cool quickly
+            T_0 = self.TRAIL_TEMPERATURE_MULTIPLIER * max(c, self.MIN_IMPORTANCE_FOR_HEAT)
+            tau = self.TRAIL_TAU
         else:  # memory, imagined, etc.
             c = point_data.get("importance", 0.5)
-            T_0 = 1.5 * max(c, 0.3)  # Memories are warm
+            T_0 = self.MEMORY_TEMPERATURE_MULTIPLIER * max(c, self.MIN_IMPORTANCE_FOR_HEAT)
             # Keep episodic memories warm long enough for task continuity.
-            # The previous 12-pulse half-life made tool outputs and task-step
-            # memories cool before the agent could revisit related notifications.
-            tau = 50.0
+            # As the memory field gets denser, let the half-life broaden so
+            # recent task-critical memories do not vanish under competition.
+            tau = self._scaled_tunable(self.MEMORY_TAU_BASE, self.MEMORY_TAU_MAX)
 
         # Cooling via Lorentzian profile in pulse-time
         creation_pulse = point_data.get("creation_pulse", 0)
@@ -1104,7 +1169,7 @@ class CognitiveSpace:
 
         # Minimum temperature — cosmic microwave background equivalent
         # Even ancient concepts have SOME thermal presence
-        return max(0.05, T)
+        return max(self.MIN_BACKGROUND_TEMPERATURE, T)
 
     # ── Internal ──────────────────────────────────────────────────────
 

@@ -49,6 +49,8 @@ MEMORY_STATE = SPATIAL_DIR / "memory_space_state.json"
 ATTENTION_NPY = SPATIAL_DIR / "attention_center.npy"
 ATTENTION_PREV = SPATIAL_DIR / "attention_center_prev.npy"
 ATTENTION_GAMMA = SPATIAL_DIR / "attention_center_gamma.npy"
+SPATIAL_INJECTION_PATH = SPATIAL_DIR / "spatial_injection.json"
+SPATIAL_INJECTION_HISTORY_PATH = SPATIAL_DIR / "spatial_injection_history.json"
 
 # Log lines matching these patterns are excluded from the thought stream
 NOISE_PATTERNS = re.compile(
@@ -321,10 +323,9 @@ def read_status() -> Dict[str, Any]:
 
     # Load affect from spatial_injection.json if available
     affect = {"dominant": "neutral", "intensity": 0.0}
-    status_path = SPATIAL_DIR / "spatial_injection.json"
-    if status_path.exists():
+    if SPATIAL_INJECTION_PATH.exists():
         try:
-            with open(status_path) as f:
+            with open(SPATIAL_INJECTION_PATH) as f:
                 data = json.load(f)
                 if "affect" in data:
                     affect = data["affect"]
@@ -397,10 +398,9 @@ def create_app():
 
     @app.route("/api/spatial_injection")
     def api_spatial_injection():
-        status_path = SPATIAL_DIR / "spatial_injection.json"
-        if status_path.exists():
+        if SPATIAL_INJECTION_PATH.exists():
             try:
-                with open(status_path) as f:
+                with open(SPATIAL_INJECTION_PATH) as f:
                     return jsonify(json.load(f))
             except Exception:
                 pass
@@ -411,6 +411,26 @@ def create_app():
             "somatic": {},
             "affect": {}
         })
+
+    @app.route("/api/spatial_injection_history")
+    def api_spatial_injection_history():
+        try:
+            limit = int(request.args.get("limit", 30))
+        except (TypeError, ValueError):
+            limit = 30
+        limit = max(1, min(limit, 200))
+        if SPATIAL_INJECTION_HISTORY_PATH.exists():
+            try:
+                with open(SPATIAL_INJECTION_HISTORY_PATH) as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return jsonify({
+                            "entries": list(reversed(data[-limit:])),
+                            "total": len(data),
+                        })
+            except Exception:
+                pass
+        return jsonify({"entries": [], "total": 0})
 
 
     @app.route("/api/status")

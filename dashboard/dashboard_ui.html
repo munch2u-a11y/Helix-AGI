@@ -191,13 +191,13 @@
   .chat-input-bar button:hover { background: #2563eb; }
 
   /* Tools & Spatial Panels */
-  .tools-panel, .spatial-panel {
+  .tools-panel, .spatial-panel, .injections-panel {
     flex: 1; overflow-y: auto; padding: 12px;
     background: var(--bg); display: flex; flex-direction: column; gap: 16px;
     min-height: 0;
   }
-  .tools-panel::-webkit-scrollbar, .spatial-panel::-webkit-scrollbar { width: 6px; }
-  .tools-panel::-webkit-scrollbar-thumb, .spatial-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .tools-panel::-webkit-scrollbar, .spatial-panel::-webkit-scrollbar, .injections-panel::-webkit-scrollbar { width: 6px; }
+  .tools-panel::-webkit-scrollbar-thumb, .spatial-panel::-webkit-scrollbar-thumb, .injections-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
   .panel-section {
     background: var(--panel); border: 1px solid var(--border);
@@ -311,6 +311,89 @@
   .belief-pill-text { flex: 1; margin-right: 10px; line-height: 1.3; }
   .belief-pill-meta { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--dim); flex-shrink: 0; }
 
+  /* Rolling Injection History */
+  .injection-history-list {
+    display: flex; flex-direction: column; gap: 10px;
+    min-height: 0;
+  }
+  .injection-turn-card {
+    background: rgba(17, 24, 39, 0.92);
+    border: 1px solid rgba(59, 130, 246, 0.12);
+    border-radius: 8px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .injection-turn-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .injection-pulse {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.8px;
+  }
+  .injection-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--dim);
+  }
+  .injection-trigger {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text);
+    padding: 7px 8px;
+    border-radius: 6px;
+    background: rgba(30, 41, 59, 0.35);
+    border-left: 2px solid rgba(59, 130, 246, 0.35);
+    line-height: 1.45;
+  }
+  .injection-turn-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .injection-section {
+    padding: 8px;
+    border-radius: 6px;
+    background: rgba(30, 41, 59, 0.22);
+  }
+  .injection-section-title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    color: var(--dim);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+  .injection-memory-item {
+    padding: 5px 6px;
+    border-radius: 5px;
+    background: rgba(15, 23, 42, 0.55);
+    border-left: 3px solid var(--border);
+    margin-bottom: 5px;
+    font-size: 10px;
+    line-height: 1.4;
+  }
+  .injection-memory-item.vivid { border-left-color: var(--accent); }
+  .injection-memory-item.related { border-left-color: var(--purple); }
+  .injection-memory-item.faint { border-left-color: var(--dim); opacity: 0.78; }
+  .injection-memory-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--dim);
+    margin-top: 3px;
+  }
+  .empty-inline {
+    color: var(--dim);
+    font-style: italic;
+    font-size: 10px;
+  }
+
   /* Affect Sentinel Emoji Section */
   .affect-sentinel-box {
     margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border);
@@ -392,6 +475,7 @@
       <button data-tab="tools">Tools</button>
       <button data-tab="beliefs">Beliefs</button>
       <button data-tab="spatial">Spatial</button>
+      <button data-tab="injections">Injections</button>
       <button data-tab="chat">Chat</button>
     </div>
     <div id="log-content" class="log-content"></div>
@@ -436,6 +520,12 @@
       <div class="panel-section" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
         <h3>Injected Beliefs (Concept Grounding)</h3>
         <div id="spatial-beliefs-list" class="spatial-list" style="flex: 1; overflow-y: auto;"></div>
+      </div>
+    </div>
+    <div id="injections-panel" class="injections-panel" style="display: none;">
+      <div class="panel-section" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+        <h3>Rolling Injection History</h3>
+        <div id="injection-history-list" class="injection-history-list" style="flex: 1; overflow-y: auto;"></div>
       </div>
     </div>
   </div>
@@ -497,6 +587,16 @@ const logContent = document.getElementById('log-content');
 const chatPanel = document.getElementById('chat-panel');
 const toolsPanel = document.getElementById('tools-panel');
 const spatialPanel = document.getElementById('spatial-panel');
+const injectionsPanel = document.getElementById('injections-panel');
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 document.querySelectorAll('.tab-bar button').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -509,6 +609,7 @@ document.querySelectorAll('.tab-bar button').forEach(btn => {
     chatPanel.classList.remove('visible');
     toolsPanel.style.display = 'none';
     spatialPanel.style.display = 'none';
+    injectionsPanel.style.display = 'none';
     
     if (currentTab === 'chat') {
       chatPanel.classList.add('visible');
@@ -518,6 +619,9 @@ document.querySelectorAll('.tab-bar button').forEach(btn => {
     } else if (currentTab === 'spatial') {
       spatialPanel.style.display = 'flex';
       fetchSpatialInjection();
+    } else if (currentTab === 'injections') {
+      injectionsPanel.style.display = 'flex';
+      fetchInjectionHistory();
     } else {
       logContent.style.display = '';
       logTotal[currentTab] = 0;
@@ -680,6 +784,80 @@ function fetchSpatialInjection() {
           belList.appendChild(div);
         });
       }
+    })
+    .catch(() => {});
+}
+
+function fetchInjectionHistory() {
+  if (currentTab !== 'injections') return;
+  fetch('/api/spatial_injection_history?limit=30')
+    .then(r => r.json())
+    .then(data => {
+      const list = document.getElementById('injection-history-list');
+      list.innerHTML = '';
+      const entries = data.entries || [];
+      if (entries.length === 0) {
+        list.innerHTML = '<div class="empty-inline">No recorded injection history yet.</div>';
+        return;
+      }
+
+      entries.forEach(entry => {
+        const card = document.createElement('div');
+        card.className = 'injection-turn-card';
+
+        const conceptsHtml = (entry.concepts || []).length
+          ? (entry.concepts || []).map(c => `<span class="concept-badge">${escapeHtml(c)}</span>`).join('')
+          : '<span class="empty-inline">No concepts</span>';
+
+        const memoriesHtml = (entry.memories || []).length
+          ? (entry.memories || []).slice(0, 5).map(m => `
+              <div class="injection-memory-item ${escapeHtml(m.type || 'faint')}">
+                <div>${escapeHtml(m.content || '')}</div>
+                <div class="injection-memory-meta">${escapeHtml(m.type || 'memory')} · relevance ${Number(m.relevance || 0).toFixed(2)}</div>
+              </div>
+            `).join('')
+          : '<span class="empty-inline">No memories surfaced</span>';
+
+        const beliefsHtml = (entry.beliefs || []).length
+          ? (entry.beliefs || []).slice(0, 5).map(b => {
+              const color = CAT_COLORS[b.category] || '#666';
+              return `
+                <div class="belief-pill">
+                  <span class="belief-pill-text"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};margin-right:6px;"></span>${escapeHtml(b.content || '')}</span>
+                  <span class="belief-pill-meta">g=${Number(b.gravity || 0).toFixed(2)} m=${Number(b.mass || 0).toFixed(1)}</span>
+                </div>
+              `;
+            }).join('')
+          : '<span class="empty-inline">No beliefs injected</span>';
+
+        const triggerHtml = entry.trigger
+          ? `<div class="injection-trigger">${escapeHtml(entry.trigger)}</div>`
+          : '';
+
+        card.innerHTML = `
+          <div class="injection-turn-header">
+            <span class="injection-pulse">Pulse ${escapeHtml(entry.pulse ?? '—')}</span>
+            <span class="injection-time">${escapeHtml(entry.timestamp || '—')}</span>
+          </div>
+          ${triggerHtml}
+          <div class="injection-turn-grid">
+            <div class="injection-section">
+              <div class="injection-section-title">Concepts</div>
+              <div class="concepts-list">${conceptsHtml}</div>
+            </div>
+            <div class="injection-section">
+              <div class="injection-section-title">Memories</div>
+              ${memoriesHtml}
+            </div>
+            <div class="injection-section">
+              <div class="injection-section-title">Beliefs</div>
+              ${beliefsHtml}
+            </div>
+          </div>
+        `;
+
+        list.appendChild(card);
+      });
     })
     .catch(() => {});
 }
@@ -960,6 +1138,8 @@ setInterval(() => {
     fetchTools();
   } else if (currentTab === 'spatial') {
     fetchSpatialInjection();
+  } else if (currentTab === 'injections') {
+    fetchInjectionHistory();
   }
 }, 3000);
 

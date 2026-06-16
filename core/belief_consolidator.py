@@ -26,11 +26,36 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("helix.core.belief_consolidator")
 
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid float for %s=%r — using default %s", name, raw, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid int for %s=%r — using default %s", name, raw, default)
+        return default
+
+
 # ── Configuration ────────────────────────────────────────────────────
 
-_MODEL = "gemini-3.1-flash-lite-preview"
-_MAX_MATCH_CANDIDATES = 6   # Top N existing beliefs to send for comparison
-_MAX_WORKERS = 4             # Parallel Gemini calls
+_MODEL = os.environ.get("HELIX_BELIEF_CONSOLIDATOR_MODEL", "gemini-3.1-flash-lite-preview")
+_MAX_MATCH_CANDIDATES = max(1, _env_int("HELIX_BELIEF_CONSOLIDATOR_MAX_MATCH_CANDIDATES", 6))
+_MAX_WORKERS = max(1, _env_int("HELIX_BELIEF_CONSOLIDATOR_MAX_WORKERS", 4))
+_LLM_TEMPERATURE = _env_float("HELIX_BELIEF_CONSOLIDATOR_TEMPERATURE", 0.15)
+_LLM_MAX_OUTPUT_TOKENS = max(64, _env_int("HELIX_BELIEF_CONSOLIDATOR_MAX_OUTPUT_TOKENS", 512))
 
 # Words too common to be useful for matching
 _STOPWORDS = frozenset({
@@ -262,8 +287,8 @@ def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
             return aux.generate(
                 prompt,
                 system_instruction=system,
-                temperature=0.15,
-                max_output_tokens=512,
+                temperature=_LLM_TEMPERATURE,
+                max_output_tokens=_LLM_MAX_OUTPUT_TOKENS,
             )
     except Exception:
         pass
@@ -283,8 +308,8 @@ def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
             contents=prompt,
             config={
                 "system_instruction": system,
-                "temperature": 0.15,
-                "max_output_tokens": 512,
+                "temperature": _LLM_TEMPERATURE,
+                "max_output_tokens": _LLM_MAX_OUTPUT_TOKENS,
             },
         )
 
@@ -692,4 +717,3 @@ def _call_llm_for_relations(new_content: str, candidates: List[Dict[str, Any]]) 
                     break
                     
     return found_ids
-

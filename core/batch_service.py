@@ -28,6 +28,7 @@ import os
 import logging
 import uuid
 import time
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
@@ -37,12 +38,37 @@ logger = logging.getLogger("helix.core.batch_service")
 # Unified LLM dispatch — routes to Gemini or Anthropic based on HELIX_PROVIDER
 _call_llm = None
 
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid float for %s=%r — using default %s", name, raw, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid int for %s=%r — using default %s", name, raw, default)
+        return default
+
+
 # ── Configuration ────────────────────────────────────────────────────
 
 _PENDING_FILE = Path("data/pending_beliefs.json")
 _PROCESSED_LOG = Path("data/logs/processed_beliefs.json")
-_BATCH_SIZE = 10   # Max candidates per API call
-_MODEL = "gemini-3.1-flash-lite-preview"
+_BATCH_SIZE = max(1, _env_int("HELIX_PENDING_BELIEF_BATCH_SIZE", 10))
+_MODEL = os.environ.get("HELIX_PENDING_BELIEF_MODEL", "gemini-3.1-flash-lite-preview")
+_LLM_TEMPERATURE = _env_float("HELIX_PENDING_BELIEF_TEMPERATURE", 0.15)
+_LLM_MAX_OUTPUT_TOKENS = _env_int("HELIX_PENDING_BELIEF_MAX_OUTPUT_TOKENS", 2048)
 
 # Length limits by category
 _MAX_LENGTHS = {
@@ -165,8 +191,40 @@ def _extract_beliefs_from_thought(thought_text: str) -> List[str]:
 
 # ── FAISS Duplicate Detection ───────────────────────────────────────
 
-FAISS_VERIFICATION_THRESHOLD = 0.90  # Above → verification (bump existing)
-FAISS_DUPLICATE_THRESHOLD = 0.85     # Above → too similar, skip
+FAISS_VERIFICATION_THRESHOLD = _env_float("HELIX_FAISS_VERIFICATION_THRESHOLD", 0.90)
+FAISS_DUPLICATE_THRESHOLD = _env_float("HELIX_FAISS_DUPLICATE_THRESHOLD", 0.85)
+
+# Dynamic confidence tuning
+INTERNAL_SOURCE_TRUST = _env_float("HELIX_INTERNAL_SOURCE_TRUST", 0.80)
+CHANNEL_SOURCE_TRUST = _env_float("HELIX_CHANNEL_SOURCE_TRUST", 0.50)
+DEFAULT_SOURCE_TRUST = _env_float("HELIX_DEFAULT_SOURCE_TRUST", 0.50)
+DEFAULT_SOURCE_TRUST_FALLBACK = _env_float("HELIX_DEFAULT_SOURCE_TRUST_FALLBACK", 0.50)
+DEFAULT_SUPPORT_CONFIDENCE = _env_float("HELIX_DEFAULT_SUPPORT_CONFIDENCE", 0.40)
+ANCESTOR_SUPPORT_WEIGHT = _env_float("HELIX_ANCESTOR_SUPPORT_WEIGHT", 0.50)
+SEMANTIC_SUPPORT_MIN_SIMILARITY = _env_float("HELIX_SEMANTIC_SUPPORT_MIN_SIMILARITY", 0.70)
+SEMANTIC_SUPPORT_POWER = _env_float("HELIX_SEMANTIC_SUPPORT_POWER", 2.0)
+SUPPORT_WEIGHT_BASE = _env_float("HELIX_SUPPORT_WEIGHT_BASE", 0.55)
+SUPPORT_WEIGHT_MAX = _env_float("HELIX_SUPPORT_WEIGHT_MAX", 0.75)
+MIND_MATURITY_TARGET_BELIEFS = _env_float("HELIX_MIND_MATURITY_TARGET_BELIEFS", 500.0)
+
+
+def _mind_maturity(total_beliefs: int) -> float:
+    """Bounded 0-1 maturity scale based on belief-graph size."""
+    target = max(1.0, MIND_MATURITY_TARGET_BELIEFS)
+    if total_beliefs <= 0:
+        return 0.0
+    return max(
+        0.0,
+        min(1.0, math.log1p(total_beliefs) / math.log1p(target)),
+    )
+
+
+def _confidence_blend_weights(total_beliefs: int) -> Tuple[float, float]:
+    """Blend support vs source trust based on graph maturity."""
+    maturity = _mind_maturity(total_beliefs)
+    support_weight = SUPPORT_WEIGHT_BASE + (SUPPORT_WEIGHT_MAX - SUPPORT_WEIGHT_BASE) * maturity
+    source_weight = max(0.0, 1.0 - support_weight)
+    return support_weight, source_weight
 
 
 def _faiss_dedup(
@@ -294,8 +352,8 @@ def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
             return aux.generate(
                 prompt,
                 system_instruction=system,
-                temperature=0.15,
-                max_output_tokens=2048,
+                temperature=_LLM_TEMPERATURE,
+                max_output_tokens=_LLM_MAX_OUTPUT_TOKENS,
             )
     except Exception:
         pass
@@ -316,8 +374,8 @@ def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
             contents=prompt,
             config={
                 "system_instruction": system,
-                "temperature": 0.15,
-                "max_output_tokens": 2048,
+                "temperature": _LLM_TEMPERATURE,
+                "max_output_tokens": _LLM_MAX_OUTPUT_TOKENS,
             },
         )
 
@@ -514,15 +572,17 @@ def _compute_dynamic_initial_confidence(
     belief_store,
     physics_engine,
     memories_by_id: dict,
+    total_beliefs: int = 0,
 ) -> float:
     """Compute initial confidence dynamically based on source trust and epistemic support.
 
-    C_initial = 0.6 * C_support + 0.4 * T_source
+    C_initial = w_support * C_support + w_source * T_source
 
     Source Trustworthiness (T_source): Weighted by memory source type and importance.
     Epistemic Support (C_support): Derived from ancestor belief confidences
     (beliefs that were injected when this realization formed) plus semantically
-    similar existing beliefs.
+    similar existing beliefs. As the belief graph matures, epistemic support
+    gets a larger share of the blend.
     """
     # 1. Compute Source Trustworthiness (T_source)
     ref_ids = candidate.get("memory_refs", [])
@@ -538,18 +598,18 @@ def _compute_dynamic_initial_confidence(
 
         # Calculate source trust — internal sources are more reliable
         if source in ("system", "gemini_consciousness", "self_reflection", "subconscious", "curator", "co_occurrence_synthesis"):
-            trust = 0.80
+            trust = INTERNAL_SOURCE_TRUST
         elif source in ("telegram", "discord"):
-            trust = 0.50
+            trust = CHANNEL_SOURCE_TRUST
         else:
-            trust = 0.50
+            trust = DEFAULT_SOURCE_TRUST
 
         t_scores.append(trust * importance)
 
     if t_scores:
         T_source = sum(t_scores) / len(t_scores)
     else:
-        T_source = 0.50
+        T_source = DEFAULT_SOURCE_TRUST_FALLBACK
 
     # 2. Compute Epistemic Support (C_support)
     support_confidences = []
@@ -567,7 +627,7 @@ def _compute_dynamic_initial_confidence(
         b = belief_store.get_belief(bid)
         if b:
             support_confidences.append(float(b.get("confidence", 0.5)))
-            support_weights.append(0.50)
+            support_weights.append(ANCESTOR_SUPPORT_WEIGHT)
 
     content_text = candidate.get("content", "")
     if physics_engine and content_text:
@@ -582,20 +642,21 @@ def _compute_dynamic_initial_confidence(
             )
             for r in results:
                 similarity = float(r.get("similarity", 0.0))
-                if similarity >= 0.70:
+                if similarity >= SEMANTIC_SUPPORT_MIN_SIMILARITY:
                     b = belief_store.get_belief(r["id"])
                     if b:
                         support_confidences.append(float(b.get("confidence", 0.5)))
-                        support_weights.append(similarity ** 2)
+                        support_weights.append(similarity ** SEMANTIC_SUPPORT_POWER)
         except Exception as e:
             logger.debug(f"Epistemic semantic support lookup failed: {e}")
 
     if support_confidences and sum(support_weights) > 0:
         C_support = sum(c * w for c, w in zip(support_confidences, support_weights)) / sum(support_weights)
     else:
-        C_support = 0.40
+        C_support = DEFAULT_SUPPORT_CONFIDENCE
 
-    C_initial = 0.6 * C_support + 0.4 * T_source
+    support_weight, source_weight = _confidence_blend_weights(total_beliefs)
+    C_initial = support_weight * C_support + source_weight * T_source
     return max(0.01, min(1.0, round(C_initial, 3)))
 
 
@@ -632,6 +693,11 @@ def process_pending_beliefs(
         return {"status": "empty", "processed": 0}
 
     logger.info(f"Processing {len(candidates)} pending belief candidates")
+
+    try:
+        total_beliefs = len(belief_store.get_all_beliefs_flat()) if belief_store else 0
+    except Exception:
+        total_beliefs = 0
 
     # Load memories from journal to resolve references for confidence computation
     memories_by_id = {}
@@ -859,7 +925,11 @@ def process_pending_beliefs(
                     # Compute dynamic initial confidence from source trust
                     # and epistemic support (replaces flat 0.5)
                     initial_confidence = _compute_dynamic_initial_confidence(
-                        original, belief_store, physics_engine, memories_by_id
+                        original,
+                        belief_store,
+                        physics_engine,
+                        memories_by_id,
+                        total_beliefs=total_beliefs,
                     )
 
                     stored = belief_store.add_belief(
