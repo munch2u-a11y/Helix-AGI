@@ -190,14 +190,29 @@ def detect_available_provider() -> Optional[ProviderConfig]:
 
     elif provider_pref == "llama_cpp":
         model = model_pref
-        if not model:
+        if model:
+            if not os.path.exists(model):
+                repo_models_dir = Path(__file__).parent.parent.parent / "models"
+                candidate = repo_models_dir / model
+                if candidate.exists():
+                    model = str(candidate)
+                else:
+                    candidate_rel = Path("models") / model
+                    if candidate_rel.exists():
+                        model = str(candidate_rel)
+        else:
             # Try to find a .gguf model in models/
             models_dir = Path("models")
             ggufs = list(models_dir.glob("*.gguf")) if models_dir.exists() else []
             if ggufs:
                 model = str(ggufs[0])
             else:
-                model = "/home/nemo/.ollama/models/blobs/sha256-afb54ad43a39f947407f5cabc59856348d70e072baa5c62d436332157c151bcd"
+                repo_models_dir = Path(__file__).parent.parent.parent / "models"
+                repo_ggufs = list(repo_models_dir.glob("*.gguf")) if repo_models_dir.exists() else []
+                if repo_ggufs:
+                    model = str(repo_ggufs[0])
+                else:
+                    model = "/home/nemo/.ollama/models/blobs/sha256-afb54ad43a39f947407f5cabc59856348d70e072baa5c62d436332157c151bcd"
         logger.info(f"Using explicitly configured llama_cpp provider with model: {model}")
         return ProviderConfig(
             provider_type="llama_cpp",

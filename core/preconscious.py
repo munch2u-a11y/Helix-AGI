@@ -1433,10 +1433,10 @@ class Preconscious:
         # This replaces the raw text midpoint with the actual location of
         # the knowledge that was retrieved.
         import numpy as np
-        if merged:
+        if final_selection:
             positions = []
             weights = []
-            for b in merged:
+            for b in final_selection:
                 pos = b.get("position_8d")
                 if pos is not None:
                     positions.append(pos)
@@ -1452,7 +1452,7 @@ class Preconscious:
             self._last_cluster_centroid = None
 
         # Return formatted string and list of surfaced IDs
-        surfaced_ids = [b.get("id", "") for b in merged if b.get("id")]
+        surfaced_ids = [b.get("id", "") for b in final_selection if b.get("id")]
         return ("\n".join(lines), surfaced_ids) if lines else ("", [])
 
     # ── Short-term Memory ────────────────────────────────────────────
@@ -1619,4 +1619,3 @@ class Preconscious:
                 json.dump(data, f, indent=2)
         except Exception as e:
             logger.error(f"Failed to write spatial_injection.json: {e}")
-

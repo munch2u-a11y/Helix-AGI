@@ -409,11 +409,15 @@ class SpatialMind:
                 )
                 m_count += 1
         # Compute identity center from core beliefs (unchanged behavior)
-        self._compute_identity_center(belief_graph)
+        self.refresh_identity_center()
         logger.info(
             f"SpatialMind bootstrapped from journal: {b_count} beliefs, {m_count} memories, x*={np.linalg.norm(self._identity_center):.3f}"
         )
         return b_count, m_count
+
+    def refresh_identity_center(self):
+        """Recompute x* from the current live belief field."""
+        self._compute_identity_center()
 
     def _compute_identity_center(self, belief_graph=None):
         """Compute x* — center of gravity of core beliefs.
@@ -423,20 +427,26 @@ class SpatialMind:
         If there are no core beliefs, falls back to the centroid
         of all beliefs.
         """
-        if not belief_graph:
-            return
-
         core_positions = []
+        deep_positions = []
         all_positions = []
 
         for pid, data in self.belief_space._points.items():
+            if data.get("type") != "belief":
+                continue
             pos = data["position"]
             all_positions.append(pos)
-            if data.get("weight") == "core":
+            weight = data.get("weight")
+            confidence = float(data.get("confidence", 0.5))
+            if weight == "core" or confidence >= 0.85:
                 core_positions.append(pos)
+            elif weight == "deep" or confidence >= 0.60:
+                deep_positions.append(pos)
 
         if core_positions:
             self._identity_center = np.mean(core_positions, axis=0).astype(np.float32)
+        elif deep_positions:
+            self._identity_center = np.mean(deep_positions, axis=0).astype(np.float32)
         elif all_positions:
             # Fallback: centroid of all beliefs
             self._identity_center = np.mean(all_positions, axis=0).astype(np.float32)
@@ -457,6 +467,7 @@ class SpatialMind:
             point_type="belief",
             **metadata,
         )
+        self.refresh_identity_center()
 
     def add_memory(self, memory_id: str, embedding: np.ndarray, **metadata):
         """Add a new memory to the memory space."""
@@ -606,6 +617,7 @@ class SpatialMind:
             m_loaded = self.memory_space.load_state(self._memory_state_path)
 
         self._load_attention()
+        self.refresh_identity_center()
 
         return b_loaded, m_loaded
 
@@ -716,5 +728,4 @@ class SpatialMind:
         except Exception as e:
             logger.warning(f"Could not load overnight trail: {e}")
             return 0
-
 

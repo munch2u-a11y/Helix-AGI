@@ -319,6 +319,7 @@ class ToolExecutor:
             "email_search": self._fc_email_search,
             "email_get": self._fc_email_get,
             "email_reply": self._fc_email_reply,
+            "email_reply_all": self._fc_email_reply_all,
             "email_forward": self._fc_email_forward,
             "email_mark_read": self._fc_email_mark_read,
         }
@@ -997,7 +998,19 @@ class ToolExecutor:
 
     def _fc_email_reply(self, args: dict) -> str:
         from tools import google_email as ge
-        return ge.email_reply(message_id=args.get("message_id", ""), body=args.get("body", ""))
+        return ge.email_reply(
+            message_id=args.get("message_id", ""),
+            body=args.get("body", ""),
+            reply_all=args.get("reply_all", False)
+        )
+
+    def _fc_email_reply_all(self, args: dict) -> str:
+        from tools import google_email as ge
+        return ge.email_reply(
+            message_id=args.get("message_id", ""),
+            body=args.get("body", ""),
+            reply_all=True
+        )
 
     def _fc_email_forward(self, args: dict) -> str:
         from tools import google_email as ge
@@ -1253,7 +1266,7 @@ class ToolExecutor:
             r'|MOLTBOOK_SEARCH|MOLTBOOK_PROFILE|MOLTBOOK_VOTE|MOLTBOOK_FOLLOW'
             r'|MOLTBOOK_UNFOLLOW|MOLTBOOK_DELETE|MOLTBOOK_SUBMOLTS|MOLTBOOK_USER_POSTS'
             r'|MOLTBOOK_NOTIFICATIONS|MOLTBOOK_NOTIFICATIONS_READ'
-            r'|EMAIL_SEND|EMAIL_READ|EMAIL_SEARCH|EMAIL_GET|EMAIL_REPLY|EMAIL_FORWARD|EMAIL_MARK_READ'
+            r'|EMAIL_SEND|EMAIL_READ|EMAIL_SEARCH|EMAIL_GET|EMAIL_REPLY|EMAIL_REPLY_ALL|EMAIL_FORWARD|EMAIL_MARK_READ'
             r'|CALENDAR_CREATE|CALENDAR_LIST|CALENDAR_DELETE'
             r'|DRIVE_SEARCH|DRIVE_READ|DRIVE_LIST|DRIVE_UPLOAD|DRIVE_SHARE'
             r'|TASKS_LISTS|TASKS_LIST|TASKS_CREATE|TASKS_COMPLETE|TASKS_DELETE'
@@ -1350,6 +1363,7 @@ class ToolExecutor:
             "EMAIL_SEARCH": self._exec_email,
             "EMAIL_GET": self._exec_email,
             "EMAIL_REPLY": self._exec_email,
+            "EMAIL_REPLY_ALL": self._exec_email,
             "EMAIL_FORWARD": self._exec_email,
             "EMAIL_MARK_READ": self._exec_email,
             # Google Calendar
@@ -2019,6 +2033,10 @@ class ToolExecutor:
         elif op == "EMAIL_REPLY":
             # [EMAIL_REPLY:message_id] body
             return ge.email_reply(message_id=param, body=content)
+
+        elif op == "EMAIL_REPLY_ALL":
+            # [EMAIL_REPLY_ALL:message_id] body
+            return ge.email_reply(message_id=param, body=content, reply_all=True)
 
         elif op == "EMAIL_FORWARD":
             # [EMAIL_FORWARD:message_id] recipient | note

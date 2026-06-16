@@ -109,12 +109,28 @@ def _has_belief_signal(text: str) -> bool:
     if not text or len(text) < 20:
         return False
         
-    if not _gguf_manager:
-        logger.warning("GGUFManager not wired, skipping belief detection.")
-        return False
-
     prompt = _SIGNAL_PROMPT.format(text=text)
     
+    # Fallback if GGUFManager is not wired or the fast_classifier model is not loaded
+    if not _gguf_manager or "fast_classifier" not in _gguf_manager.models:
+        from core.auxiliary_llm import get_auxiliary_client
+        client = get_auxiliary_client()
+        if client:
+            try:
+                result = client.generate(
+                    prompt,
+                    system_instruction="You are a binary classification model. Output YES or NO.",
+                    temperature=0.0,
+                    max_output_tokens=2
+                )
+                if result:
+                    return "YES" in result.upper()
+            except Exception as e:
+                logger.warning(f"Fallback belief detection failed: {e}")
+        else:
+            logger.warning("GGUFManager not wired and auxiliary LLM client unavailable, skipping belief detection.")
+        return False
+
     # We force the model to output ONLY "YES" or "NO"
     # This entirely avoids <think> block timeouts in reasoning models
     # and keeps inference time under 0.5s for the 3B model.

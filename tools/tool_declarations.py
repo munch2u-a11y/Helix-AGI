@@ -887,6 +887,19 @@ EMAIL_TOOLS = [
             "properties": {
                 "message_id": {"type": "string", "description": "Gmail message ID to reply to"},
                 "body": {"type": "string", "description": "Reply body text"},
+                "reply_all": {"type": "boolean", "description": "Whether to reply to all recipients (default False)"},
+            },
+            "required": ["message_id", "body"],
+        },
+    },
+    {
+        "name": "email_reply_all",
+        "description": "Reply to all recipients of an email.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "description": "Gmail message ID to reply to all"},
+                "body": {"type": "string", "description": "Reply body text"},
             },
             "required": ["message_id", "body"],
         },
