@@ -70,6 +70,7 @@ class Preconscious:
     FOCUS_BUDGET_DEEP = (2, 2)    # 3+ focus tools in last 3 pulses
     FOCUS_BUDGET_WORKING = (5, 2) # 1-2 focus tools in last 3 pulses
     FOCUS_BUDGET_OPEN = (10, 3)   # No recent focus tools
+    INJECTION_HISTORY_LIMIT = 120
 
     def __init__(
         self,
@@ -136,6 +137,7 @@ class Preconscious:
         self._last_concepts = []
         self._last_neighbors = []
         self._last_selected_beliefs = []
+        self._last_trigger_text = ""
 
     def _load_layer2_anchors(self):
         """Load Layer 2 beliefs as priority injection anchors.
@@ -319,6 +321,7 @@ class Preconscious:
             trigger_text = " ".join(tool_events)
         else:
             trigger_text = ""
+        self._last_trigger_text = trigger_text[:500]
 
         # ── 0. Layer 2 Anchor Match (PRIORITY) ────────────────────────
         #    Fast string match for Layer 2 terms in the trigger text.
@@ -1545,6 +1548,7 @@ class Preconscious:
         from datetime import datetime
         
         status_path = os.path.join("data", "spatial", "spatial_injection.json")
+        history_path = os.path.join("data", "spatial", "spatial_injection_history.json")
         os.makedirs(os.path.dirname(status_path), exist_ok=True)
         
         concepts = getattr(self, "_last_concepts", [])
@@ -1611,7 +1615,8 @@ class Preconscious:
             "somatic": somatic,
             "affect": affect,
             "timestamp": datetime.now().strftime("%H:%M:%S"),
-            "pulse": self.physics._pulse_count if self.physics else 0
+            "pulse": self.physics._pulse_count if self.physics else 0,
+            "trigger": getattr(self, "_last_trigger_text", ""),
         }
         
         try:
@@ -1619,3 +1624,17 @@ class Preconscious:
                 json.dump(data, f, indent=2)
         except Exception as e:
             logger.error(f"Failed to write spatial_injection.json: {e}")
+
+        try:
+            history = []
+            if os.path.exists(history_path):
+                with open(history_path) as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, list):
+                        history = loaded
+            history.append(data)
+            history = history[-self.INJECTION_HISTORY_LIMIT:]
+            with open(history_path, "w") as f:
+                json.dump(history, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to write spatial_injection_history.json: {e}")
