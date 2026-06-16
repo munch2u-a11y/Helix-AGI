@@ -11,14 +11,13 @@ Key Architectural Upgrades:
 4. Co-Occurrence Wiring: Real-time Hebbian wiring via post-pulse hooks replaces batch UMAP/HDBSCAN.
    Nightly Phase 3 reads pre-built relation clusters for compound synthesis.
 5. Layer 2 Precipitation: UMAP/HDBSCAN clustering identifies dense belief
-   clusters that exceed the gravitational binding threshold (tied to expansion
-   rate). These collapse into Layer 2 beliefs (people, skills, desires, concepts).
+   clusters that exceed a density threshold. These are consolidated into
+   Layer 2 beliefs (people, skills, desires, concepts).
 """
 
 import json
 import re
 import logging
-import sqlite3
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -515,50 +514,47 @@ class Curator:
         Returns dicts containing the text and metadata (lagrangian, belief_ids).
         """
         memories = []
-        
-        # 1. Thought Output Logs (from memory_manager's SQLite DB)
-        if self.memory:
+
+        # 1. Thought memories from the canonical cognitive journal
+        if self.memory and hasattr(self.memory, "journal"):
             try:
-                cutoff_time = (datetime.now() - timedelta(hours=24)).isoformat()
-                # MemoryManager uses per-call connections via sqlite3.connect(db_path),
-                # not a persistent self.conn. Create our own connection.
-                db_path = getattr(self.memory, 'db_path', None)
-                if db_path and os.path.exists(db_path):
-                    conn = sqlite3.connect(db_path)
+                cutoff_dt = datetime.now().astimezone() - timedelta(hours=24)
+
+                def _parse_timestamp(raw: str):
+                    if not raw:
+                        return None
                     try:
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            "SELECT id, content, lagrangian_snapshot, belief_ids "
-                            "FROM long_term WHERE memory_type='thought' AND created_at >= ?", 
-                            (cutoff_time,)
-                        )
-                        rows = cursor.fetchall()
-                        for row in rows:
-                            mem_id, content, snap_json, bids_json = row
-                            
+                        return datetime.fromisoformat(raw)
+                    except ValueError:
+                        if len(raw) >= 5 and raw[-5] in "+-" and raw[-3] != ":":
                             try:
-                                snap = json.loads(snap_json) if snap_json else {}
-                            except:
-                                snap = {}
-                                
-                            try:
-                                bids = json.loads(bids_json) if bids_json else []
-                            except:
-                                bids = []
-                                
-                            memories.append({
-                                "text": content,
-                                "memory_id": mem_id,
-                                "lagrangian_snapshot": snap,
-                                "belief_ids": bids
-                            })
-                        logger.info(f"Phase 1: extracted {len(rows)} thoughts from last 24h")
-                    finally:
-                        conn.close()
-                else:
-                    logger.warning(f"memory_manager db_path not found: {db_path}")
+                                return datetime.fromisoformat(f"{raw[:-2]}:{raw[-2:]}")
+                            except ValueError:
+                                return None
+                        return None
+
+                thought_count = 0
+                for entry in self.memory.journal.load_all():
+                    if entry.get("type") != "memory":
+                        continue
+                    meta = entry.get("metadata", {})
+                    if meta.get("memory_type") != "thought":
+                        continue
+                    timestamp = _parse_timestamp(entry.get("timestamp", ""))
+                    if timestamp is None or timestamp < cutoff_dt:
+                        continue
+                    memories.append({
+                        "text": entry.get("content", ""),
+                        "memory_id": entry.get("id"),
+                        "lagrangian_snapshot": entry.get("lagrangian", {}) or {},
+                        "belief_ids": meta.get("belief_ids", []) or [],
+                        "position_8d": entry.get("position_8d", []) or [],
+                        "pulse_id": entry.get("pulse_id", 0),
+                    })
+                    thought_count += 1
+                logger.info("Phase 1: extracted %d thoughts from last 24h journal", thought_count)
             except Exception as e:
-                logger.error(f"Failed to fetch thought output logs: {e}")
+                logger.error(f"Failed to fetch thought memories from journal: {e}")
                 
         # 2. Journals (from project root journals directory)
         #    Journals live at ./journals/, not data/journals/

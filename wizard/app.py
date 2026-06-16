@@ -885,6 +885,24 @@ class HelixApp(QMainWindow):
             return
 
         import subprocess
+        # Terminate any other main.py processes running on the system to avoid conflicts
+        try:
+            import psutil
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    cmdline = proc.info.get('cmdline') or []
+                    if any('main.py' in part for part in cmdline) and proc.info['pid'] != os.getpid():
+                        logger.info(f"Terminating orphaned agent process: PID {proc.info['pid']}")
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=2)
+                        except Exception:
+                            proc.kill()
+                except Exception:
+                    pass
+        except Exception as pe:
+            logger.warning(f"Failed to check/kill orphaned agent processes: {pe}")
+
         cmd = [sys.executable, str(BASE_DIR / "main.py")]
         try:
             self._agent_process = subprocess.Popen(
@@ -923,12 +941,29 @@ class HelixApp(QMainWindow):
             icons_dir = Path(os.path.expanduser("~/.local/share/icons"))
             icons_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy(str(BASE_DIR / "wizard" / "assets" / "helix_logo.png"), str(icons_dir / "helix_logo.png"))
+            
+            # Also copy to hicolor theme for better desktop spec compliance
+            hicolor_dir = icons_dir / "hicolor" / "512x512" / "apps"
+            hicolor_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(str(BASE_DIR / "wizard" / "assets" / "helix_logo.png"), str(hicolor_dir / "helix_logo.png"))
+            
+            # Try to update icon cache
+            try:
+                subprocess.run(
+                    ["gtk-update-icon-cache", "-q", "-t", os.path.expanduser("~/.local/share/icons/hicolor")],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                pass
         except Exception as e:
             logger.warning(f"Failed to copy icon to system directory: {e}")
 
         python_exe = sys.executable
         run_wizard_py = BASE_DIR / "run_wizard.py"
         main_py = BASE_DIR / "main.py"
+
+        created_files = []
 
         if wizard_shortcut:
             content = f"""[Desktop Entry]
@@ -956,6 +991,7 @@ Categories=Utility;Settings;
                     desk_file = desktop_dir / "helix_setup_wizard.desktop"
                     desk_file.write_text(content)
                     desk_file.chmod(0o755)
+                    created_files.append(desk_file)
                     logger.info(f"Created desktop shortcut: {desk_file}")
                 except Exception as e:
                     logger.error(f"Failed to create setup wizard desktop shortcut: {e}")
@@ -986,9 +1022,21 @@ Categories=Utility;
                     desk_file = desktop_dir / "launch_helix_agent.desktop"
                     desk_file.write_text(content)
                     desk_file.chmod(0o755)
+                    created_files.append(desk_file)
                     logger.info(f"Created desktop shortcut: {desk_file}")
                 except Exception as e:
                     logger.error(f"Failed to create agent launcher desktop shortcut: {e}")
+
+        # Mark desktop launchers as trusted in GNOME (if gio is available)
+        for f in created_files:
+            try:
+                subprocess.run(
+                    ["gio", "set", str(f), "metadata::trusted", "true"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                pass
 
     def closeEvent(self, event):
         """Clean up background processes on close."""
@@ -1095,7 +1143,11 @@ def main():
         except Exception:
             pass
 
-    app.setApplicationName("Helix‑AGI")
+    app.setApplicationName("helix_setup_wizard")
+    try:
+        app.setApplicationDisplayName("Helix‑AGI")
+    except AttributeError:
+        pass
     app.setStyleSheet(Theme.stylesheet())
 
     # Set dark palette as fallback

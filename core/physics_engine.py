@@ -145,6 +145,18 @@ class PhysicsEngine:
         emb = self.embed_text(text)
         return self.spatial_mind.belief_space.projection.project(emb)
 
+    @staticmethod
+    def memory_point_id(memory_id: Any) -> str:
+        """Canonical manifold/index ID for a journal memory entry."""
+        return f"mem_{memory_id}"
+
+    @staticmethod
+    def memory_journal_id(point_id: str) -> str:
+        """Recover the underlying journal ID from a canonical memory point ID."""
+        if isinstance(point_id, str) and point_id.startswith("mem_"):
+            return point_id[4:]
+        return str(point_id)
+
     # ── Pulse Step (called once per heartbeat) ────────────────────────
 
     def step_pulse(
@@ -335,10 +347,13 @@ class PhysicsEngine:
         self,
         anchor_pulse: int,
         window: int = 5,
+        refresh_access: bool = True,
     ) -> List[Dict[str, Any]]:
         """Get points temporally adjacent to a given pulse.
 
-        Searches both belief and memory spaces.
+        Searches both belief and memory spaces. By default, any point returned
+        here is treated as surfaced context and has its access metadata refreshed,
+        so temporal-chain recall reinforces future gravitational retrieval.
         """
         chain = []
         for space in [self.spatial_mind.belief_space, self.spatial_mind.memory_space]:
@@ -352,6 +367,8 @@ class PhysicsEngine:
                         "type": p.get("type", "memory"),
                         "distance_pulses": cp - anchor_pulse,
                     })
+                    if refresh_access:
+                        space.update_access(pid)
         chain.sort(key=lambda x: x["creation_pulse"])
         return chain
 
@@ -364,7 +381,7 @@ class PhysicsEngine:
         point_type: str,
         spatial_kwargs: dict,
         semantic_metadata: dict,
-    ) -> None:
+    ) -> np.ndarray:
         """Register a point in BOTH the 8D manifold and 384D semantic index.
 
         This is the single place where dual-registration happens.
@@ -393,6 +410,29 @@ class PhysicsEngine:
             embedding=emb,
             metadata=semantic_metadata,
         )
+
+        if point_type == "belief":
+            self.spatial_mind.refresh_identity_center()
+
+        space = (
+            self.spatial_mind.belief_space
+            if point_type == "belief"
+            else self.spatial_mind.memory_space
+        )
+        return space.get_position(point_id)
+
+    def _remove_point(self, point_id: str, point_type: str) -> bool:
+        """Remove a point from both the manifold and 384D semantic index."""
+        space = (
+            self.spatial_mind.belief_space
+            if point_type == "belief"
+            else self.spatial_mind.memory_space
+        )
+        removed = space.remove_point(point_id)
+        removed = self.semantic_index.remove(point_id) or removed
+        if point_type == "belief" and removed:
+            self.spatial_mind.refresh_identity_center()
+        return removed
 
     # ── Public Add Methods (deprecated — use _register_point) ────────
     # Kept for backward compatibility with existing callers.
@@ -434,6 +474,132 @@ class PhysicsEngine:
                 "importance": metadata.get("importance", 0.5),
             },
         )
+
+    def remove_belief_point(self, belief_id: str) -> bool:
+        """Remove a belief from both runtime stores."""
+        return self._remove_point(belief_id, "belief")
+
+    def remove_memory_point(self, memory_id: Any) -> bool:
+        """Remove a memory from both runtime stores."""
+        return self._remove_point(self.memory_point_id(memory_id), "memory")
+
+    def sync_belief_record(
+        self,
+        belief: Dict[str, Any],
+        embedding: np.ndarray = None,
+    ) -> tuple[list[float], list[float]]:
+        """Upsert a belief record into the live manifold and semantic index."""
+        content = belief.get("content", "")
+        emb = np.asarray(embedding, dtype=np.float32) if embedding is not None else self.embed_text(content)
+        lag = belief.get("encoding_lagrangian", {})
+        if not isinstance(lag, dict):
+            lag = {}
+
+        position = self._register_point(
+            point_id=belief.get("id", ""),
+            emb=emb,
+            point_type="belief",
+            spatial_kwargs={
+                "confidence": belief.get("confidence", 0.5),
+                "importance": belief.get("mass", 1.0),
+                "content": content,
+                "encoding_omega": lag.get("omega", 0.5),
+                "encoding_s_total": lag.get("s_total", 0.15),
+                "relations_count": len(belief.get("relations", [])),
+                "access_count": belief.get("access_count", 0),
+                "stability_index": belief.get("stability_index", 0.5),
+                "weight": belief.get("weight", "surface"),
+                "position_override": belief.get("position_8d"),
+                "metadata": {
+                    "category": belief.get("_category", ""),
+                    "verifications": belief.get("verifications", 0),
+                    "memory_refs": belief.get("memory_refs", []),
+                    "created_at": belief.get("created_at", ""),
+                    "last_accessed": belief.get("last_accessed", ""),
+                    "formation_type": belief.get("formation_type", ""),
+                    "encoding_lagrangian": lag,
+                },
+            },
+            semantic_metadata={
+                "content": content[:500],
+                "type": "belief",
+                "confidence": belief.get("confidence", 0.5),
+                "importance": belief.get("mass", 1.0),
+                "category": belief.get("_category", ""),
+                "verifications": belief.get("verifications", 0),
+                "memory_refs_count": len(belief.get("memory_refs", [])),
+                "encoding_omega": lag.get("omega", 0.5),
+                "weight": belief.get("weight", "surface"),
+                "stability_index": belief.get("stability_index", 0.5),
+                "position_8d": belief.get("position_8d") or [],
+            },
+        )
+        return position.tolist() if position is not None else [], emb.tolist()
+
+    def register_memory_entry(
+        self,
+        memory_id: Any,
+        content: str,
+        *,
+        importance: float = 0.5,
+        memory_type: str = "observation",
+        source: str = "system",
+        created_at: str = "",
+        lagrangian_snapshot: Optional[Dict[str, Any]] = None,
+        pulse_id: int = 0,
+        embedding_384d: Optional[List[float]] = None,
+        position_8d: Optional[List[float]] = None,
+        access_count: int = 0,
+        tags: Optional[List[str]] = None,
+        belief_ids: Optional[List[str]] = None,
+    ) -> tuple[str, list[float], list[float]]:
+        """Upsert a journal memory entry into the live manifold and semantic index."""
+        lag = lagrangian_snapshot or {}
+        point_id = self.memory_point_id(memory_id)
+        emb = (
+            np.asarray(embedding_384d, dtype=np.float32)
+            if embedding_384d is not None
+            else self.embed_text(content)
+        )
+        position = self._register_point(
+            point_id=point_id,
+            emb=emb,
+            point_type="memory",
+            spatial_kwargs={
+                "importance": importance,
+                "content": content,
+                "encoding_omega": lag.get("omega", 0.5),
+                "encoding_s_total": lag.get("s_total", 0.15),
+                "access_count": access_count,
+                "position_override": position_8d,
+                "creation_pulse": pulse_id,
+                "last_accessed_pulse": pulse_id,
+                "weight": "memory",
+                "metadata": {
+                    "point_id": point_id,
+                    "memory_type": memory_type,
+                    "source": source,
+                    "created_at": created_at,
+                    "tags": tags or [],
+                    "belief_ids": belief_ids or [],
+                },
+            },
+            semantic_metadata={
+                "content": content[:500],
+                "type": "memory",
+                "importance": importance,
+                "memory_type": memory_type,
+                "created_at": created_at,
+                "source": source,
+                "encoding_omega": lag.get("omega", 0.5),
+                "journal_id": str(memory_id),
+                "pulse_id": pulse_id,
+                "position_8d": position_8d or [],
+                "tags": tags or [],
+                "belief_ids": belief_ids or [],
+            },
+        )
+        return point_id, position.tolist() if position is not None else [], emb.tolist()
 
     # ── Semantic Search (384D, for conscious recall) ──────────────────
 
@@ -507,48 +673,8 @@ class PhysicsEngine:
                     content = b.get("content", "")
                     if not content or len(content) < 5:
                         continue
-                    emb = self.embed_text(content)
                     bid = b.get("id", f"belief_{beliefs_added}")
-
-                    # Extract encoding Lagrangian components
-                    lag = b.get("encoding_lagrangian", {})
-                    if not isinstance(lag, dict):
-                        lag = {}
-
-                    self._register_point(
-                        point_id=bid,
-                        emb=emb,
-                        point_type="belief",
-                        spatial_kwargs={
-                            "confidence": b.get("confidence", 0.5),
-                            "importance": b.get("mass", 1.0),
-                            "content": content,
-                            "encoding_omega": lag.get("omega", 0.5),
-                            "encoding_s_total": lag.get("s_total", 0.15),
-                            "relations_count": len(b.get("relations", [])),
-                            "access_count": b.get("access_count", 0),
-                            "stability_index": b.get("stability_index", 0.5),
-                            "metadata": {
-                                "verifications": b.get("verifications", 0),
-                                "stability_index": b.get("stability_index", 0.5),
-                                "memory_refs": b.get("memory_refs", []),
-                                "created_at": b.get("created_at", ""),
-                                "last_verified": b.get("last_verified", ""),
-                                "formation_type": b.get("formation_type", ""),
-                                "encoding_lagrangian": lag,
-                            },
-                        },
-                        semantic_metadata={
-                            "content": content[:500],
-                            "type": "belief",
-                            "confidence": b.get("confidence", 0.5),
-                            "importance": b.get("mass", 1.0),
-                            "category": b.get("_category", ""),
-                            "verifications": b.get("verifications", 0),
-                            "memory_refs_count": len(b.get("memory_refs", [])),
-                            "encoding_omega": lag.get("omega", 0.5),
-                        },
-                    )
+                    self.sync_belief_record(b)
                     beliefs_added += 1
             except Exception as e:
                 logger.warning(f"Belief bootstrap failed: {e}")
@@ -566,8 +692,7 @@ class PhysicsEngine:
                     content = m.get("content", "")
                     if not content or len(content) < 10:
                         continue
-                    emb = self.embed_text(content)
-                    mid = m.get("id", f"mem_{memories_added}")
+                    mid = m.get("id", memories_added)
 
                     # Extract encoding Lagrangian if available
                     mem_lag = m.get("lagrangian_snapshot", {})
@@ -580,27 +705,19 @@ class PhysicsEngine:
                     if not isinstance(mem_lag, dict):
                         mem_lag = {}
 
-                    self._register_point(
-                        point_id=mid,
-                        emb=emb,
-                        point_type="memory",
-                        spatial_kwargs={
-                            "importance": m.get("importance", 0.5),
-                            "content": content,
-                            "encoding_omega": mem_lag.get("omega",
-                                                m.get("encoding_omega", 0.5)),
-                            "encoding_s_total": mem_lag.get("s_total", 0.15),
-                            "access_count": m.get("access_count", 0),
-                        },
-                        semantic_metadata={
-                            "content": content[:500],
-                            "type": "memory",
-                            "importance": m.get("importance", 0.5),
-                            "memory_type": m.get("memory_type", ""),
-                            "created_at": m.get("created_at", ""),
-                            "encoding_omega": mem_lag.get("omega",
-                                                m.get("encoding_omega", 0.5)),
-                        },
+                    self.register_memory_entry(
+                        memory_id=mid,
+                        content=content,
+                        importance=m.get("importance", 0.5),
+                        memory_type=m.get("memory_type", ""),
+                        source=m.get("source", ""),
+                        created_at=m.get("created_at", ""),
+                        lagrangian_snapshot=mem_lag,
+                        pulse_id=m.get("pulse_id", 0),
+                        embedding_384d=m.get("embedding_384d"),
+                        position_8d=m.get("position_8d"),
+                        access_count=m.get("access_count", 0),
+                        tags=m.get("tags", []),
                     )
                     memories_added += 1
             except Exception as e:
@@ -615,7 +732,7 @@ class PhysicsEngine:
             self.spatial_mind.memory_space._rebuild_tree()
 
         # Compute identity center from beliefs
-        self.spatial_mind._compute_identity_center()
+        self.spatial_mind.refresh_identity_center()
 
         # Save the fully hydrated semantic index to disk so we don't re-embed on next boot
         if self.data_dir:

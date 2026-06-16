@@ -1,8 +1,8 @@
 """
 Helix — Context Compressor (Rolling Context Window Management)
 
-Adapted from Hermes's ContextCompressor. Replaces hard context resets
-with rolling compression that preserves conversational continuity.
+Replaces hard context resets with rolling compression that preserves
+conversational continuity.
 
 Algorithm:
   Phase 1 — Cheap pre-pass (no API call):

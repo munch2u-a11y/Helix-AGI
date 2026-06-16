@@ -91,6 +91,7 @@ class TestSuiteRunner:
             ("test_belief_operations.py", "Belief Operations Tests"),
             ("test_channel_router.py", "Channel Router Tests"),
             ("test_preconscious_injection.py", "Preconscious Context Builder Tests"),
+            ("test_crash_reporter.py", "Crash Reporter Tests"),
             
             # Simulations
             ("simulate_memory_operations.py", "Memory Operations Simulator"),
@@ -103,7 +104,7 @@ class TestSuiteRunner:
         
         if quick_mode:
             # Run only validation and core tests
-            test_scripts = test_scripts[:6]
+            test_scripts = test_scripts[:7]
         
         passed = 0
         failed = 0

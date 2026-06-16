@@ -1,21 +1,21 @@
 """
-Helix — Preconscious System (Concept-Based Spatial-Gravitational Memory Query)
+Helix — Preconscious System (Concept-Based Spatial Memory Query)
 
 The preconscious is the bridge between the spatial mind and the
-conscious LLM. On every pulse, it queries the 8D gravitational
-field and returns a contextually relevant "net" of memories,
-beliefs, and state — NOT keyword matches, but the gravitational
+conscious LLM. On every pulse, it queries the 8D spatial index
+and returns a contextually relevant "net" of memories, beliefs,
+and state — NOT keyword matches, but the proximity-scored
 neighborhood around the current focus.
 
 How it works:
   1. Takes the trigger text (last thought + incoming events)
   2. Extracts 1-5 key concepts via RAKE-style keyphrase extraction
   3. Embeds each concept independently into 8D cognitive space
-  4. Runs independent gravity queries centered on each concept:
-     - Nearby beliefs scored by mass × temperature / distance²
+  4. Runs independent proximity queries centered on each concept:
+     - Nearby beliefs scored by mass × recency_heat / distance²
      - No overlap between concept clusters (rolling blacklist)
   5. Pulls Layer 2 anchor matches, scratchpad, and contact context
-  6. Formats everything as natural language "peripheral awareness"
+  6. Formats everything as natural language awareness context
 
 The conscious model receives this each pulse as its grounding.
 Identity, knowledge, and context emerge from actual recalled
@@ -412,8 +412,8 @@ class Preconscious:
         inner = "\n".join(parts)
         self._save_injection_state()
         # Wrap in context fencing so the LLM distinguishes recalled
-        # spatial awareness from new sensory input (inspired by Hermes's
-        # <memory-context> fencing in memory_manager.py)
+        # spatial awareness from new sensory input
+        # (uses <memory-context> style fencing)
         return (
             "<spatial-awareness>\n"
             "[Recalled context — NOT new input. Background orientation "
@@ -619,13 +619,9 @@ class Preconscious:
     def _toolset_awareness(self, neighborhood_content: str) -> str:
         """Check if nearby memories suggest tools from an unloaded toolset.
 
-        Uses keyword heuristics on the gravitational neighborhood content
-        to detect when Helix is thinking about a domain with available
-        but unloaded tools. Returns a whisper-style hint string.
-
-        Inspired by Claude Code's ToolSearchTool — but passive awareness,
-        not an explicit search tool. The preconscious surfaces the hint;
-        Helix decides whether to act on it.
+        Uses keyword heuristics on the nearby content to detect when
+        the agent is thinking about a domain with available but unloaded
+        tools. Returns a hint string for the preconscious injection.
         """
         try:
             from tools.tool_registry import registry
@@ -682,7 +678,7 @@ class Preconscious:
         When the gravitational neighborhood returns 4+ related items,
         using the local Ollama model to produce a coherent 1-2 sentence
         synthesis is more useful than dumping raw data. This is the
-        preconscious equivalent of Claude Code's forked side-thought —
+        preconscious equivalent of a side-thought —
         the same mind, reflecting on what it found.
 
         Falls back to empty string if:
@@ -1437,10 +1433,10 @@ class Preconscious:
         # This replaces the raw text midpoint with the actual location of
         # the knowledge that was retrieved.
         import numpy as np
-        if merged:
+        if final_selection:
             positions = []
             weights = []
-            for b in merged:
+            for b in final_selection:
                 pos = b.get("position_8d")
                 if pos is not None:
                     positions.append(pos)
@@ -1456,7 +1452,7 @@ class Preconscious:
             self._last_cluster_centroid = None
 
         # Return formatted string and list of surfaced IDs
-        surfaced_ids = [b.get("id", "") for b in merged if b.get("id")]
+        surfaced_ids = [b.get("id", "") for b in final_selection if b.get("id")]
         return ("\n".join(lines), surfaced_ids) if lines else ("", [])
 
     # ── Short-term Memory ────────────────────────────────────────────
@@ -1623,4 +1619,3 @@ class Preconscious:
                 json.dump(data, f, indent=2)
         except Exception as e:
             logger.error(f"Failed to write spatial_injection.json: {e}")
-

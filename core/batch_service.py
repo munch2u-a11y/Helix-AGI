@@ -509,6 +509,96 @@ def _validate_belief(text: str, category: str) -> Tuple[bool, str]:
     return True, "ok"
 
 
+def _compute_dynamic_initial_confidence(
+    candidate: dict,
+    belief_store,
+    physics_engine,
+    memories_by_id: dict,
+) -> float:
+    """Compute initial confidence dynamically based on source trust and epistemic support.
+
+    C_initial = 0.6 * C_support + 0.4 * T_source
+
+    Source Trustworthiness (T_source): Weighted by memory source type and importance.
+    Epistemic Support (C_support): Derived from ancestor belief confidences
+    (beliefs that were injected when this realization formed) plus semantically
+    similar existing beliefs.
+    """
+    # 1. Compute Source Trustworthiness (T_source)
+    ref_ids = candidate.get("memory_refs", [])
+    t_scores = []
+
+    for ref_id in ref_ids:
+        mem = memories_by_id.get(str(ref_id)) or memories_by_id.get(ref_id)
+        if not mem:
+            continue
+
+        source = (mem.get("metadata", {}).get("source") or mem.get("source") or "system").lower()
+        importance = float(mem.get("metadata", {}).get("importance", mem.get("importance", 0.5)))
+
+        # Calculate source trust — internal sources are more reliable
+        if source in ("system", "gemini_consciousness", "self_reflection", "subconscious", "curator", "co_occurrence_synthesis"):
+            trust = 0.80
+        elif source in ("telegram", "discord"):
+            trust = 0.50
+        else:
+            trust = 0.50
+
+        t_scores.append(trust * importance)
+
+    if t_scores:
+        T_source = sum(t_scores) / len(t_scores)
+    else:
+        T_source = 0.50
+
+    # 2. Compute Epistemic Support (C_support)
+    support_confidences = []
+    support_weights = []
+
+    ancestor_ids = set(candidate.get("injected_belief_ids", []))
+    for ref_id in ref_ids:
+        mem = memories_by_id.get(str(ref_id)) or memories_by_id.get(ref_id)
+        if mem:
+            mem_bids = mem.get("metadata", {}).get("belief_ids", []) or mem.get("belief_ids", [])
+            for bid in mem_bids:
+                ancestor_ids.add(bid)
+
+    for bid in ancestor_ids:
+        b = belief_store.get_belief(bid)
+        if b:
+            support_confidences.append(float(b.get("confidence", 0.5)))
+            support_weights.append(0.50)
+
+    content_text = candidate.get("content", "")
+    if physics_engine and content_text:
+        try:
+            results = physics_engine.semantic_search(
+                query_text=content_text,
+                k=5,
+                filter_fn=lambda vid, meta: (
+                    meta.get("type") == "belief"
+                    and meta.get("category") in {"premises", "propositions", "preferences"}
+                ),
+            )
+            for r in results:
+                similarity = float(r.get("similarity", 0.0))
+                if similarity >= 0.70:
+                    b = belief_store.get_belief(r["id"])
+                    if b:
+                        support_confidences.append(float(b.get("confidence", 0.5)))
+                        support_weights.append(similarity ** 2)
+        except Exception as e:
+            logger.debug(f"Epistemic semantic support lookup failed: {e}")
+
+    if support_confidences and sum(support_weights) > 0:
+        C_support = sum(c * w for c, w in zip(support_confidences, support_weights)) / sum(support_weights)
+    else:
+        C_support = 0.40
+
+    C_initial = 0.6 * C_support + 0.4 * T_source
+    return max(0.01, min(1.0, round(C_initial, 3)))
+
+
 # ── Main Processing Pipeline ────────────────────────────────────────
 
 def process_pending_beliefs(
@@ -542,6 +632,24 @@ def process_pending_beliefs(
         return {"status": "empty", "processed": 0}
 
     logger.info(f"Processing {len(candidates)} pending belief candidates")
+
+    # Load memories from journal to resolve references for confidence computation
+    memories_by_id = {}
+    for path_str in ["data/memory/cognitive_journal.jsonl", "data/cognitive_journal.jsonl"]:
+        journal_path = Path(path_str)
+        if journal_path.exists():
+            try:
+                with open(journal_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            entry = json.loads(line)
+                            if entry.get("type") == "memory":
+                                memories_by_id[entry["id"]] = entry
+                        except Exception:
+                            pass
+                break
+            except Exception as e:
+                logger.warning(f"Failed to read journal at {path_str}: {e}")
 
     stats = {
         "started_at": datetime.now().isoformat(),
@@ -591,6 +699,7 @@ def process_pending_beliefs(
                         "encoding_delta": c.get("encoding_delta", {}),
                         "encoding_lagrangian": c.get("encoding_lagrangian", {}),
                         "stability_index": c.get("stability_index", None),
+                        "injected_belief_ids": c.get("injected_belief_ids", []),
                     })
                 stats["extracted"] += len(beliefs)
                 c["status"] = "extracted"
@@ -747,12 +856,18 @@ def process_pending_beliefs(
                     if stability_index is None:
                         stability_index = omega_val
 
+                    # Compute dynamic initial confidence from source trust
+                    # and epistemic support (replaces flat 0.5)
+                    initial_confidence = _compute_dynamic_initial_confidence(
+                        original, belief_store, physics_engine, memories_by_id
+                    )
+
                     stored = belief_store.add_belief(
                         category=cat,
                         belief_id=belief_id,
                         content=belief_text,
                         mass=1.0,
-                        confidence=0.5,
+                        confidence=initial_confidence,
                         source="belief_detector_"
                                + datetime.now().strftime("%Y-%m-%d"),
                         stability_index=stability_index,
@@ -761,19 +876,6 @@ def process_pending_beliefs(
                     )
 
                     if stored:
-                        # Recompute mass from cognitive mass equation
-                        belief = belief_store.get_belief(belief_id)
-                        if belief and physics_engine:
-                            try:
-                                real_mass = (
-                                    belief_store.compute_cognitive_mass(belief)
-                                )
-                                belief_store.update_belief_mass(
-                                    cat, belief_id, real_mass - 1.0,
-                                )
-                            except Exception:
-                                pass
-
                         stats["beliefs_written"] += 1
                         logger.info(f"✨ [{cat}] {belief_text}")
 

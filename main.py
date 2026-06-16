@@ -43,6 +43,14 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+# ── Crash Reporter Setup ─────────────────────────────────────────────
+from core.crash_reporter import check_unclean_shutdown, setup_crash_reporter, clear_session_marker
+try:
+    check_unclean_shutdown()
+    setup_crash_reporter()
+except Exception as cre:
+    logging.getLogger("helix.main").warning(f"Failed to initialize crash reporter: {cre}")
+
 
 def _load_credentials():
     """Load API keys from ~/.config/helix/credentials.env into os.environ.
@@ -142,6 +150,7 @@ def setup_helix(data_dir: str = "data"):
     spatial_dir = os.path.join(data_dir, "spatial")
     physics = PhysicsEngine(data_dir=spatial_dir)
     memory_manager.set_physics(physics)
+    belief_store.set_runtime(physics_engine=physics, memory_manager=memory_manager)
     print(f"  Spatial: pulse={physics._pulse_count}, γ={physics._gamma:.2f}")
     print(f"  SemanticIndex: {physics.semantic_index.count} vectors ({physics.semantic_index.get_stats()['search_strategy']})")
 
@@ -301,8 +310,17 @@ def setup_helix(data_dir: str = "data"):
 
     # ── 7b. GGUF Manager (Micro-Models) ──────────────────────────────
     from core.gguf_manager import GGUFManager
-    gguf_manager = GGUFManager(models_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "models"))
-    gguf_manager.load_model("fast_classifier", "granite-4.1-3b-Q4_K_M.gguf", n_ctx=2048)
+    models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+    gguf_manager = GGUFManager(models_dir=models_dir)
+    micro_model = "granite-4.1-3b-Q4_K_M.gguf"
+    if os.path.exists(os.path.join(models_dir, micro_model)):
+        gguf_manager.load_model("fast_classifier", micro_model, n_ctx=2048)
+    else:
+        import logging
+        logging.getLogger("helix.main").info(
+            f"Micro-model {micro_model} not found in models/ directory. "
+            f"Will use auxiliary LLM fallback for fast classification."
+        )
 
     # ── 8. Post-Pulse Hooks (Subconscious Background Tasks) ──────────
     from core.post_pulse_hooks import register_hook
@@ -488,6 +506,7 @@ def main_loop():
                 break
 
     pulse_loop.stop()
+    clear_session_marker()
     print("\nHelix offline.")
 
 

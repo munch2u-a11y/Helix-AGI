@@ -1,10 +1,10 @@
 """
-Helix — Tool Registry (Hermes-Style Dynamic Registration)
+Helix — Tool Registry (Dynamic Registration)
 
 Central registry that collects tool schemas, handlers, and availability
 checks. Replaces the static _FC_DISPATCH dict and TOOL_DECLARATIONS list.
 
-Features (adapted from Hermes):
+Features:
   - register() with check_fn for runtime availability gating
   - TTL-cached check_fn results (30s) to avoid re-probing external state
   - Thread-safe with generation counter for cache invalidation
@@ -114,7 +114,7 @@ class ToolEntry:
 class ToolRegistry:
     """Thread-safe registry for tool schemas, handlers, and availability checks.
 
-    Adapted from Hermes's ToolRegistry. Provides:
+    Provides:
       - register()/deregister() for dynamic tool management
       - check_fn with TTL caching for availability gating
       - get_declarations() that filters by active toolsets + check_fn

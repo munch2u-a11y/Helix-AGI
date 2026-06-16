@@ -1,7 +1,6 @@
 """
 Helix — Moltbook API Tools
 
-Standalone Moltbook API client ported from Helix_main.
 Full REST API integration for the Moltbook social platform.
 
 Auth: MOLTBOOK_API_KEY from environment (loaded from credentials.env).

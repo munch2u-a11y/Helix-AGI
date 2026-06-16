@@ -109,12 +109,28 @@ def _has_belief_signal(text: str) -> bool:
     if not text or len(text) < 20:
         return False
         
-    if not _gguf_manager:
-        logger.warning("GGUFManager not wired, skipping belief detection.")
-        return False
-
     prompt = _SIGNAL_PROMPT.format(text=text)
     
+    # Fallback if GGUFManager is not wired or the fast_classifier model is not loaded
+    if not _gguf_manager or "fast_classifier" not in _gguf_manager.models:
+        from core.auxiliary_llm import get_auxiliary_client
+        client = get_auxiliary_client()
+        if client:
+            try:
+                result = client.generate(
+                    prompt,
+                    system_instruction="You are a binary classification model. Output YES or NO.",
+                    temperature=0.0,
+                    max_output_tokens=2
+                )
+                if result:
+                    return "YES" in result.upper()
+            except Exception as e:
+                logger.warning(f"Fallback belief detection failed: {e}")
+        else:
+            logger.warning("GGUFManager not wired and auxiliary LLM client unavailable, skipping belief detection.")
+        return False
+
     # We force the model to output ONLY "YES" or "NO"
     # This entirely avoids <think> block timeouts in reasoning models
     # and keeps inference time under 0.5s for the 3B model.
@@ -167,6 +183,7 @@ def _tag_pulse(
     encoding_delta: Dict[str, Any],
     tool_output_text: str = "",
     source: str = "thought",
+    injected_belief_ids: Optional[List[str]] = None,
 ):
     """Tag a pulse as containing belief material (thread-safe).
 
@@ -202,6 +219,7 @@ def _tag_pulse(
             "tool_output_text": tool_output_text,
             "source": source,
             "encoding_delta": encoding_delta,
+            "injected_belief_ids": injected_belief_ids or [],
             "detected_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "status": "pending",
         }
@@ -247,6 +265,7 @@ def belief_detector_hook(ctx) -> None:
     thought_snapshot = ctx.thought
     memory_id_snapshot = ctx.memory_id
     pulse_count_snapshot = ctx.pulse_count
+    injected_belief_ids_snapshot = list(ctx.injected_belief_ids) if ctx.injected_belief_ids else []
     
     # Compute stability delta across this pulse (for cognitive mass)
     before = dict(ctx.lagrangian_before) if ctx.lagrangian_before else {}
@@ -284,7 +303,7 @@ def belief_detector_hook(ctx) -> None:
         target=_run_detection,
         args=(
             thought_snapshot, memory_id_snapshot, pulse_count_snapshot,
-            encoding_delta, tool_output_snapshot,
+            encoding_delta, tool_output_snapshot, injected_belief_ids_snapshot,
         ),
         daemon=True,
         name=f"belief_detect_p{pulse_count_snapshot}",
@@ -298,6 +317,7 @@ def _run_detection(
     pulse_count: int,
     encoding_delta: Dict[str, Any],
     tool_output: str,
+    injected_belief_ids: List[str],
 ) -> None:
     """Background thread: check thought + tool outputs for belief signal."""
     try:
@@ -309,6 +329,7 @@ def _run_detection(
                 pulse_count=pulse_count,
                 encoding_delta=encoding_delta,
                 source="thought",
+                injected_belief_ids=injected_belief_ids,
             )
 
         # Pass 2: Scan expressive tool outputs (separate call)
@@ -320,6 +341,7 @@ def _run_detection(
                 encoding_delta=encoding_delta,
                 tool_output_text=tool_output,
                 source="tool_output",
+                injected_belief_ids=injected_belief_ids,
             )
 
     except Exception as e:

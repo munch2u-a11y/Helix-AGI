@@ -42,13 +42,34 @@ class LlamaCppSession(ChatSession):
         self.max_output_tokens = max_output_tokens
         self.history: List[Dict[str, str]] = []
 
+        import os
+        from pathlib import Path
+
+        # Resolve model path relative to models/ directory or repository root if needed
+        resolved_path = model_path
+        if not os.path.isabs(resolved_path) or not os.path.exists(resolved_path):
+            # Try repo models/ directory
+            repo_models = Path(__file__).parent.parent.parent / "models" / model_path
+            if repo_models.exists():
+                resolved_path = str(repo_models)
+            else:
+                # Try relative to current working directory
+                cwd_models = Path("models") / model_path
+                if cwd_models.exists():
+                    resolved_path = str(cwd_models)
+                else:
+                    # Try relative to current working directory directly
+                    cwd_direct = Path(model_path)
+                    if cwd_direct.exists():
+                        resolved_path = str(cwd_direct)
+
         logger.info(
-            f"Loading model via llama.cpp "
+            f"Loading model via llama.cpp from {resolved_path} "
             f"(n_ctx={n_ctx}, n_gpu_layers={n_gpu_layers})..."
         )
 
         self._llm = Llama(
-            model_path=model_path,
+            model_path=resolved_path,
             n_ctx=n_ctx,
             n_gpu_layers=n_gpu_layers,
             verbose=False,

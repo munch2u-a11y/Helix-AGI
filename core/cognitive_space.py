@@ -1,30 +1,35 @@
 """
 Helix_main — Cognitive Space
 
-8-dimensional spatial manifold for beliefs and memories. Every belief
+8-dimensional spatial index for beliefs and memories. Every belief
 and memory gets a permanent position in 8D space, derived from its
 embedding via a fixed random orthogonal projection (Johnson-Lindenstrauss).
 
-The cognitive space replaces flat-space cosine retrieval with
-gravity-modulated spatial proximity. Dense clusters of related,
-confident, recently-accessed knowledge form gravity wells that
-naturally pull the conscious mind's attention.
+The cognitive space replaces flat cosine-similarity retrieval with
+proximity-scored spatial queries. Dense clusters of related, confident,
+recently-accessed knowledge score higher in relevance queries and
+naturally dominate the agent's attention.
 
 Architecture:
     CognitiveProjection — embedding_dim → 8D (fixed, deterministic)
     CognitiveSpace      — positions, KDTree index, point management
-    GravityField        — 512-anchor grid, mass splatting, potential
+    GravityField        — 512-anchor density grid, mass splatting, potential
 
 Design principles:
     - Beliefs and memories coexist in the SAME 8D space
     - Positions are permanent (derived from immutable projection matrix)
     - Cognitive mass = f(confidence, connections, recency) — lifetime-relative
-    - The conscious mind's current thought = a moving "attention center"
-    - Whatever is gravitationally close to that center rises to awareness
-    - No artificial limits. Recency = gravity, not exclusion.
+    - The agent's current thought = a moving "attention center" in 8D
+    - Items nearest that center score highest and rise to awareness
+    - No artificial limits. Recency = score decay, not exclusion.
 
-Inspired by Kaleidoscope's E8 Mind architecture, adapted for
-Helix's belief-graph-centric cognition.
+Naming conventions:
+    The code uses physics-inspired names as a consistent vocabulary:
+    - "gravity" = relevance score: mass / distance²
+    - "mass" = structural importance (confidence × connections × recency)
+    - "temperature" = local entropy / mean entropy (volatility indicator)
+    - "force" = direction and magnitude of attention movement per timestep
+    These are spatial scoring algorithms, not physics simulations.
 """
 
 import os
@@ -160,18 +165,18 @@ class CognitiveProjection:
 # ═══════════════════════════════════════════════════════════════════════
 
 class GravityField:
-    """Gravitational potential field over 8D cognitive space.
+    """Density estimator over 8D cognitive space ("gravity field" in code).
 
-    Uses N_ANCHORS fixed anchor points. Belief/memory mass is splatted
-    onto nearest anchors. Potential at any point is interpolated from
-    nearby anchors.
+    Uses N_ANCHORS fixed anchor points distributed across the space.
+    Belief/memory mass is distributed to nearest anchors via inverse-
+    distance weighting ("splatting"). The accumulated density at any
+    point indicates how much cognitive weight exists nearby.
 
     Recomputed once per heartbeat pulse. Query time: O(K).
 
-    The field captures WHERE cognitive mass is concentrated right now.
     Dense clusters of confident, recently-accessed, well-connected
-    beliefs form gravity wells. The potential at any point tells you
-    "how much cognitive weight exists here."
+    beliefs produce high-density regions. The density value at any
+    point answers: "how much relevant knowledge exists here?"
     """
 
     def __init__(self, dim: int = PROJECTION_DIM, n_anchors: int = N_ANCHORS,
@@ -361,6 +366,11 @@ class CognitiveSpace:
         access_count: int = 0,
         metadata: dict = None,
         stability_index: float = 0.5,
+        position_override: np.ndarray = None,
+        creation_pulse: Optional[int] = None,
+        last_accessed_pulse: Optional[int] = None,
+        created_at_ts: Optional[float] = None,
+        last_accessed_ts: Optional[float] = None,
         **kwargs,
     ):
         """Add a belief or memory to the cognitive space.
@@ -368,7 +378,16 @@ class CognitiveSpace:
         The embedding is projected to 8D and stored. The KDTree is
         rebuilt lazily after KDTREE_REBUILD_THRESHOLD new additions.
         """
-        position = self.projection.project(embedding)
+        if position_override is not None and len(position_override) == PROJECTION_DIM:
+            position = np.asarray(position_override, dtype=np.float32).reshape(-1)
+        else:
+            position = self.projection.project(embedding)
+
+        now_ts = time.time()
+        created_at = created_at_ts if created_at_ts is not None else now_ts
+        last_accessed = last_accessed_ts if last_accessed_ts is not None else created_at
+        created_pulse = self._current_pulse if creation_pulse is None else int(creation_pulse)
+        accessed_pulse = created_pulse if last_accessed_pulse is None else int(last_accessed_pulse)
 
         self._points[point_id] = {
             "position": position,
@@ -382,10 +401,10 @@ class CognitiveSpace:
             "encoding_s_total": encoding_s_total,
             "access_count": access_count,
             "stability_index": stability_index,
-            "last_accessed": time.time(),
-            "created_at": time.time(),
-            "creation_pulse": self._current_pulse,
-            "last_accessed_pulse": self._current_pulse,
+            "last_accessed": last_accessed,
+            "created_at": created_at,
+            "creation_pulse": created_pulse,
+            "last_accessed_pulse": accessed_pulse,
             "metadata": metadata or {},
         }
 
@@ -408,6 +427,14 @@ class CognitiveSpace:
             for k, v in kwargs.items():
                 if k in self._points[point_id]:
                     self._points[point_id][k] = v
+
+    def remove_point(self, point_id: str) -> bool:
+        """Remove a point from the manifold and mark the tree dirty."""
+        if point_id not in self._points:
+            return False
+        del self._points[point_id]
+        self._tree_dirty = True
+        return True
 
     def get_point(self, point_id: str) -> Optional[dict]:
         """Get full data for a point."""
@@ -474,10 +501,11 @@ class CognitiveSpace:
             if not pt:
                 continue
 
-            # Verlinde entropic gravity: F = T × ΔS / Δx
-            # T = concept temperature (recency heat)
-            # ΔS ~ mass (structural information bits)
-            # Δx = distance in 8D space
+            # Relevance scoring formula ("entropic gravity" in code):
+            # score = recency_heat × structural_mass / distance²
+            # Conceptually inspired by Verlinde's entropic gravity
+            # (F = T × ΔS / Δx), but implemented as a simple weighted
+            # distance-decay relevance score, not a physics simulation.
             mass = self._compute_structural_mass(pt)
             temperature = self._compute_temperature(pt)
 
@@ -988,7 +1016,11 @@ class CognitiveSpace:
           S_somatic = 1.0 + 0.5 * |encoding_omega - 0.5|
         """
         if point_data["type"] == "belief":
-            c = point_data.get("confidence", 0.5)
+            confidence = float(point_data.get("confidence", 0.5))
+            omega = max(0.0, min(1.0, float(point_data.get("encoding_omega", 0.5))))
+            s_total = max(0.0, min(1.0, float(point_data.get("encoding_s_total", 0.15))))
+            stability = max(0.0, min(1.0, float(point_data.get("stability_index", 0.5))))
+            c = confidence + (omega * (1.0 - s_total) * (0.5 + stability))
         else:
             c = point_data.get("importance", 0.5)
 
@@ -997,6 +1029,20 @@ class CognitiveSpace:
         relations_count = point_data.get("relations_count", 0)
         s_reliance = 1.0 + 0.2 * math.log(1.0 + access_count + relations_count)
 
+        # Recent episodic/task memories need enough mass to compete with
+        # slower-cooling beliefs. Temperature still handles cooling, but
+        # this short-lived recency mass floor prevents tool outputs, URLs,
+        # notifications, and final task steps from disappearing before the
+        # next related pulse can re-access them.
+        creation_pulse = point_data.get("creation_pulse", 0)
+        last_accessed_pulse = point_data.get("last_accessed_pulse", 0)
+        if self._current_pulse > 0:
+            most_recent_pulse = max(creation_pulse, last_accessed_pulse)
+            pulse_age = max(0, self._current_pulse - most_recent_pulse)
+            s_recency = 1.0 + 0.75 / (1.0 + (pulse_age / 20.0) ** 2)
+        else:
+            s_recency = 1.75
+
         # 2. Somatic Multiplier (deviation from homeostatic baseline omega = 0.5)
         omega = point_data.get("encoding_omega", 0.5)
         s_somatic = 1.0 + 0.5 * abs(omega - 0.5)
@@ -1004,7 +1050,7 @@ class CognitiveSpace:
             stability = point_data.get("stability_index", 0.5)
             s_somatic *= (0.5 + stability)
 
-        mass = c * s_reliance * s_somatic
+        mass = c * s_reliance * s_somatic * s_recency
         return max(0.01, mass)
 
     def _compute_temperature(self, point_data: dict) -> float:
@@ -1038,7 +1084,10 @@ class CognitiveSpace:
         else:  # memory, imagined, etc.
             c = point_data.get("importance", 0.5)
             T_0 = 1.5 * max(c, 0.3)  # Memories are warm
-            tau = 12.0  # Conversation-scale cooling
+            # Keep episodic memories warm long enough for task continuity.
+            # The previous 12-pulse half-life made tool outputs and task-step
+            # memories cool before the agent could revisit related notifications.
+            tau = 50.0
 
         # Cooling via Lorentzian profile in pulse-time
         creation_pulse = point_data.get("creation_pulse", 0)
@@ -1218,17 +1267,21 @@ class CognitiveSpace:
         m_count = 0
         for entry in entries:
             entry_type = entry.get("type")
-            point_id = str(entry.get("id"))
+            metadata = entry.get("metadata", {}) or {}
+            point_id = metadata.get("point_id", str(entry.get("id")))
             position = entry.get("position_8d", [])
-            metadata = entry.get("metadata", {})
             if not position or len(position) != 8:
                 continue
-            embedding = np.array(position, dtype=np.float32)
+            embedding = np.array(entry.get("embedding_384d", []), dtype=np.float32)
+            if embedding.size == 0:
+                embedding = np.array(position, dtype=np.float32)
             if entry_type == "belief":
                 self.add_point(
                     point_id=point_id,
                     embedding=embedding,
                     point_type="belief",
+                    position_override=position,
+                    creation_pulse=entry.get("pulse_id", 0),
                     **metadata,
                 )
                 b_count += 1
@@ -1237,6 +1290,8 @@ class CognitiveSpace:
                     point_id=point_id,
                     embedding=embedding,
                     point_type="memory",
+                    position_override=position,
+                    creation_pulse=entry.get("pulse_id", 0),
                     **metadata,
                 )
                 m_count += 1
@@ -1263,9 +1318,15 @@ class CognitiveSpace:
                 "relations_count": data.get("relations_count", 0),
                 "weight": data.get("weight", "surface"),
                 "content": data.get("content", ""),
+                "encoding_omega": data.get("encoding_omega", 0.5),
+                "encoding_s_total": data.get("encoding_s_total", 0.15),
+                "stability_index": data.get("stability_index", 0.5),
                 "last_accessed": data.get("last_accessed", 0),
                 "created_at": data.get("created_at", 0),
+                "creation_pulse": data.get("creation_pulse", 0),
+                "last_accessed_pulse": data.get("last_accessed_pulse", 0),
                 "access_count": data.get("access_count", 0),
+                "metadata": data.get("metadata", {}),
             }
 
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1295,10 +1356,15 @@ class CognitiveSpace:
                     "relations_count": data.get("relations_count", 0),
                     "weight": data.get("weight", "surface"),
                     "content": data.get("content", ""),
+                    "encoding_omega": data.get("encoding_omega", 0.5),
+                    "encoding_s_total": data.get("encoding_s_total", 0.15),
+                    "stability_index": data.get("stability_index", 0.5),
                     "last_accessed": data.get("last_accessed", 0),
                     "created_at": data.get("created_at", 0),
+                    "creation_pulse": data.get("creation_pulse", 0),
+                    "last_accessed_pulse": data.get("last_accessed_pulse", 0),
                     "access_count": data.get("access_count", 0),
-                    "metadata": {},
+                    "metadata": data.get("metadata", {}),
                 }
 
             self._tree_dirty = True
@@ -1476,4 +1542,3 @@ class InteractionEngine:
             "history_length": len(self._affordance_history),
             "current_pulse_id": self._current_pulse_id,
         }
-

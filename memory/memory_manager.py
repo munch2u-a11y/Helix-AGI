@@ -23,6 +23,21 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _parse_iso(raw: str) -> Optional[datetime]:
+    """Parse common ISO timestamp variants used by the journal."""
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        if len(raw) >= 5 and raw[-5] in "+-" and raw[-3] != ":":
+            try:
+                return datetime.fromisoformat(f"{raw[:-2]}:{raw[-2:]}")
+            except ValueError:
+                return None
+        return None
+
+
 class MemoryManager:
     """Simple memory manager backed by :class:`CognitiveJournal`.
 
@@ -41,11 +56,38 @@ class MemoryManager:
         # Initialise the unified journal
         self.journal = CognitiveJournal(Path(data_dir))
         # In‑memory counter to emulate short‑term IDs for compatibility
-        self._st_counter = 0
+        self._st_counter = self._initialize_counter()
         # Physics engine reference (injected after construction)
         # Provides access to the 384D SemanticIndex for conscious recall
         self._physics = None
         logger.info(f"MemoryManager initialized with journal at {self.journal.path}")
+
+    def _initialize_counter(self) -> int:
+        """Resume the legacy integer memory counter from journal contents."""
+        highest = 0
+        try:
+            for entry in self.journal.load_all():
+                if entry.get("type") != "memory":
+                    continue
+                raw_id = str(entry.get("id", ""))
+                if raw_id.isdigit():
+                    highest = max(highest, int(raw_id))
+        except Exception as e:
+            logger.debug("Failed to restore memory counter: %s", e)
+        return highest
+
+    @staticmethod
+    def point_id(memory_id: Any) -> str:
+        """Canonical runtime point ID for a journal memory entry."""
+        return f"mem_{memory_id}"
+
+    @staticmethod
+    def journal_id(point_id: Any) -> str:
+        """Recover the journal ID from a runtime point ID."""
+        point_id = str(point_id)
+        if point_id.startswith("mem_"):
+            return point_id[4:]
+        return point_id
 
     def set_physics(self, physics_engine):
         """Wire the physics engine for 384D semantic search.
@@ -55,6 +97,29 @@ class MemoryManager:
         """
         self._physics = physics_engine
         logger.info("MemoryManager: physics engine wired for 384D semantic search")
+
+    def _format_memory_entry(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize a journal memory entry for callers."""
+        meta = entry.get("metadata", {})
+        memory_id = str(entry.get("id", ""))
+        created_at = meta.get("created_at") or entry.get("timestamp")
+        return {
+            "id": memory_id,
+            "point_id": meta.get("point_id", self.point_id(memory_id)),
+            "content": entry.get("content", ""),
+            "memory_type": meta.get("memory_type"),
+            "source": meta.get("source"),
+            "importance": meta.get("importance", 0.5),
+            "tags": meta.get("tags", []),
+            "belief_ids": meta.get("belief_ids", []),
+            "created_at": created_at,
+            "timestamp": entry.get("timestamp"),
+            "pulse_id": entry.get("pulse_id", 0),
+            "position_8d": entry.get("position_8d", []),
+            "attention_position_8d": meta.get("attention_position_8d", []),
+            "embedding_384d": entry.get("embedding_384d"),
+            "lagrangian_snapshot": entry.get("lagrangian", {}),
+        }
 
     # ── Primary Write ────────────────────────────────────────────────
     def store(
@@ -68,6 +133,7 @@ class MemoryManager:
         belief_ids: Optional[List[str]] = None,
         position_8d: Optional[List[float]] = None,
         embedding_384d: Optional[List[float]] = None,
+        pulse_id: Optional[int] = None,
     ) -> int:
         """Append a memory entry to the journal.
 
@@ -84,12 +150,36 @@ class MemoryManager:
         now = _now_iso()
         self._st_counter += 1
         st_id = self._st_counter
+        actual_pulse_id = pulse_id
+        if actual_pulse_id is None and self._physics is not None:
+            actual_pulse_id = getattr(self._physics, "_pulse_count", 0)
+        if actual_pulse_id is None:
+            actual_pulse_id = 0
+
+        canonical_position = list(position_8d or [])
+        canonical_embedding = list(embedding_384d) if embedding_384d is not None else None
+
+        if self._physics is not None:
+            _, canonical_position, canonical_embedding = self._physics.register_memory_entry(
+                memory_id=st_id,
+                content=content,
+                importance=importance,
+                memory_type=memory_type,
+                source=source,
+                created_at=now,
+                lagrangian_snapshot=lagrangian_snapshot,
+                pulse_id=actual_pulse_id,
+                embedding_384d=embedding_384d,
+                position_8d=position_8d,
+                tags=tags,
+                belief_ids=belief_ids,
+            )
 
         self.journal.append_memory(
             id=str(st_id),
             content=content,
-            position_8d=position_8d or [],
-            pulse_id=0,  # caller can later update if needed
+            position_8d=canonical_position,
+            pulse_id=actual_pulse_id,
             lagrangian=lagrangian_snapshot,
             metadata={
                 "memory_type": memory_type,
@@ -98,25 +188,11 @@ class MemoryManager:
                 "tags": tags,
                 "belief_ids": belief_ids,
                 "created_at": now,
+                "attention_position_8d": position_8d or [],
+                "point_id": self.point_id(st_id),
             },
-            embedding_384d=embedding_384d,
+            embedding_384d=canonical_embedding,
         )
-
-        # Register in the 384D SemanticIndex for conscious recall
-        if self._physics and embedding_384d:
-            import numpy as np
-            self._physics.semantic_index.add(
-                id=f"mem_{st_id}",
-                embedding=np.array(embedding_384d, dtype=np.float32),
-                metadata={
-                    "content": content,
-                    "memory_type": memory_type,
-                    "importance": importance,
-                    "created_at": now,
-                    "source": source,
-                    "encoding_omega": lagrangian_snapshot.get("omega", 0.5),
-                },
-            )
 
         logger.debug(
             f"Memory stored (st_id={st_id}, type={memory_type}, importance={importance:.2f}): {content[:80]}..."
@@ -135,25 +211,17 @@ class MemoryManager:
         mem_entries = [e for e in entries if e.get("type") == "memory"]
         if minutes_back is not None:
             cutoff_dt = datetime.now(timezone.utc) - timedelta(minutes=minutes_back)
-            cutoff_iso = cutoff_dt.isoformat(timespec="seconds")
-            mem_entries = [e for e in mem_entries if e.get("timestamp") >= cutoff_iso]
+            filtered = []
+            for entry in mem_entries:
+                ts = _parse_iso(entry.get("timestamp", ""))
+                if ts is not None and ts >= cutoff_dt:
+                    filtered.append(entry)
+            mem_entries = filtered
         # newest first
         recent = mem_entries[-limit:][::-1] if limit else mem_entries[::-1]
         result = []
         for e in recent:
-            meta = e.get("metadata", {})
-            result.append(
-                {
-                    "id": e.get("id"),
-                    "content": e.get("content"),
-                    "memory_type": meta.get("memory_type"),
-                    "source": meta.get("source"),
-                    "importance": meta.get("importance"),
-                    "tags": meta.get("tags"),
-                    "created_at": e.get("timestamp"),
-                    "lagrangian_snapshot": e.get("lagrangian", {}),
-                }
-            )
+            result.append(self._format_memory_entry(e))
         return result
 
     def get_historical_sample(
@@ -214,17 +282,7 @@ class MemoryManager:
         # Build result dicts
         result = []
         for e in selected:
-            meta = e.get("metadata", {})
-            result.append({
-                "id": e.get("id"),
-                "content": e.get("content"),
-                "memory_type": meta.get("memory_type"),
-                "source": meta.get("source"),
-                "importance": meta.get("importance", 0.5),
-                "tags": meta.get("tags", []),
-                "created_at": e.get("timestamp"),
-                "lagrangian_snapshot": e.get("lagrangian", {}),
-            })
+            result.append(self._format_memory_entry(e))
 
         logger.info(
             f"Historical sample: {len(core)} core + {len(selected_timeline)} "
@@ -258,24 +316,55 @@ class MemoryManager:
             return []
 
         try:
+            latest_journal = self.journal.latest_by_id()
+
+            def wrapped_filter(vid, meta):
+                if meta.get("type") != "memory":
+                    return False
+                if filter_fn is None:
+                    return True
+                journal_id = meta.get("journal_id") or self.journal_id(vid)
+                return bool(filter_fn(journal_id, meta))
+
             results = self._physics.semantic_search(
-                query, k=limit, filter_fn=filter_fn,
+                query,
+                k=limit,
+                filter_fn=wrapped_filter,
                 return_embeddings=return_embeddings,
             )
-            return [
-                {
-                    "id": r["id"],
-                    "content": r["metadata"].get("content", ""),
-                    "importance": r["metadata"].get("importance", 0.5),
-                    "created_at": r["metadata"].get("created_at", ""),
-                    "memory_type": r["metadata"].get("memory_type", ""),
-                    "source": r["metadata"].get("source", ""),
-                    "similarity": r.get("similarity", 0.0),
-                    "encoding_omega": r["metadata"].get("encoding_omega", 0.5),
-                    **({"embedding": r["embedding"]} if "embedding" in r else {}),
+            normalized = []
+            for r in results:
+                meta = r.get("metadata", {})
+                if meta.get("type") != "memory":
+                    continue
+                point_id = r.get("id", "")
+                journal_id = str(meta.get("journal_id") or self.journal_id(point_id))
+                entry = latest_journal.get(journal_id, {})
+                formatted = self._format_memory_entry(entry) if entry else {
+                    "id": journal_id,
+                    "point_id": point_id,
+                    "content": meta.get("content", ""),
+                    "memory_type": meta.get("memory_type", ""),
+                    "source": meta.get("source", ""),
+                    "importance": meta.get("importance", 0.5),
+                    "tags": meta.get("tags", []),
+                    "belief_ids": meta.get("belief_ids", []),
+                    "created_at": meta.get("created_at", ""),
+                    "timestamp": meta.get("created_at", ""),
+                    "pulse_id": meta.get("pulse_id", 0),
+                    "position_8d": meta.get("position_8d", []),
+                    "attention_position_8d": [],
+                    "embedding_384d": None,
+                    "lagrangian_snapshot": {},
                 }
-                for r in results
-            ]
+                formatted.update({
+                    "similarity": r.get("similarity", 0.0),
+                    "encoding_omega": meta.get("encoding_omega", 0.5),
+                })
+                if "embedding" in r:
+                    formatted["embedding"] = r["embedding"]
+                normalized.append(formatted)
+            return normalized
         except Exception as e:
             logger.warning(f"search_semantic failed: {e}")
             return []

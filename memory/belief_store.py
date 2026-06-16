@@ -109,6 +109,124 @@ class BeliefStore:
         self.data_dir = data_dir
         os.makedirs(data_dir, exist_ok=True)
         self._ensure_files()
+        self._physics = None
+        self._memory = None
+
+    def set_runtime(self, physics_engine=None, memory_manager=None):
+        """Attach live runtime services used for immediate belief syncing."""
+        if physics_engine is not None:
+            self._physics = physics_engine
+        if memory_manager is not None:
+            self._memory = memory_manager
+
+    def _normalize_belief(
+        self,
+        belief: Dict[str, Any],
+        *,
+        category: Optional[str] = None,
+        recompute_mass: bool = False,
+        preserve_mass: bool = False,
+    ) -> Dict[str, Any]:
+        """Normalize belief fields into a canonical runtime shape."""
+        belief["confidence"] = max(0.0, min(1.0, float(belief.get("confidence", 0.5))))
+        belief["stability_index"] = max(0.0, min(1.0, float(belief.get("stability_index", 0.5))))
+        belief["verifications"] = float(belief.get("verifications", 1.0))
+        belief["access_count"] = int(belief.get("access_count", 0))
+        belief["relations"] = list(dict.fromkeys(belief.get("relations", []) or []))
+        belief["memory_refs"] = list(dict.fromkeys(belief.get("memory_refs", []) or []))
+        belief["tags"] = list(dict.fromkeys(belief.get("tags", []) or []))
+
+        lag = belief.get("encoding_lagrangian", {})
+        if not isinstance(lag, dict):
+            lag = {}
+        belief["encoding_lagrangian"] = {
+            "omega": max(0.0, min(1.0, float(lag.get("omega", 0.5)))),
+            "s_total": max(0.0, min(1.0, float(lag.get("s_total", 0.15)))),
+            "H": float(lag.get("H", 0.15)),
+            "D_KL": float(lag.get("D_KL", 0.0)),
+        }
+        belief["weight"] = self._resolve_weight(belief["confidence"])
+
+        mass = belief.get("mass")
+        should_recompute = (
+            recompute_mass
+            or mass is None
+            or float(mass) <= 0.0
+            or (float(mass) == 1.0 and not preserve_mass)
+        )
+        if should_recompute:
+            belief["mass"] = round(self.compute_cognitive_mass(belief), 4)
+        else:
+            belief["mass"] = round(max(0.01, float(mass)), 4)
+
+        if category:
+            belief["_category"] = category
+
+        return belief
+
+    def _append_belief_snapshot(self, belief: Dict[str, Any], category: str, embedding_384d=None):
+        """Persist the latest belief state into the journal."""
+        if not self._memory or not hasattr(self._memory, "journal"):
+            return
+
+        pulse_id = 0
+        if self._physics is not None:
+            pulse_id = int(getattr(self._physics, "_pulse_count", 0))
+
+        metadata = {
+            "category": category,
+            "mass": belief.get("mass", 1.0),
+            "confidence": belief.get("confidence", 0.5),
+            "weight": belief.get("weight", "surface"),
+            "source": belief.get("source", ""),
+            "verifications": belief.get("verifications", 1.0),
+            "stability_index": belief.get("stability_index", 0.5),
+            "relations": belief.get("relations", []),
+            "memory_refs": belief.get("memory_refs", []),
+            "created_at": belief.get("created_at", ""),
+            "last_accessed": belief.get("last_accessed", ""),
+            "access_count": belief.get("access_count", 0),
+            "tags": belief.get("tags", []),
+            "formation_type": belief.get("formation_type", ""),
+            "term": belief.get("term", ""),
+            "aliases": belief.get("aliases", []),
+        }
+        self._memory.journal.append_belief(
+            id=str(belief.get("id", "")),
+            content=belief.get("content", ""),
+            position_8d=belief.get("position_8d") or [],
+            pulse_id=pulse_id,
+            lagrangian=belief.get("encoding_lagrangian", {}),
+            metadata=metadata,
+            embedding_384d=embedding_384d,
+        )
+
+    def _sync_runtime(self, belief: Dict[str, Any], category: str):
+        """Upsert the belief into live runtime stores and persist the canonical position."""
+        normalized = dict(belief)
+        normalized["_category"] = category
+        embedding = None
+
+        try:
+            if self._physics is not None:
+                position, embedding = self._physics.sync_belief_record(normalized)
+                if position:
+                    normalized["position_8d"] = position
+        except Exception as e:
+            logger.warning("Belief runtime sync failed for %s: %s", belief.get("id", ""), e)
+
+        try:
+            self._append_belief_snapshot(normalized, category, embedding_384d=embedding)
+        except Exception as e:
+            logger.warning("Belief journal snapshot failed for %s: %s", belief.get("id", ""), e)
+        return normalized
+
+    def _resync_all_beliefs(self):
+        """Refresh the live runtime state from persisted beliefs."""
+        if self._physics is None:
+            return
+        for belief in self.get_all_beliefs_flat():
+            self._sync_runtime(belief, belief.get("_category", ""))
 
     def generate_id(self, category: str) -> str:
         """Generate a uniform belief ID: {prefix}_{YYYYMMDD}_{sequence}.
@@ -165,9 +283,14 @@ class BeliefStore:
         if not filename:
             return
         filepath = os.path.join(self.data_dir, filename)
+        serialized = []
+        for belief in beliefs:
+            clean = dict(belief)
+            clean.pop("_category", None)
+            serialized.append(clean)
         try:
             with open(filepath, 'w') as f:
-                json.dump(beliefs, f, indent=2)
+                json.dump(serialized, f, indent=2)
         except Exception as e:
             logger.warning(f"Failed to write {filepath}: {e}")
 
@@ -260,6 +383,12 @@ class BeliefStore:
                 total_beliefs = 0
             belief["creation_epoch"] = total_beliefs
 
+        belief = self._normalize_belief(
+            belief,
+            category=category,
+            preserve_mass=mass not in (None, 1.0),
+        )
+        belief = self._sync_runtime(belief, category)
         beliefs.append(belief)
         self._write_category(category, beliefs)
         logger.info(f"Added belief '{belief_id}' to {category} (mass={mass}, conf={confidence:.2f})")
@@ -273,7 +402,9 @@ class BeliefStore:
                 b["mass"] = max(0.1, b.get("mass", 1.0) + mass_delta)
                 b["last_accessed"] = _now_iso()
                 b["access_count"] = b.get("access_count", 0) + 1
+                self._normalize_belief(b, category=category, preserve_mass=True)
                 self._write_category(category, beliefs)
+                self._sync_runtime(b, category)
                 return
         logger.debug(f"Belief {belief_id} not found in {category}")
 
@@ -286,7 +417,9 @@ class BeliefStore:
                 b["last_accessed"] = _now_iso()
                 # Access drives temperature (recency heat) not permanent mass.
                 # Mass is intrinsic — only confidence and affective charge.
+                self._normalize_belief(b, category=category, preserve_mass=True)
                 self._write_category(category, beliefs)
+                self._sync_runtime(b, category)
                 return
 
     def remove_belief(self, category: str, belief_id: str) -> bool:
@@ -296,6 +429,8 @@ class BeliefStore:
         beliefs = [b for b in beliefs if b.get("id") != belief_id]
         if len(beliefs) < original_count:
             self._write_category(category, beliefs)
+            if self._physics is not None:
+                self._physics.remove_belief_point(belief_id)
             logger.info(f"Removed belief '{belief_id}' from {category}")
             return True
         return False
@@ -311,7 +446,9 @@ class BeliefStore:
                     tags.append("archived")
                 b["tags"] = tags
                 b["last_accessed"] = _now_iso()
+                self._normalize_belief(b, category=category, preserve_mass=True)
                 self._write_category(category, beliefs)
+                self._sync_runtime(b, category)
                 logger.info(f"Archived belief '{belief_id}' in {category}")
                 return True
         logger.debug(f"Belief {belief_id} not found for archiving in {category}")
@@ -339,7 +476,13 @@ class BeliefStore:
                     old_si = float(b.get("stability_index", 0.5))
                     new_si = max(clamp_min, min(clamp_max, old_si + delta))
                     b["stability_index"] = round(new_si, 4)
+                    self._normalize_belief(
+                        b,
+                        category=category,
+                        recompute_mass=True,
+                    )
                     self._write_category(category, beliefs)
+                    self._sync_runtime(b, category)
                     logger.debug(
                         f"Stability index updated: {belief_id} "
                         f"{old_si:.3f} → {new_si:.3f} (Δ={delta:+.3f})"
@@ -365,8 +508,7 @@ class BeliefStore:
             beliefs = self._read_category(category)
             for b in beliefs:
                 if b.get("id") == belief_id:
-                    b["_category"] = category
-                    return b
+                    return self._normalize_belief(dict(b), category=category)
         return None
 
     def update_belief(self, belief_id: str, **updates) -> Optional[Dict[str, Any]]:
@@ -395,9 +537,21 @@ class BeliefStore:
                     if "confidence" in updates:
                         b["confidence"] = max(0.0, min(1.0, b["confidence"]))
 
+                    self._normalize_belief(
+                        b,
+                        category=category,
+                        recompute_mass=(
+                            "confidence" in updates
+                            or "stability_index" in updates
+                            or "encoding_lagrangian" in updates
+                        ) and "mass" not in updates,
+                        preserve_mass="mass" in updates,
+                    )
+
                     self._write_category(category, beliefs)
+                    synced = self._sync_runtime(b, category)
                     logger.info(f"Belief updated: {belief_id} ({list(updates.keys())})")
-                    return b
+                    return synced
 
         logger.warning(f"Belief not found for update: {belief_id}")
         return None
@@ -771,7 +925,10 @@ class BeliefStore:
 
     def get_category(self, category: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Get beliefs from a category, sorted by mass (heaviest first)."""
-        beliefs = self._read_category(category)
+        beliefs = [
+            self._normalize_belief(dict(b), category=category)
+            for b in self._read_category(category)
+        ]
         beliefs.sort(key=lambda b: b.get("mass", 0), reverse=True)
         return beliefs[:limit]
 
@@ -787,9 +944,10 @@ class BeliefStore:
         """
         all_beliefs = []
         for category in BELIEF_CATEGORIES:
-            beliefs = self._read_category(category)
-            for b in beliefs:
-                b["_category"] = category
+            beliefs = [
+                self._normalize_belief(dict(b), category=category)
+                for b in self._read_category(category)
+            ]
             all_beliefs.extend(beliefs)
         return all_beliefs
 
@@ -967,7 +1125,7 @@ class BeliefStore:
         beliefs = self._read_category(category)
         for b in beliefs:
             if b.get("id") == belief_id:
-                return b
+                return self._normalize_belief(dict(b), category=category)
         return None
 
     def touch_beliefs_batch(self, category: str, belief_ids: List[str]):
@@ -984,9 +1142,13 @@ class BeliefStore:
             if b.get("id") in id_set:
                 b["access_count"] = b.get("access_count", 0) + 1
                 b["last_accessed"] = now
+                self._normalize_belief(b, category=category, preserve_mass=True)
                 changed = True
         if changed:
             self._write_category(category, beliefs)
+            for b in beliefs:
+                if b.get("id") in id_set:
+                    self._sync_runtime(b, category)
 
     # ── Cognitive Mass Equation ───────────────────────────────────────
     # From δ∫(H(q) + λ·D_KL(q‖q*))dt = 0
@@ -1040,6 +1202,7 @@ class BeliefStore:
                     changed = True
             if changed:
                 self._write_category(category, beliefs)
+        self._resync_all_beliefs()
 
     # ── Cognitive Attrition Equation ──────────────────────────────────
     # C = min(1.0, (Base + w_T(T) + w_R(R) + w_V(V)) × (0.5 + S))
@@ -1112,6 +1275,8 @@ class BeliefStore:
 
                 # Pruning threshold
                 if new_conf < 0.20:
+                    if self._physics is not None:
+                        self._physics.remove_belief_point(b.get("id", ""))
                     stats["pruned"] += 1
                     logger.info(
                         f"Belief PRUNED (attrition): {b.get('id')} "
@@ -1128,6 +1293,11 @@ class BeliefStore:
                     stats["promoted"] += 1
 
                 b["confidence"] = round(new_conf, 3)
+                self._normalize_belief(
+                    b,
+                    category=category,
+                    recompute_mass=True,
+                )
                 stats["updated"] += 1
                 surviving.append(b)
 
@@ -1148,4 +1318,3 @@ class BeliefStore:
             return "deep"
         else:
             return "core"
-
