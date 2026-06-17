@@ -33,6 +33,13 @@ def _checksum(entry: Dict[str, Any]) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _serialize_entry(entry: Dict[str, Any]) -> str:
+    """Serialize an entry with a freshly computed checksum."""
+    payload = dict(entry)
+    payload["checksum"] = _checksum(entry)
+    return json.dumps(payload, separators=(',', ':'))
+
+
 class CognitiveJournal:
     """Append‑only journal handling persistence of all point types.
 
@@ -101,8 +108,7 @@ class CognitiveJournal:
         }
         if embedding_384d is not None:
             entry["embedding_384d"] = embedding_384d
-        entry["checksum"] = _checksum(entry)
-        line = json.dumps(entry, separators=(',', ':'))
+        line = _serialize_entry(entry)
         # Write atomically – open in append mode and flush immediately.
         with self.path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -153,8 +159,10 @@ class CognitiveJournal:
         tmp_path = self.path.with_suffix(".tmp")
         with tmp_path.open("w", encoding="utf-8") as tmp:
             for entry in latest.values():
-                line = json.dumps(entry, separators=(',', ':'))
+                line = _serialize_entry(entry)
                 tmp.write(line + "\n")
+            tmp.flush()
+            os.fsync(tmp.fileno())
         # Replace original file atomically
         tmp_path.replace(self.path)
 

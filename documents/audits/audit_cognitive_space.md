@@ -1,144 +1,56 @@
 # Cognitive Space Audit
 
-**File:** `core/cognitive_space.py`
+**Scope:** `core/cognitive_space.py`
 
----
+## Runtime role
 
-### Overview
-The `cognitive_space.py` module implements Helix’s **8‑dimensional spatial manifold** that unifies beliefs and memories. It provides:
-1. **Deterministic projection** from high‑dimensional embeddings to an 8‑D space (`CognitiveProjection`).
-2. **Gravity field** over a fixed 512‑anchor grid (`GravityField`) that quantifies where cognitive mass is concentrated.
-3. **KD‑Tree indexed point store** (`CognitiveSpace`) for fast neighbor queries.
-4. **Physics‑based metrics** – Shannon entropy, KL‑divergence, and temperature – derived from a Lagrangian formulation.
-5. **Trail particles** that leave a trace of the attention path, pruned periodically during context compression.
+- `CognitiveSpace` is the reusable 8D manifold implementation that backs both the belief field and the memory field inside `SpatialMind`. `core/cognitive_space.py:300-388`, `core/spatial_mind.py:58-70`
+- The file contains four distinct concerns: deterministic 8D projection (`CognitiveProjection`), the anchor-based `GravityField`, the point-store and physics methods on `CognitiveSpace`, and an `InteractionEngine` helper at the end of the file. `core/cognitive_space.py:75-173`, `core/cognitive_space.py:180-294`, `core/cognitive_space.py:300-1615`, `core/cognitive_space.py:1637-1755`
 
-The design mirrors the original Kaleidoscope E8 architecture, adapted for Helix’s belief‑graph‑centric cognition.
+## Projection and gravity field
 
----
+- `CognitiveProjection` builds a deterministic random-orthogonal matrix, supports single and batched projection, and persists the matrix to `cognitive_projection.npy`. `core/cognitive_space.py:75-173`
+- `GravityField` maintains 512 fixed anchors, splats `K_SPLAT` masses onto the nearest anchors, and interpolates local potential from `K_QUERY_ANCHORS` neighbors. `core/cognitive_space.py:61-67`, `core/cognitive_space.py:180-294`
 
-### Key Constants
-```python
-PROJECTION_DIM = 8          # Target dimensionality
-N_ANCHORS = 512             # Fixed anchor grid size for gravity field
-K_SPLAT = 8                 # Splat mass to K nearest anchors
-K_QUERY_ANCHORS = 8         # Interpolate potential from K nearest anchors
-KDTREE_REBUILD_THRESHOLD = 100  # Rebuild tree after this many new points
-PROJECTION_SEED = 42        # Deterministic seed for reproducible positions
-```
-**Why:** These constants define the geometry and performance characteristics of the cognitive manifold. The deterministic seed ensures that identical embeddings always map to the same 8‑D point, guaranteeing reproducibility across sessions.
+## Point store and KDTree lifecycle
 
----
+- `CognitiveSpace.__init__()` loads or creates the shared projection matrix, creates the gravity field, and initializes point storage plus lazy KDTree state. `core/cognitive_space.py:346-388`
+- `add_point()` stores projected position, type, confidence/importance, recency metadata, and arbitrary metadata, and rebuilds the KDTree lazily after `KDTREE_REBUILD_THRESHOLD` additions. `core/cognitive_space.py:407-469`
+- `update_access()`, `update_metadata()`, `remove_point()`, `get_point()`, and `get_position()` are thin state mutators/accessors around the in-memory point registry. `core/cognitive_space.py:470-499`
+- `_rebuild_tree()` excludes points with `confidence <= 0.0` and points marked with `metadata.absorbed_by`, then rebuilds the KDTree from the remaining positions. `core/cognitive_space.py:1176-1217`
 
-### `CognitiveProjection` (lines 72‑140)
-- **Purpose:** Projects arbitrary high‑dimensional embeddings (e.g., a 384‑dim sentence vector) into the fixed 8‑D manifold using a **random orthogonal matrix** (Johnson‑Lindenstrauss transform).
-- **Construction (`__init__` & `_build_projection_matrix` lines 72‑100):**
-  - Generates a Gaussian matrix, performs QR decomposition to obtain orthogonal columns, normalizes them to unit length.
-  - Deterministic via `np.random.default_rng(self.seed)`.
-- **Projection (`project` lines 102‑113):** Handles mismatched dimensions by padding/truncating, then computes `embedding @ W`.
-- **Batch projection (`project_batch` lines 115‑128):** Supports vectorized projection of multiple embeddings.
-- **Persistence (`save`/`load` lines 130‑140):** Saves the matrix to disk; loads if present; otherwise rebuilds.
+## Query path
 
-**Why:** Orthogonal projection preserves relative distances while drastically reducing dimensionality, enabling efficient KD‑Tree indexing and gravity computations.
+- `query_nearby()` is pure nearest-neighbor lookup over the KDTree and returns `(point_id, distance)` pairs. `core/cognitive_space.py:507-533`
+- `gravity_ranked_query()` first widens to `k_candidates` nearest neighbors, then re-ranks those candidates with `temperature * mass / distance^2`. `core/cognitive_space.py:535-574`
+- Shannon entropy, KL divergence, and local temperature are computed from those gravity-ranked neighborhoods rather than from the raw KDTree distances. `core/cognitive_space.py:591-708`
+- `invalidate_entropy_baseline()` clears the cached manifold-wide baseline so temperature recomputes after compression or major drift. `core/cognitive_space.py:710-717`
 
----
+## Trail particles
 
-### `GravityField` (lines 180‑298)
-- **Anchors:** Fixed random points on the unit 8‑D sphere (`self.anchors`). Deterministic via seed offset (`seed + 1000`).
-- **`compute_field` (lines 206‑250):**
-  - Resets density array.
-  - For each point, distributes its mass to the `K_SPLAT` nearest anchors using inverse‑distance weighting.
-  - Sets `self.potential` as a copy of the accumulated density (simplified field).
-- **`potential_at` (lines 259‑278):** Interpolates potential at an arbitrary 8D point (`gradient_at` was deleted in commit 1b55c50).
+- `deposit_trail_particle()` stores a synthetic `trail_*` point at the current attention position. Trail points use `type == "trail"`, `confidence == 0.0`, and carry their own pulse/time metadata. `core/cognitive_space.py:721-760`
+- `decay_trail_particles()` removes trails older than `max_age_pulses`; `get_trail_particles()` exposes optional age and radius filtering. `core/cognitive_space.py:761-832`
 
-**Why:** The gravity field provides a continuous scalar field (`potential`) that quantifies cognitive “weight” at any location, guiding attention flow and enabling entropy/temperature calculations.
+## Force integration
 
----
+- `step_attention()` combines four forces: gravity, stability, stimulus, and optional affect bias, then updates velocity with damping and advances position by Euler integration. `core/cognitive_space.py:837-899`
+- `compute_gravity_force()` samples up to 20 nearest points, applies a softened inverse-cube force, and clamps the total force by a density-derived limit. `core/cognitive_space.py:900-960`
+- `compute_stability_force()` is a simple elastic pull toward the identity center scaled by omega. `_compute_stimulus_force()` is a unit-direction pull toward the new stimulus. `core/cognitive_space.py:962-1007`
 
-### `CognitiveSpace` Core (lines 327‑511)
-- **Initialization (lines 327‑369):**
-  - Loads or creates `CognitiveProjection`.
-  - Instantiates `GravityField`.
-  - Sets up point storage (`self._points`) and lazy KD‑Tree (`self._tree`).
-  - Tracks pulse count and agent age.
-- **Point Management (`add_point` lines 373‑416):**
-  - Projects embedding to 8‑D, stores metadata (type, confidence, importance, timestamps, etc.).
-  - Marks tree dirty; triggers rebuild after `KDTREE_REBUILD_THRESHOLD` additions.
-- **Access/metadata updates (`update_access` line 417, `update_metadata` line 423).**
-- **Query utilities (`query_nearby` lines 445‑472, `gravity_ranked_query` lines 473‑511):**
-  - KD‑Tree provides fast nearest‑neighbor search.
-  - `gravity_ranked_query` re‑ranks candidates by `temperature * mass / distance²` (cognitive gravity model).
+## Mass and temperature formulas
 
----
+- `update_gravity_field()` recomputes the gravity field from every live point using `T * mass` as the deposited field mass. `core/cognitive_space.py:1011-1045`
+- `_compute_structural_mass()` combines confidence/importance, a logarithmic reliance multiplier from `access_count + relations_count`, a short-lived recency boost, and a somatic multiplier derived from encoding omega and stability. `core/cognitive_space.py:1060-1119`
+- `_compute_temperature()` uses a Lorentzian cooling profile in pulse-time, with different base temperature and tau parameters for beliefs, memories, and trails. `core/cognitive_space.py:1121-1172`
 
-### Cognitive Physics (Lines 528‑647)
-#### Shannon Entropy (`compute_shannon_entropy` lines 528‑556)
-- Retrieves `k` nearest points, normalizes gravity scores to probabilities, computes `-Σ p log₂ p`.
-- Returns 0 if insufficient data.
-#### KL Divergence (`compute_kl_divergence` lines 557‑610)
-- Builds two distributions (current vs. identity center) from gravity scores, smooths with epsilon, computes `Σ p log(p/p*)`.
-#### Local Temperature (`compute_local_temperature` lines 612‑646)
-- Ratio of local entropy to baseline entropy (sampled from random anchors on first call).
-- Maps to LLM generation temperature.
-#### Entropy Baseline Invalidation (`invalidate_entropy_baseline` line 647)
-- Resets `_mean_entropy` to `None` so it recomputes on the next call.
-- **Zero API cost** — piggybacks on context compression.
+## Bootstrap, persistence, and stats
 
----
+- `trace_cognitive_trail()` samples waypoint neighborhoods between two attention centers and condenses the nearest content into short flash fragments. `core/cognitive_space.py:1220-1313`
+- `bootstrap_from_journal()` rehydrates points from `cognitive_journal.jsonl`, preferring stored 384D embeddings when present and falling back to the stored 8D position when not. `core/cognitive_space.py:1317-1366`
+- `save_state()` and `load_state()` persist only point data; the FAISS index and gravity field are rebuilt from those points rather than serialized directly. `core/cognitive_space.py:1370-1444`
+- `get_stats()` reports counts, tree status, gravity-field metrics, and aggregate mass statistics. `core/cognitive_space.py:1447-1469`
 
-### Trail Particles (`deposit_trail_particle` lines 658‑686)
-- Persists a lightweight point of type `"trail"` at the current attention position.
-- Includes `omega`, `importance`, and minimal metadata.
-- Triggers KD‑Tree rebuild as needed.
-- **`decay_trail_particles` (lines 670-706)**: Prunes trail particles older than `max_age_pulses` (default 200) to keep the KDTree size stable. Called during context compression in the pulse loop.
+## Interaction potential and affordance helper
 
----
-
-### Interaction Potential (Removed)
-- **Status:** The `compute_interaction_potential` function (previously lines 744-798) has been **DELETED** in commit 1b55c50 as part of pruning dead/unused systems.
-
----
-
-### Attention Dynamics (Euler‑Lagrange) (lines 812‑1003)
-- **`step_attention`** (lines 812‑864): Integrates four forces — `F_gravity`, `F_stability`, `F_stimulus`, `F_affect` — to update position and velocity.
-- **`compute_gravity_force`** (lines 875‑919): Sums inverse‑cube attractions from the K=20 nearest points, scaled by cognitive gravity.
-- **`compute_stability_force`** (lines 930‑948): Hooke's law elastic pull toward identity center, scaled by Ω.
-- **`_compute_stimulus_force`** (lines 959‑966): Unit‑vector pull toward the new thought/stimulus.
-- **`update_gravity_field`** (lines 979‑1003): Recomputes the 512‑anchor field from all point masses.
-
-### Structural Mass (`_compute_structural_mass` lines 1028‑1042)
-```python
-mass = c × (1 + n_connections / n_mean)
-```
-- For **beliefs**: `c = confidence`.
-- For **memories/trails**: `c = importance`.
-- `n_connections` = `relations_count`; `n_mean` = mean connections across all points (computed in `update_gravity_field`).
-
-### Lorentzian Temperature (`_compute_recency_temperature` lines 1039‑1087)
-```python
-T = T₀ / (1 + (pulse_age / τ)²)
-```
-- Phase‑dependent `T₀`: beliefs = 0.3, memories = 1.5×c, trails = 2.0×c.
-- Phase‑dependent `τ`: beliefs = 60 pulses, memories = 12, trails = 8.
-- `pulse_age = current_pulse − max(creation_pulse, last_accessed_pulse)` — accessing a point reheats it.
-
----
-
-### Mermaid Diagram – Cognitive Space Workflow
-```mermaid
-flowchart TD
-    Init[Initialize CognitiveSpace] --> Proj[Create/Load Projection]
-    Init --> GF[Create GravityField]
-    Add[add_point] -->|store| Store[Point Store]
-    Store -->|dirty| Rebuild[Rebuild KD‑Tree]
-    Query[query_nearby] -->|KD‑Tree| Search[Nearest Search]
-    Gravity[gravity_ranked_query] -->|re‑rank| Rank[Cognitive Gravity]
-    Entropy[compute_shannon_entropy] -->|probabilities| H[Entropy]
-    KL[compute_kl_divergence] -->|distributions| DKL[KL Divergence]
-    Temp[compute_local_temperature] -->|H/H_baseline| T[Temperature]
-    Trail[deposit_trail_particle] -->|persist| TrailStore[Trail Points]
-    Prune[decay_trail_particles] -->|prune| TrailStore
-```
-
----
-
-*End of Cognitive Space audit.*
+- `compute_interaction_potential()` now exists on `CognitiveSpace`. It inspects nearby points, prefers explicit affordance metadata (`metadata["affordance"]`, `metadata["affordances"]`, or `metadata["tool_name"]`), and otherwise falls back to conservative tool-name matching against nearby point content. `core/cognitive_space.py:1471-1615`
+- `InteractionEngine.compute_affordances()` consumes those raw affordances, then applies cooldown filtering, tool-name deduplication, sentinel enrichment, and top-k truncation. `core/cognitive_space.py:1637-1755`

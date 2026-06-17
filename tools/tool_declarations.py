@@ -173,13 +173,17 @@ CORE_TOOLS = [
     },
     {
         "name": "note",
-        "description": "Write a note to your active scratchpad to keep track of current tasks or thoughts.",
+        "description": "Write a note to your active scratchpad to keep track of current tasks or thoughts. You can optionally postpone the note to act as a locked reminder (ignored/hidden until the ISO timestamp, e.g. '2026-06-17T10:00:00-04:00').",
         "parameters": {
             "type": "object",
             "properties": {
                 "content": {
                     "type": "string",
                     "description": "The content of the note",
+                },
+                "postpone_until": {
+                    "type": "string",
+                    "description": "Optional ISO timestamp (with timezone offset) until when the note should be locked/postponed.",
                 },
             },
             "required": ["content"],
@@ -224,7 +228,7 @@ CORE_TOOLS = [
     },
     {
         "name": "update_note",
-        "description": "Update the content of an existing scratchpad note in-place, keeping the same ID.",
+        "description": "Update the content or status of an existing scratchpad note in-place. You can optionally add, change, or clear a postpone lock.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -235,6 +239,10 @@ CORE_TOOLS = [
                 "content": {
                     "type": "string",
                     "description": "The new content for the note",
+                },
+                "postpone_until": {
+                    "type": "string",
+                    "description": "Optional ISO timestamp (with timezone offset) to lock/postpone the note. Pass 'clear' to remove an existing postpone lock.",
                 },
             },
             "required": ["note_id", "content"],
@@ -322,21 +330,21 @@ CORE_TOOLS = [
                 },
                 "focus": {
                     "type": "string",
-                    "description": "Optional focus description for analysis (e.g. 'the doorway', 'User\\'s expression')",
+                    "description": "Optional focus description for analysis (e.g. 'the doorway', 'Joshua's expression')",
                 },
             },
             "required": [],
         },
     },
     {
-        "name": "reset_context",
-        "description": "Reset your context window and start a fresh thought thread. Use this when you want to shift focus to a completely new topic, or when your context is getting large. You can provide an initial prompt that will be injected into the new context as your first event.",
+        "name": "nap",
+        "description": "Take a nap — pause your pulse loop for a period of rest and run a belief consolidation cycle. Use this when you feel you've been running for a long time and want to process and integrate what you've learned. Your beliefs will be consolidated, merged, and strengthened during this period. You'll wake up refreshed.",
         "parameters": {
             "type": "object",
             "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "Initial prompt or thought thread for the new context window. This will be the first thing you see after the reset.",
+                "duration": {
+                    "type": "integer",
+                    "description": "How long to rest in minutes (default 60, range 5-180)",
                 },
             },
             "required": [],
@@ -1198,7 +1206,7 @@ TOOLSET_MANAGEMENT_TOOLS = [
             "Load additional tool capabilities into your current session. "
             "Call list_toolsets() first to see what's available. "
             "Available toolsets: browser, git, github, social (Moltbook), "
-            "email, calendar, drive, tasks, desktop. "
+            "email, calendar, drive, tasks, desktop, sensory (camera/mic/PTZ). "
             "Tools remain active until you disable them or context compresses."
         ),
         "parameters": {
@@ -1252,11 +1260,138 @@ TOOLSET_MANAGEMENT_TOOLS = [
 # Only "core" is loaded by default. All others require conscious
 # enable_toolset() to activate.
 
+import os
+
+_lean_names = {
+    "reply",
+    "send_message",
+    "memory_recall",
+    "nap",
+    "note",
+    "note_done",
+    "list_notes",
+    "clear_notes",
+    "update_note",
+    "journal",
+}
+_system_names = {"terminal", "read_file", "write_file", "append_file"}
+_web_names = {"search", "read_url"}
+_sensory_names = {
+    "verbalize",
+    "listen",
+    "look",
+    "ptz_look",
+    "camera_auto_track",
+    "record_video",
+}
+
+CORE_LEAN_TOOLS = [t for t in CORE_TOOLS if t["name"] in _lean_names]
+SYSTEM_TOOLS = [t for t in CORE_TOOLS if t["name"] in _system_names]
+WEB_TOOLS = [t for t in CORE_TOOLS if t["name"] in _web_names]
+SENSORY_TOOLS = [t for t in CORE_TOOLS if t["name"] in _sensory_names]
+
+# In local mode, only load lean core tools by default.
+# Segmented tools can be consciously enabled on demand.
+_is_local = os.environ.get("HELIX_PULSE_MODE") == "local"
+_default_core = CORE_LEAN_TOOLS if _is_local else CORE_TOOLS
+
+TOOL_FACTORY_TOOLS = [
+    {
+        "name": "create_custom_tool_template",
+        "description": "Create a skeleton python script template for a new custom tool inside tools/custom/.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the custom tool (must be snake_case, e.g. 'convert_doc_to_pdf')"
+                },
+                "toolset": {
+                    "type": "string",
+                    "description": "The toolset/group name to assign this tool to (e.g. 'custom', 'file_utils', 'git')"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "A brief description of what the tool does"
+                },
+                "parameters": {
+                    "type": "object",
+                    "description": "Gemini Function Declaration parameters object (defining properties, types, required args)"
+                },
+                "requires_env": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Optional list of required environment variables for this tool"
+                }
+            },
+            "required": ["name", "toolset", "description", "parameters"]
+        }
+    },
+    {
+        "name": "register_custom_tool",
+        "description": "Dynamically validate, load and register a custom tool from tools/custom/<name>.py into the running registry and session.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The name of the custom tool (e.g. 'convert_doc_to_pdf' corresponding to tools/custom/convert_doc_to_pdf.py)"
+                }
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "name": "list_custom_tools",
+        "description": "List all custom tools in tools/custom/ with their name, toolset, description, and registration status.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "delete_custom_tool",
+        "description": "Deregister a custom tool from the running session and delete its file from tools/custom/.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The name of the custom tool to delete"
+                }
+            },
+            "required": ["name"]
+        }
+    }
+]
+
 TOOLSETS = {
+    "tool_factory": {
+        "description": "Dynamic tool creation and registration",
+        "tools": TOOL_FACTORY_TOOLS,
+        "default": True,
+    },
     "core": {
         "description": "Core cognitive tools — always loaded",
-        "tools": CORE_TOOLS + TOOLSET_MANAGEMENT_TOOLS,
+        "tools": _default_core + TOOLSET_MANAGEMENT_TOOLS,
         "default": True,
+    },
+    "system": {
+        "description": "System access — terminal, read/write files",
+        "tools": SYSTEM_TOOLS,
+        "default": False,
+    },
+    "web": {
+        "description": "Web search and read URL",
+        "tools": WEB_TOOLS,
+        "default": False,
+    },
+    "sensory": {
+        "description": "Sensory and hardware interaction — camera, microphone, verbalization",
+        "tools": SENSORY_TOOLS,
+        "default": False,
     },
     "browser": {
         "description": "Web browsing and page interaction",
@@ -1370,4 +1505,5 @@ TOOL_DECLARATIONS = (
     + DRIVE_TOOLS
     + TASKS_TOOLS
     + DESKTOP_TOOLS
+    + TOOL_FACTORY_TOOLS
 )

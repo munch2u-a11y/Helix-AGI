@@ -487,13 +487,20 @@ class Curator:
         try:
             audit_path = self.data_dir / "logs" / "manifold_clusters.json"
             audit_path.parent.mkdir(parents=True, exist_ok=True)
+            # Sanitize numpy bools/ints to native Python types for JSON
+            for ci in cluster_audit:
+                for k, v in ci.items():
+                    if isinstance(v, (bool,)):
+                        continue  # already native
+                    if hasattr(v, 'item'):  # numpy scalar
+                        ci[k] = v.item()
             audit_data = {
                 "timestamp": datetime.now().isoformat(),
                 "total_beliefs": total_beliefs,
                 "expansion_factor": round(threshold, 4),
                 "precipitation_threshold": round(threshold, 4),
                 "clusters_found": n_clusters,
-                "noise_points": noise,
+                "noise_points": int(noise),
                 "precipitated": len(precipitated),
                 "clusters": cluster_audit,
             }
@@ -521,17 +528,24 @@ class Curator:
                 cutoff_dt = datetime.now().astimezone() - timedelta(hours=24)
 
                 def _parse_timestamp(raw: str):
+                    """Parse ISO timestamp, ensuring result is always timezone-aware."""
                     if not raw:
                         return None
+                    parsed = None
                     try:
-                        return datetime.fromisoformat(raw)
+                        parsed = datetime.fromisoformat(raw)
                     except ValueError:
                         if len(raw) >= 5 and raw[-5] in "+-" and raw[-3] != ":":
                             try:
-                                return datetime.fromisoformat(f"{raw[:-2]}:{raw[-2:]}")
+                                parsed = datetime.fromisoformat(f"{raw[:-2]}:{raw[-2:]}")
                             except ValueError:
                                 return None
-                        return None
+                        else:
+                            return None
+                    # Ensure timezone-aware so comparison with cutoff_dt never fails
+                    if parsed is not None and parsed.tzinfo is None:
+                        parsed = parsed.astimezone()
+                    return parsed
 
                 thought_count = 0
                 for entry in self.memory.journal.load_all():

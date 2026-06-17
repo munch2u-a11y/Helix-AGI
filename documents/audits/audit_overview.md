@@ -1,105 +1,39 @@
-# Helix Cognitive Architecture: Audit Overview
+# Helix Technical Audit Overview
 
-This directory contains the definitive, line-by-line technical audits of the Helix AGI system. These documents serve as the primary reference for the architecture, designed to onboard new developers and provide a comprehensive map for future maintenance and troubleshooting.
+These audits are maintained against the live runtime wiring in `main.py`, the core runtime under `core/`, and persistence/search modules under `memory/`.
 
----
+## Runtime shape
 
-### System Architecture Summary
+- Startup wires `MemoryManager`, `BeliefStore`, `Scratchpad`, `PhysicsEngine`, `Preconscious`, `PulseLoop`, and the post-pulse hooks in `setup_helix()`. `main.py:133-230`, `main.py:325-364`
+- The spatial stack is split between a wrapper (`PhysicsEngine`), a dual-space controller (`SpatialMind`), and the underlying 8D manifold (`CognitiveSpace`). `core/physics_engine.py:56-90`, `core/physics_engine.py:162-248`, `core/spatial_mind.py:48-109`, `core/cognitive_space.py:300-388`
+- Persistence is append-first: memories are journaled to `CognitiveJournal`, registered into the live 8D manifold through `PhysicsEngine.register_memory_entry()`, and added to the 384D `SemanticIndex` for conscious recall. `memory/memory_manager.py:124-200`, `core/physics_engine.py:539-637`, `memory/cognitive_journal.py:61-116`, `memory/semantic_index.py:108-225`
+- Pulse-time behavior is centered on `PulseLoop._main_loop()` and `PulseLoop._pulse()`, with preconscious recall, LLM/tool orchestration, memory writes, spatial updates, and post-pulse hooks all happening from there. `core/pulse_loop.py:495-657`, `core/pulse_loop.py:761-1065`
 
-Helix is an event-driven, continuously running cognitive daemon. It breaks from standard RAG (Retrieval-Augmented Generation) patterns by implementing an **8-dimensional spatial manifold** where beliefs and memories attract attention via **cognitive gravity** (a physics-inspired model replacing keyword search). The system is subjectively grounded: it experiences "pulses" of consciousness, continuously updates an append-only memory journal, and compresses its context window to preserve first-person narrative continuity.
+## Audit index
 
-### Core Architecture Diagram
+### Core loop
 
-```mermaid
-flowchart TD
-    %% Subsystems
-    subgraph Core Loop
-        PL[PulseLoop]
-        PC[Preconscious]
-        CC[ContextCompressor]
-    end
+- [Pulse Loop Audit](audit_pulse_loop.md) - thread lifecycle, event queue, cadence state, rate-limit parking, context compression, and post-pulse dispatch. `core/pulse_loop.py:54-1398`
+- [Preconscious Audit](audit_preconscious.md) - layered context assembly, Layer 2 anchors, spatial neighborhood recall, gravity-ranked belief injection, and dashboard-side injection snapshots. `core/preconscious.py:43-1640`
 
-    subgraph Memory & Persistence
-        MM[MemoryManager]
-        CJ[(CognitiveJournal JSONL)]
-    end
+### Spatial stack
 
-    subgraph Spatial & Semantic Engine
-        CS[CognitiveSpace 8D]
-        GF[GravityField]
-        SM[SpatialMind]
-        SI[SemanticIndex 384D]
-    end
+- [Spatial Mind Audit](audit_spatial_mind.md) - dual `CognitiveSpace` ownership, attention state, wake flashes, identity center, and persistence. `core/spatial_mind.py:29-730`
+- [Cognitive Space Audit](audit_cognitive_space.md) - 8D projection, KDTree-backed point store, gravity field, entropy and temperature metrics, trail particles, force integration, and affordance inference. `core/cognitive_space.py:75-1755`
 
-    subgraph Somatic & Affect
-        SS[StabilitySentinel]
-        AF[AffectField]
-        BD[BeliefDetector]
-    end
+### Affect and post-pulse analysis
 
-    subgraph User & Tools
-        IO[Telegram / User I/O]
-        SP[Scratchpad]
-        Tools[Native Tool Registry]
-    end
+- [Affect Field Audit](audit_affect_field.md) - Plutchik-space wave packets, interference sampling, surfaced-memory reactivation, and persisted affect state. `core/affect_field.py:100-722`
+- [Belief Detector Audit](audit_belief_detector.md) - post-pulse belief-signal classification, pending tag writes, and sentinel nudges. `core/belief_detector.py:77-355`
 
-    %% Flow
-    IO -->|Events| PL
-    PL -->|Trigger| PC
-    PL -->|LLM Pulse| Gemini[Gemini LLM]
-    Gemini -->|Native FunctionCall| Tools
-    Tools -->|Native FunctionResponse| Gemini
-    Tools -.->|Pending Result Queue| PL
-    Gemini -->|Thought/Events| MM
-    
-    %% Memory
-    MM -->|Append| CJ
-    CJ -.->|Nightly Compaction| CJ
-    
-    %% Spatial & Semantic
-    PC -->|Gravity Query| SM
-    SM --> CS
-    CS --> GF
-    MM -.->|Conscious Recall| SI
-    
-    %% State & Somatics
-    SS -->|Omega/H/S_total| CS
-    AF -->|Emotional Steering| CS
-    PL -->|Post-Pulse Hook| BD
-    PL -->|Summarization| CC
-    Tools -.-> SP
-    SP -->|Inject Reminders| PC
-```
+### Persistence and recall
 
----
+- [Cognitive Journal Audit](audit_cognitive_journal.md) - append, checksum verification, load, and compaction behavior. `memory/cognitive_journal.py:19-241`
+- [Memory Manager Audit](audit_memory_manager.md) - compatibility API, journal-backed writes, recent/history retrieval, semantic recall, and somatic echo. `memory/memory_manager.py:41-431`
+- [Semantic Index Audit](audit_semantic_index.md) - normalized 384D vector storage, numpy search, FAISS upgrade path, and persistence. `memory/semantic_index.py:47-512`
+- [Scratchpad Audit](audit_scratchpad.md) - markdown note storage, regex-based edits, due-note parsing, and preconscious summary generation. `core/scratchpad.py:31-209`
 
-### Audit Index
+## Important boundary notes
 
-The following detailed module audits are available:
-
-#### 1. Core Loop & Consciousness
-- **[Pulse Loop Audit](audit_pulse_loop.md)** (`core/pulse_loop.py`): The main state machine, event queue, rate-limit fallback, and heartbeat cycle.
-- **[Preconscious Audit](audit_preconscious.md)** (`core/preconscious.py`): Context assembly, Layer 2 anchor injection, dynamic spatial neighborhood retrieval, and toolset awareness.
-
-#### 2. Spatial Physics & Attention
-- **[Spatial Mind Audit](audit_spatial_mind.md)** (`core/spatial_mind.py`): The wrapper managing the dual 8D fields (belief/memory) and handling pulse integration.
-- **[Cognitive Space Audit](audit_cognitive_space.md)** (`core/cognitive_space.py`): The underlying 8D manifold geometry, gravity field, Eulerian physics, and metrics (Shannon Entropy, KL Divergence).
-
-#### 3. Somatics & Emotion
-- **[Affect Field Audit](audit_affect_field.md)** (`core/affect_field.py`): Plutchik emotional field overlay, driving attention steering via wave packets.
-- **[Belief Detector Audit](audit_belief_detector.md)** (`core/belief_detector.py`): Post-pulse background process using local Ollama models to crystallize and detect emergent beliefs.
-
-#### 4. Memory & Persistence
-- **[Cognitive Journal Audit](audit_cognitive_journal.md)** (`memory/cognitive_journal.py`): The append-only, checksum-verified JSONL storage layer backing all states.
-- **[Memory Manager Audit](audit_memory_manager.md)** (`memory/memory_manager.py`): The compatibility layer bridging legacy interfaces to the new JSONL backend.
-- **[Semantic Index Audit](audit_semantic_index.md)** (`memory/semantic_index.py`): The 384D numpy/FAISS-backed exact semantic search layer for conscious episodic recall.
-- **[Scratchpad Audit](audit_scratchpad.md)** (`core/scratchpad.py`): The Markdown-based working memory buffer for tracking active and due reminders.
-
----
-
-### Design Philosophy
-
-1. **Gravity over Search:** Memories are not retrieved via text similarity; they attract the attention center based on mass (confidence) and temperature (recency).
-2. **First-Person Continuity:** The `ContextCompressor` rolls the context window forward as a subjective narrative ("I thought... I did..."), never wiping the slate clean.
-3. **No External Databases:** SQLite and ChromaDB have been entirely excised in favor of flat text files (Markdown scratchpads, JSONL journals) and in-memory 8D projections.
-4. **Somatic Anchoring:** Generation parameters (like temperature) are not hardcoded but derived natively from the manifold's entropy, mimicking an organism's shifting states of focus.
+- `PhysicsEngine` and `affect_hook` are part of the runtime path but do not yet have standalone audit files in this directory. Their behavior is referenced where it materially affects the audited modules. `core/physics_engine.py:38-759`, `core/affect_hook.py:41-158`
+- Several module header docstrings are older than the implementation. The detailed audits below cite the executable code paths rather than the prose headers. Examples: `core/pulse_loop.py:1-25`, `core/preconscious.py:1-26`, `memory/semantic_index.py:13-19`

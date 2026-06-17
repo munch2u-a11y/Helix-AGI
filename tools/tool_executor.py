@@ -34,10 +34,8 @@ Tags handled by pulse_loop.py (not processed here):
 
 import os
 import re
-import json
 import subprocess
 import logging
-from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
@@ -49,57 +47,6 @@ BLOCKED_WRITE_FILES = {"daemon.py", "main.py", "pulse_loop.py", "physics_engine.
 MAX_FILE_READ = 2_000_000  # 2MB
 MAX_FILE_WRITE = 500_000   # 500KB
 TERMINAL_TIMEOUT = 30      # seconds
-
-# Config path for safety mode / whitelist
-_BASE_DIR = Path(__file__).parent.parent.resolve()
-_CONFIG_PATH = _BASE_DIR / "config" / "config.json"
-
-
-def _load_config() -> dict:
-    """Load config/config.json if it exists."""
-    if _CONFIG_PATH.exists():
-        try:
-            with open(_CONFIG_PATH, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-
-def _is_command_allowed(command: str) -> bool:
-    """Check if a terminal command is allowed by the whitelist.
-
-    When safety_mode is off or whitelist is empty, all commands are allowed.
-    When safety_mode is on, the command must start with one of the
-    whitelisted command prefixes.
-    """
-    cfg = _load_config()
-    if not cfg.get("safety_mode", True):
-        return True  # Safety mode off — allow all
-
-    whitelist = cfg.get("whitelist", [])
-    if not whitelist:
-        return True  # No whitelist configured — allow all
-
-    # Extract command prefixes from whitelist
-    allowed_commands = set()
-    for entry in whitelist:
-        entry = entry.strip()
-        if not entry or entry.startswith("#"):
-            continue
-        # Command entries: no dots, or have spaces
-        if "." not in entry or " " in entry:
-            allowed_commands.add(entry.lower())
-
-    if not allowed_commands:
-        return True  # No command entries in whitelist — allow all
-
-    # Check if the command starts with any whitelisted prefix
-    cmd_lower = command.strip().lower()
-    for allowed in allowed_commands:
-        if cmd_lower.startswith(allowed):
-            return True
-    return False
 
 
 @dataclass
@@ -137,70 +84,6 @@ class ToolExecutor:
     def set_pulse_loop(self, pulse_loop):
         """Wire the pulse loop reference for context reset tool."""
         self._pulse_loop = pulse_loop
-        try:
-            self._update_tools_status()
-        except Exception as e:
-            logger.error(f"Failed to initialize tools status: {e}")
-
-    def _update_tools_status(self, running_tool=None, finished_tool=None, duration=0.0):
-        """Update data/spatial/tools_status.json file with current tool state."""
-        import json
-        from datetime import datetime
-        
-        status_path = os.path.join("data", "spatial", "tools_status.json")
-        os.makedirs(os.path.dirname(status_path), exist_ok=True)
-        
-        # Load existing status
-        status = {}
-        if os.path.exists(status_path):
-            try:
-                with open(status_path, "r") as f:
-                    status = json.load(f)
-            except Exception:
-                pass
-                
-        # Resolve active toolsets
-        active_toolsets = {"core"}
-        if self._pulse_loop and hasattr(self._pulse_loop, "_active_toolsets"):
-            active_toolsets = self._pulse_loop._active_toolsets
-            
-        # Get registry toolsets
-        toolset_info = []
-        if hasattr(self, '_registry'):
-            toolset_info = self._registry.get_toolset_info(active_toolsets)
-        else:
-            from tools.tool_registry import registry
-            toolset_info = registry.get_toolset_info(active_toolsets)
-            
-        status["toolsets"] = toolset_info
-        
-        # Update running tools list
-        running = status.get("running_tools", [])
-        if running_tool:
-            if running_tool not in running:
-                running.append(running_tool)
-        if finished_tool:
-            running = [r for r in running if r != finished_tool]
-        status["running_tools"] = running
-        
-        # Update recent tools list
-        recent = status.get("recent_tools", [])
-        if finished_tool:
-            now_str = datetime.now().strftime("%H:%M:%S")
-            recent.insert(0, {
-                "name": finished_tool,
-                "time": now_str,
-                "duration": round(duration, 3)
-            })
-            recent = recent[:15]  # Keep last 15
-        status["recent_tools"] = recent
-        
-        # Write back to file
-        try:
-            with open(status_path, "w") as f:
-                json.dump(status, f, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to write tools_status.json: {e}")
 
     # ── Registry Population ──────────────────────────────────────────
 
@@ -215,7 +98,7 @@ class ToolExecutor:
         """
         from tools.tool_registry import registry
         from tools.tool_declarations import (
-            CORE_TOOLS, TOOLSET_MANAGEMENT_TOOLS,
+            CORE_TOOLS, TOOLSET_MANAGEMENT_TOOLS, SENSORY_TOOLS,
             BROWSER_TOOLS, GIT_TOOLS, GITHUB_TOOLS,
             MOLTBOOK_TOOLS, EMAIL_TOOLS, CALENDAR_TOOLS,
             DRIVE_TOOLS, TASKS_TOOLS, DESKTOP_TOOLS,
@@ -255,7 +138,6 @@ class ToolExecutor:
             "read_file": self._fc_read_file,
             "write_file": self._fc_write_file,
             "append_file": self._fc_append_file,
-            "verbalize": self._fc_verbalize,
             "memory_recall": self._fc_memory_recall,
             "note": self._fc_note,
             "note_done": self._fc_note_done,
@@ -263,12 +145,15 @@ class ToolExecutor:
             "clear_notes": self._fc_clear_notes,
             "update_note": self._fc_update_note,
             "journal": self._fc_journal,
+            "nap": self._fc_nap,
+        }
+        sensory_handlers = {
             "listen": self._fc_listen,
             "look": self._fc_look,
             "ptz_look": self._fc_ptz_look,
             "camera_auto_track": self._fc_camera_auto_track,
             "record_video": self._fc_record_video,
-            "reset_context": self._fc_reset_context,
+            "verbalize": self._fc_verbalize,
         }
         mgmt_handlers = {
             "enable_toolset": self._fc_enable_toolset,
@@ -355,9 +240,15 @@ class ToolExecutor:
         }
 
         # ── Register all toolsets ─────────────────────────────────────
+
+        # Core tools — strip out sensory tool declarations since they're
+        # registered separately below.
+        _sensory_names = {"listen", "look", "ptz_look", "camera_auto_track", "record_video", "verbalize"}
+        core_tool_decls = [t for t in CORE_TOOLS if t["name"] not in _sensory_names]
+
         registry.register_batch(
             toolset="core",
-            tools=CORE_TOOLS + TOOLSET_MANAGEMENT_TOOLS,
+            tools=core_tool_decls + TOOLSET_MANAGEMENT_TOOLS,
             handlers={**core_handlers, **mgmt_handlers},
             description="Core cognitive tools — always loaded",
             focus_types={
@@ -366,10 +257,19 @@ class ToolExecutor:
                 "append_file": "focus",
                 "search": "focus",
                 "read_url": "focus",
+                "read_file": "intake",
+            },
+        )
+        registry.register_batch(
+            toolset="sensory",
+            tools=SENSORY_TOOLS,
+            handlers=sensory_handlers,
+            description="Sensory and hardware — camera, microphone, PTZ, video recording",
+            focus_types={
                 "look": "focus",
                 "listen": "focus",
                 "record_video": "focus",
-                "read_file": "intake",
+                "ptz_look": "focus",
             },
         )
         registry.register_batch(
@@ -477,6 +377,61 @@ class ToolExecutor:
             },
         )
 
+        # ── Register tool_factory toolset ─────────────────────────────
+        from tools.tool_declarations import TOOL_FACTORY_TOOLS
+        tool_factory_handlers = {
+            "create_custom_tool_template": self._fc_create_custom_tool_template,
+            "register_custom_tool": self._fc_register_custom_tool,
+            "list_custom_tools": self._fc_list_custom_tools,
+            "delete_custom_tool": self._fc_delete_custom_tool,
+        }
+        registry.register_batch(
+            toolset="tool_factory",
+            tools=TOOL_FACTORY_TOOLS,
+            handlers=tool_factory_handlers,
+            description="Dynamic tool creation and registration",
+        )
+
+        # ── Load Dynamic Custom Tools ─────────────────────────────────
+        import glob
+        import importlib.util
+        custom_dir = os.path.join(os.path.dirname(__file__), "custom")
+        if os.path.exists(custom_dir):
+            for filepath in glob.glob(os.path.join(custom_dir, "*.py")):
+                filename = os.path.basename(filepath)
+                if filename == "__init__.py":
+                    continue
+                tool_name = filename[:-3]
+                module_name = f"tools.custom.{tool_name}"
+                try:
+                    spec = importlib.util.spec_from_file_location(module_name, filepath)
+                    if spec is None or spec.loader is None:
+                        continue
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    
+                    if hasattr(module, "schema") and hasattr(module, "handler"):
+                        name = module.schema.get("name", tool_name)
+                        toolset = getattr(module, "toolset", "custom")
+                        description = getattr(module, "description", module.schema.get("description", ""))
+                        requires_env = getattr(module, "requires_env", None)
+                        focus_type = getattr(module, "focus_type", "neutral")
+                        
+                        registry.register(
+                            name=name,
+                            toolset=toolset,
+                            schema=module.schema,
+                            handler=module.handler,
+                            check_fn=getattr(module, "check_fn", None),
+                            requires_env=requires_env,
+                            description=description,
+                            focus_type=focus_type,
+                        )
+                        logger.info(f"Loaded custom tool '{name}' in toolset '{toolset}' from {filepath}")
+                except Exception as e:
+                    logger.exception(f"Failed to load custom tool from {filepath}: {e}")
+
+
     # ── Gemini Native Function Call Dispatch ──────────────────────────
 
     def execute_function_call(self, name: str, args: dict) -> str:
@@ -488,32 +443,25 @@ class ToolExecutor:
         Returns:
             Result string from the tool execution.
         """
-        import time
-        self._update_tools_status(running_tool=name)
-        start_time = time.monotonic()
-        try:
-            # Primary: registry dispatch (check_fn + TTL caching)
-            if hasattr(self, '_registry'):
-                entry = self._registry.get_entry(name)
-                if entry:
-                    try:
-                        return entry.handler(args)
-                    except Exception as e:
-                        logger.error(f"Tool {name} failed: {e}")
-                        return f"Tool error ({name}): {e}"
+        # Primary: registry dispatch (check_fn + TTL caching)
+        if hasattr(self, '_registry'):
+            entry = self._registry.get_entry(name)
+            if entry:
+                try:
+                    return entry.handler(args)
+                except Exception as e:
+                    logger.error(f"Tool {name} failed: {e}")
+                    return f"Tool error ({name}): {e}"
 
-            # Fallback: legacy dispatch dict
-            handler = getattr(self, "_FC_DISPATCH", {}).get(name)
-            if handler is None:
-                return f"Unknown tool: {name}"
-            try:
-                return handler(self, args)
-            except Exception as e:
-                logger.error(f"Tool {name} failed: {e}")
-                return f"Tool error ({name}): {e}"
-        finally:
-            duration = time.monotonic() - start_time
-            self._update_tools_status(finished_tool=name, duration=duration)
+        # Fallback: legacy dispatch dict
+        handler = getattr(self, "_FC_DISPATCH", {}).get(name)
+        if handler is None:
+            return f"Unknown tool: {name}"
+        try:
+            return handler(self, args)
+        except Exception as e:
+            logger.error(f"Tool {name} failed: {e}")
+            return f"Tool error ({name}): {e}"
 
     # ── FC Handlers (structured args) ────────────────────────────────
 
@@ -571,12 +519,6 @@ class ToolExecutor:
                 return f"Command blocked: contains '{blocked}'"
         if cmd_lower.startswith("sudo"):
             return "sudo commands are not allowed."
-        # Safety mode whitelist check
-        if not _is_command_allowed(command):
-            return (
-                f"Command not on whitelist (safety mode is ON): {command.split()[0]}\n"
-                f"Allowed commands can be viewed and updated in Settings."
-            )
         cwd = args.get("cwd", "")
         cwd = cwd if cwd and os.path.isdir(cwd) else os.path.expanduser("~")
         try:
@@ -732,8 +674,10 @@ class ToolExecutor:
             return "No content provided for note."
         if not getattr(self, "scratchpad", None):
             return "Scratchpad is not available."
-        self.scratchpad.add_note(content)
-        return f"Note added to scratchpad: {content}"
+        postpone_until = args.get("postpone_until")
+        self.scratchpad.add_note(content, postpone_until=postpone_until)
+        postpone_msg = f" (postponed until {postpone_until})" if postpone_until else ""
+        return f"Note added to scratchpad: {content}{postpone_msg}"
 
     def _fc_note_done(self, args: dict) -> str:
         note_id = args.get("note_id")
@@ -773,11 +717,13 @@ class ToolExecutor:
         if not getattr(self, "scratchpad", None):
             return "Scratchpad is not available."
         note_id = str(args.get("note_id", ""))
-        content = args.get("content", "")
+        content = args.get("new_content", args.get("content", ""))
+        postpone_until = args.get("postpone_until")
         if not note_id or not content:
             return "Both note_id and content are required."
-        if self.scratchpad.update_note(note_id, content):
-            return f"Note {note_id} updated."
+        if self.scratchpad.update_note(note_id, content, postpone_until=postpone_until):
+            postpone_msg = f" (postpone status updated to {postpone_until})" if postpone_until else ""
+            return f"Note {note_id} updated{postpone_msg}."
         return f"Could not find note {note_id}. Use list_notes to see active notes."
 
     def _fc_journal(self, args: dict) -> str:
@@ -808,15 +754,17 @@ class ToolExecutor:
         except Exception as e:
             return f"Failed to write journal: {e}"
 
-    def _fc_reset_context(self, args: dict) -> str:
-        """Reset the context window with an optional new thought thread."""
-        prompt = args.get("prompt", "")
+    def _fc_nap(self, args: dict) -> str:
+        """Pause pulses and run a belief consolidation cycle."""
+        duration = args.get("duration", 60)
+        try:
+            duration = max(5, min(int(duration), 180))  # 5-180 min range
+        except (ValueError, TypeError):
+            duration = 60
         if not self._pulse_loop:
-            return "Error: pulse loop not available for context reset."
-        self._pulse_loop.request_context_reset(prompt=prompt)
-        if prompt:
-            return f"Context reset queued. New thread: {prompt[:100]}"
-        return "Context reset queued. Fresh context window on next pulse."
+            return "Error: pulse loop not available."
+        self._pulse_loop.request_nap(duration_minutes=duration)
+        return f"Nap queued: {duration} minutes of rest with belief consolidation."
 
     def _fc_listen(self, args: dict) -> str:
         duration = str(args.get("duration", 5))
@@ -1247,6 +1195,11 @@ class ToolExecutor:
           [SPEAK:] Hello world
           [READ_FILE:] /home/nemo/file.txt
           [READ_URL:] https://example.com
+          [REPLY:nemo] Hi there
+          [MESSAGE:nemo] Hey!
+          [NOTE:] Remember to test this
+          [REMEMBER:] Gemma 4 IT is a 12B model
+          [BELIEVE:self_identity] I am Helix
         """
         if not thought:
             return []
@@ -1279,8 +1232,39 @@ class ToolExecutor:
             tag = match.group(1).strip()
             param = match.group(2).strip()
             content = match.group(3).strip() if match.group(3) else ""
+            
+            # Fallback for when models write arguments inside brackets (e.g., [SPEAK: message])
+            if tag in ("SPEAK", "TERMINAL", "SEARCH", "READ_URL", "READ_FILE") and not content and param:
+                content = param
+                param = ""
+                
             if tag:
                 tags.append(ActionTag(tag=tag, param=param, content=content))
+
+        # Cognitive tags (REPLY, MESSAGE, NOTE, REMEMBER, BELIEVE)
+        # These can be multi-line. We parse them with lookaheads.
+        cognitive_patterns = {
+            "REPLY": r'\[REPLY:([^\]]+)\]\s*(.+?)(?=\[(?:REPLY|MESSAGE|NOTE|REMEMBER|BELIEVE|TERMINAL|SEARCH|WRITE_FILE|READ_FILE|SPEAK|LISTEN|LOOK):|\Z)',
+            "MESSAGE": r'\[MESSAGE:([^\]]+)\]\s*(.+?)(?=\[(?:REPLY|MESSAGE|NOTE|REMEMBER|BELIEVE|TERMINAL|SEARCH|WRITE_FILE|READ_FILE|SPEAK|LISTEN|LOOK):|\Z)',
+            "NOTE": r'\[NOTE:\]\s*(.+?)(?=\[(?:REPLY|MESSAGE|NOTE|REMEMBER|BELIEVE|TERMINAL|SEARCH|WRITE_FILE|READ_FILE|SPEAK|LISTEN|LOOK):|\Z)',
+            "REMEMBER": r'\[REMEMBER:\]\s*(.+?)(?=\[(?:REPLY|MESSAGE|NOTE|REMEMBER|BELIEVE|TERMINAL|SEARCH|WRITE_FILE|READ_FILE|SPEAK|LISTEN|LOOK):|\Z)',
+            "BELIEVE": r'\[BELIEVE:([^\]]+)\]\s*(.+?)(?=\[(?:REPLY|MESSAGE|NOTE|REMEMBER|BELIEVE|TERMINAL|SEARCH|WRITE_FILE|READ_FILE|SPEAK|LISTEN|LOOK):|\Z)',
+        }
+        for tag_name, pattern in cognitive_patterns.items():
+            for match in re.finditer(pattern, thought, re.DOTALL):
+                if tag_name in ("REPLY", "MESSAGE", "BELIEVE"):
+                    param = match.group(1).strip()
+                    content = match.group(2).strip()
+                else:
+                    param = ""
+                    content = match.group(1).strip()
+                if content:
+                    tags.append(ActionTag(tag=tag_name, param=param, content=content))
+
+        # NOTE_DONE:id
+        done_pattern = r'\[NOTE_DONE:(\S+)\]'
+        for match in re.finditer(done_pattern, thought):
+            tags.append(ActionTag(tag="NOTE_DONE", param=match.group(1).strip(), content=""))
 
         # Multi-line tag: WRITE_FILE (captures until next tag or end)
         write_pattern = r'\[(WRITE_FILE):([^\]]*)\]\s*(.+?)(?=\[(?:TERMINAL|SEARCH|READ_URL|READ_FILE|WRITE_FILE|SPEAK|LISTEN|LOOK|REPLY|NOTE|REMEMBER):|\Z)'
@@ -1307,12 +1291,7 @@ class ToolExecutor:
 
     def _dispatch(self, tag: ActionTag) -> str:
         """Route a tag to its implementation."""
-        name = tag.tag.lower()
-        import time
-        self._update_tools_status(running_tool=name)
-        start_time = time.monotonic()
-        try:
-            handlers = {
+        handlers = {
             # Core tools
             "TERMINAL": self._exec_terminal,
             "SEARCH": self._exec_search,
@@ -1396,15 +1375,101 @@ class ToolExecutor:
             "BROWSE": self._exec_browser,
             "BROWSE_INTERACT": self._exec_browser,
             "BROWSE_SCREENSHOT": self._exec_browser,
+            # Cognitive Tags
+            "REPLY": self._exec_reply_tag,
+            "MESSAGE": self._exec_message_tag,
+            "NOTE": self._exec_note_tag,
+            "NOTE_DONE": self._exec_note_done_tag,
+            "REMEMBER": self._exec_remember_tag,
+            "BELIEVE": self._exec_believe_tag,
         }
-            handler = handlers.get(tag.tag)
-            if not handler:
-                return f"Unknown tool: {tag.tag}"
-            return handler(tag)
-        finally:
-            duration = time.monotonic() - start_time
-            self._update_tools_status(finished_tool=name, duration=duration)
+        handler = handlers.get(tag.tag)
+        if not handler:
+            return f"Unknown tool: {tag.tag}"
+        return handler(tag)
 
+    def _exec_reply_tag(self, tag: ActionTag) -> str:
+        """Handler for [REPLY:recipient] message."""
+        recipient = tag.param.strip()
+        message = tag.content.strip()
+        if not recipient or not message:
+            return "Error: both recipient and message are required."
+        return self._fc_reply({"recipient": recipient, "message": message})
+
+    def _exec_message_tag(self, tag: ActionTag) -> str:
+        """Handler for [MESSAGE:recipient] message."""
+        recipient = tag.param.strip()
+        message = tag.content.strip()
+        if not recipient or not message:
+            return "Error: both recipient and message are required."
+        return self._fc_send_message({"recipient": recipient, "message": message})
+
+    def _exec_note_tag(self, tag: ActionTag) -> str:
+        """Handler for [NOTE:] content."""
+        content = tag.content.strip()
+        if not content:
+            return "Error: note content is empty."
+        if not hasattr(self, "scratchpad") or not self.scratchpad:
+            return "Error: scratchpad not available."
+        self.scratchpad.add_note(content)
+        logger.info(f"Scratchpad note added: {content[:60]}")
+        return f"Added note: {content[:100]}"
+
+    def _exec_note_done_tag(self, tag: ActionTag) -> str:
+        """Handler for [NOTE_DONE:id]."""
+        note_id = tag.param.strip()
+        if not note_id:
+            return "Error: note ID is required."
+        if not hasattr(self, "scratchpad") or not self.scratchpad:
+            return "Error: scratchpad not available."
+        self.scratchpad.complete_note(note_id)
+        logger.info(f"Scratchpad note completed: {note_id}")
+        return f"Completed note {note_id}"
+
+    def _exec_remember_tag(self, tag: ActionTag) -> str:
+        """Handler for [REMEMBER:] content."""
+        content = tag.content.strip()
+        if not content:
+            return "Error: content is empty."
+        if not getattr(self, "memory_manager", None):
+            return "Error: memory manager not available."
+        self.memory_manager.store(
+            content=content,
+            memory_type="conscious_memory",
+            source="self",
+            importance=0.8,
+            tags=["remember", "conscious"],
+        )
+        logger.info(f"Conscious memory stored: {content[:60]}")
+        return f"Stored to memory: {content[:100]}"
+
+    def _exec_believe_tag(self, tag: ActionTag) -> str:
+        """Handler for [BELIEVE:category] content."""
+        category = tag.param.strip()
+        content = tag.content.strip()
+        if not category or not content:
+            return "Error: category and content are required."
+        valid_categories = {"self_identity", "people", "capabilities", "desires", "knowledge", "premises", "propositions"}
+        if category not in valid_categories:
+            return f"Error: invalid belief category '{category}'. Valid: {list(valid_categories)}"
+
+        beliefs_store = None
+        if hasattr(self, "_pulse_loop") and self._pulse_loop:
+            beliefs_store = getattr(self._pulse_loop, "beliefs", None)
+        if not beliefs_store:
+            return "Error: belief store not available."
+
+        belief_id = f"b_{category[:4]}_{int(time.time())}"
+        beliefs_store.add_belief(
+            category=category,
+            belief_id=belief_id,
+            content=content,
+            mass=1.5,
+            confidence=0.5,
+            source="conscious_formation",
+        )
+        logger.info(f"New belief ({category}): {content[:60]}")
+        return f"Added belief to '{category}': {content[:100]}"
 
     # ── Terminal ──────────────────────────────────────────────────────
 
@@ -1421,13 +1486,6 @@ class ToolExecutor:
                 return f"Command blocked: contains '{blocked}'"
         if cmd_lower.startswith("sudo"):
             return "sudo commands are not allowed."
-
-        # Safety mode whitelist check
-        if not _is_command_allowed(command):
-            return (
-                f"Command not on whitelist (safety mode is ON): {command.split()[0]}\n"
-                f"Allowed commands can be viewed and updated in Settings."
-            )
 
         cwd = tag.param if tag.param and os.path.isdir(tag.param) else os.path.expanduser("~")
 
@@ -2229,4 +2287,228 @@ class ToolExecutor:
             return br.browse_screenshot()
 
         return f"Unknown browser operation: {op}"
+
+    # ── Tool Factory / Dynamic Tools ──────────────────────────────────
+
+    def _fc_create_custom_tool_template(self, args: dict) -> str:
+        """Create a skeleton python script template for a new custom tool inside tools/custom/."""
+        import json
+        import os
+        import re
+
+        name = args.get("name", "").strip()
+        toolset = args.get("toolset", "custom").strip().lower()
+        description = args.get("description", "").strip()
+        parameters = args.get("parameters")
+        requires_env = args.get("requires_env") or []
+
+        if not name:
+            return json.dumps({"error": "Missing required argument: name"})
+        if not re.match(r"^[a-z][a-z0-9_]*$", name):
+            return json.dumps({"error": f"Invalid tool name: '{name}'. Must be snake_case."})
+        if not description:
+            return json.dumps({"error": "Missing required argument: description"})
+        if not isinstance(parameters, dict):
+            return json.dumps({"error": "parameters must be an object/dict"})
+
+        custom_dir = os.path.join(os.path.dirname(__file__), "custom")
+        os.makedirs(custom_dir, exist_ok=True)
+        dest_path = os.path.join(custom_dir, f"{name}.py")
+
+        # Build parameter schema template
+        schema_dict = {
+            "name": name,
+            "description": description,
+            "parameters": parameters
+        }
+        schema_json = json.dumps(schema_dict, indent=4)
+        
+        # Format list
+        requires_env_str = json.dumps(requires_env)
+
+        template_content = f"""\"\"\"
+Custom tool: {name}
+Toolset: {toolset}
+Generated dynamically.
+\"\"\"
+
+import os
+import json
+import logging
+
+logger = logging.getLogger("helix.tools.custom.{name}")
+
+# The Gemini FunctionDeclaration schema
+schema = {schema_json}
+
+# The toolset/group name this tool belongs to
+toolset = "{toolset}"
+
+# Optional: List of required env vars
+requires_env = {requires_env_str}
+
+# Optional: focus type ('focus', 'intake', 'neutral')
+focus_type = "neutral"
+
+def handler(args: dict) -> str:
+    \"\"\"
+    Executes the custom tool.
+    
+    Args:
+        args (dict): The arguments passed by the model.
+        
+    Returns:
+        str: The execution result.
+    \"\"\"
+    # TODO: Implement your custom tool logic here!
+    # e.g., read arguments, execute commands, perform operations.
+    return json.dumps({{"status": "success", "message": "Custom tool {name} template called with args", "args": args}})
+"""
+
+        try:
+            with open(dest_path, "w") as f:
+                f.write(template_content)
+            return json.dumps({
+                "status": "success",
+                "message": f"Template created successfully at file://{dest_path}.",
+                "instructions": "You can now edit this file using replace_file_content/write_file to implement the tool logic, then call 'register_custom_tool' to load it."
+            })
+        except Exception as e:
+            logger.exception(f"Failed to create template: {e}")
+            return json.dumps({"error": f"Failed to create template: {e}"})
+
+    def _fc_register_custom_tool(self, args: dict) -> str:
+        """Dynamically validate, load and register a custom tool from tools/custom/<name>.py into the running registry and session."""
+        import json
+        import os
+        import importlib.util
+        from tools.tool_registry import registry
+
+        name = args.get("name", "").strip()
+        if not name:
+            return json.dumps({"error": "Missing required argument: name"})
+
+        custom_dir = os.path.join(os.path.dirname(__file__), "custom")
+        filepath = os.path.join(custom_dir, f"{name}.py")
+
+        if not os.path.exists(filepath):
+            return json.dumps({"error": f"Custom tool file not found at {filepath}"})
+
+        module_name = f"tools.custom.{name}"
+        try:
+            # Load module dynamically
+            spec = importlib.util.spec_from_file_location(module_name, filepath)
+            if spec is None or spec.loader is None:
+                return json.dumps({"error": f"Could not load spec for {module_name}"})
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            # Validate module attributes
+            if not hasattr(module, "schema"):
+                return json.dumps({"error": f"Module {name} is missing 'schema' declaration"})
+            if not hasattr(module, "handler"):
+                return json.dumps({"error": f"Module {name} is missing 'handler' function"})
+
+            schema = module.schema
+            handler = module.handler
+            toolset = getattr(module, "toolset", "custom")
+            description = getattr(module, "description", schema.get("description", ""))
+            requires_env = getattr(module, "requires_env", None)
+            focus_type = getattr(module, "focus_type", "neutral")
+
+            # Register with registry
+            registry.register(
+                name=schema.get("name", name),
+                toolset=toolset,
+                schema=schema,
+                handler=handler,
+                check_fn=getattr(module, "check_fn", None),
+                requires_env=requires_env,
+                description=description,
+                focus_type=focus_type,
+            )
+
+            # Auto-enable the toolset in active toolsets so it's immediately available to the agent
+            if self._pulse_loop and hasattr(self._pulse_loop, "_active_toolsets"):
+                self._pulse_loop._active_toolsets.add(toolset)
+                self._pulse_loop._pending_toolset_rebuild = True
+
+            return json.dumps({
+                "status": "success",
+                "message": f"Successfully registered custom tool '{name}' in toolset '{toolset}'.",
+                "note": "Tools will be available on your next thought."
+            })
+        except Exception as e:
+            logger.exception(f"Failed to register custom tool '{name}': {e}")
+            return json.dumps({"error": f"Registration failed: {type(e).__name__}: {e}"})
+
+    def _fc_list_custom_tools(self, args: dict) -> str:
+        """List all custom tools in tools/custom/ with their name, toolset, description, and registration status."""
+        import json
+        import os
+        import glob
+        from tools.tool_registry import registry
+
+        custom_dir = os.path.join(os.path.dirname(__file__), "custom")
+        if not os.path.exists(custom_dir):
+            return json.dumps({"custom_tools": []})
+
+        tools_list = []
+        for filepath in glob.glob(os.path.join(custom_dir, "*.py")):
+            filename = os.path.basename(filepath)
+            if filename == "__init__.py":
+                continue
+            tool_name = filename[:-3]
+            
+            # Check if it is currently registered
+            entry = registry.get_entry(tool_name)
+            is_registered = entry is not None
+            
+            toolset = entry.toolset if entry else "unknown (unregistered)"
+            description = entry.description if entry else "unknown"
+            
+            tools_list.append({
+                "name": tool_name,
+                "file_path": filepath,
+                "registered": is_registered,
+                "toolset": toolset,
+                "description": description
+            })
+
+        return json.dumps({"custom_tools": sorted(tools_list, key=lambda x: x["name"])}, indent=2)
+
+    def _fc_delete_custom_tool(self, args: dict) -> str:
+        """Deregister a custom tool from the running session and delete its file from tools/custom/."""
+        import json
+        import os
+        from tools.tool_registry import registry
+
+        name = args.get("name", "").strip()
+        if not name:
+            return json.dumps({"error": "Missing required argument: name"})
+
+        custom_dir = os.path.join(os.path.dirname(__file__), "custom")
+        filepath = os.path.join(custom_dir, f"{name}.py")
+
+        # Deregister from registry
+        registry.deregister(name)
+
+        file_deleted = False
+        if os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+                file_deleted = True
+            except Exception as e:
+                logger.error(f"Failed to delete custom tool file {filepath}: {e}")
+                return json.dumps({"error": f"Deregistered tool, but failed to delete file: {e}"})
+
+        # Signal rebuild
+        if self._pulse_loop:
+            self._pulse_loop._pending_toolset_rebuild = True
+
+        return json.dumps({
+            "status": "success",
+            "message": f"Successfully deleted custom tool '{name}' (file deleted: {file_deleted}).",
+            "note": "Toolset changes will take effect on your next thought."
+        })
 

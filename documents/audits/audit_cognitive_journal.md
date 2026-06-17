@@ -1,128 +1,27 @@
 # Cognitive Journal Audit
 
-**File:** `memory/cognitive_journal.py`
+**Scope:** `memory/cognitive_journal.py`
 
----
+## Runtime role
 
-### Overview
+- `CognitiveJournal` is the append-first JSONL store used by `MemoryManager` and the bootstrap code in the spatial stack. `memory/cognitive_journal.py:43-56`, `memory/memory_manager.py:49-63`, `core/spatial_mind.py:381-415`, `core/cognitive_space.py:1317-1366`
+- Entries are written as JSON objects with `id`, `type`, `content`, `position_8d`, `pulse_id`, `lagrangian`, `metadata`, `timestamp`, and optionally `embedding_384d`. `memory/cognitive_journal.py:61-111`
 
-The `CognitiveJournal` implements a lightweight, **append‑only JSON‑Lines (JSONL) journal**. It serves as the single source of truth for all of Helix's memories, beliefs, thoughts, and events. 
+## Timestamp and checksum helpers
 
-This architecture replaces the fragmented SQLite/ChromaDB persistence layer. It provides:
-1. **Append-Only Immutability:** The journal is never mutated. Updates are expressed by appending a new entry with the same `id` but a newer timestamp.
-2. **Atomic Writes:** Uses append-mode and file sync to ensure data integrity during writes.
-3. **Integrity Checking:** Every entry receives a SHA‑256 checksum to prevent corruption.
-4. **Nightly Compaction:** A maintenance routine rewrites the file, preserving only the latest version of each `id` to prevent unbounded growth.
+- `_now_iso()` emits `%Y-%m-%dT%H:%M:%S%z`, which means timezone offsets are written without a colon. `memory/cognitive_journal.py:22-25`
+- `_checksum()` computes a SHA-256 over the canonical JSON encoding of the entry data, and `_serialize_entry()` re-emits a payload with a freshly regenerated checksum. `memory/cognitive_journal.py:27-40`
 
----
+## Write path
 
-### Key Constants (lines 19)
+- `append()` builds the entry dict, optionally stores the raw 384D embedding, serializes it with a fresh checksum, appends a single line, flushes Python buffers, and calls `os.fsync()` before returning. `memory/cognitive_journal.py:61-116`
+- `append_memory()`, `append_belief()`, and `append_thought()` are thin wrappers that hard-code the `type` field and forward the rest of the parameters to `append()`. `memory/cognitive_journal.py:171-235`
 
-```python
-DEFAULT_JOURNAL_NAME = "cognitive_journal.jsonl"
-```
+## Read path
 
-**Why:** Using JSONL allows line-by-line reading without loading the entire file into memory (useful for disaster recovery), while remaining fully human-readable and grep-friendly.
+- `load_all()` reads the file line by line, skips empty or malformed lines, removes the `checksum` field from each decoded object, recomputes the checksum, and only returns entries that pass validation. Returned entries do not include the checksum field anymore. `memory/cognitive_journal.py:118-135`
+- `latest_by_id()` is a one-pass reducer over `load_all()` and returns the latest surviving entry for each `id`. `memory/cognitive_journal.py:137-146`
 
----
+## Compaction behavior
 
-### Initialization (`__init__` lines 44-49)
-
-- Takes a `directory` and optional `filename`.
-- Ensures the target directory exists and touches the file (`self.path.touch(exist_ok=True)`) so it is immediately available for reads/writes.
-
----
-
-### Core Persistence (`append` lines 54-103)
-
-```python
-entry: Dict[str, Any] = {
-    "id": id,
-    "type": type,
-    "content": content,
-    "position_8d": position_8d,
-    "pulse_id": pulse_id,
-    "lagrangian": lagrangian or {},
-    "metadata": metadata or {},
-    "timestamp": timestamp or _now_iso(),
-}
-entry["checksum"] = _checksum(entry)
-```
-
-- **Checksum Generation (`_checksum` lines 27-33):** Generates a SHA-256 hash of the JSON representation (sorted keys, no spaces) to act as a tamper-evident seal.
-- **Atomicity (lines 99-103):** 
-  - Opens in append mode (`"a"`).
-  - Writes the serialized JSON line with a newline.
-  - Flushes Python's buffer (`f.flush()`).
-  - Forces an OS-level sync to disk (`os.fsync(f.fileno())`) to guarantee persistence even if power is lost immediately after.
-
-**Why:** In an event-sourced cognitive architecture, ensuring that the subjective timeline of events is recorded safely is paramount. The OS-level sync prevents journal corruption.
-
----
-
-### Data Retrieval (`load_all`, `latest_by_id`)
-
-- **`load_all` (lines 112-129):** 
-  - Reads the file line-by-line (oldest → newest).
-  - Skips empty lines and lines that fail JSON decoding.
-  - **Checksum Verification:** Pops the `checksum` key and recalculates the hash. If it doesn't match, the line is silently skipped.
-- **`latest_by_id` (lines 131-143):** 
-  - Scans `load_all` and stores entries in a dictionary keyed by `id`. Since the file is chronological, later appearances of the same `id` naturally overwrite older ones in the dict.
-
----
-
-### Nightly Compaction (`compact` lines 145-162)
-
-- Resolves the "latest" version of all `id`s via `latest_by_id()`.
-- Writes the compacted state to a `.tmp` file.
-- Uses `tmp_path.replace(self.path)` to atomically overwrite the main journal.
-
-**Why:** Because updates are implemented as append operations, a frequently updated belief would pollute the journal with dozens of historical lines. Compaction (intended to run during the nightly "dream" cycle) keeps the footprint minimal while preserving current state.
-
----
-
-### Convenience Helpers (lines 164-222)
-
-- `append_memory`, `append_belief`, `append_thought`: Syntax sugar wrapping `append()` to automatically set the correct `type` string. 
-
----
-
-### Mermaid Diagram – Journal Lifecycle
-
-```mermaid
-flowchart TD
-    subgraph Write Path
-    A[New Memory/Belief] --> B{Calculate Checksum}
-    B --> C[Serialize to JSON]
-    C --> D[Append to cognitive_journal.jsonl]
-    D --> E[Flush & fsync to Disk]
-    end
-
-    subgraph Read Path
-    F[Load Journal] --> G[Read Line-by-Line]
-    G --> H{Checksum Match?}
-    H -->|No| I[Skip Line]
-    H -->|Yes| J[Add to List]
-    J --> K[latest_by_id mapping]
-    end
-
-    subgraph Nightly Compaction
-    K --> L[Write 'latest' to .tmp file]
-    L --> M[Atomic File Replace]
-    M --> N[Compacted cognitive_journal.jsonl]
-    end
-```
-
----
-
-### Open Questions / Clarifications
-
-> [!NOTE]
-> **Checksum Skipping:** Corrupted lines are skipped silently (lines 118-120). While good for resilience, it might mask file-system degradation. Should corrupted lines trigger a warning log?
-
-> [!WARNING]
-> **Immutable History vs Compaction:** Nightly compaction destroys the historical versions of a specific `id`. If the "append-only" paradigm is meant to preserve historical thought evolution, compaction removes that history. If full history is desired, compaction should perhaps archive old lines rather than discard them.
-
----
-
-*End of Cognitive Journal audit.*
+- `compact()` rewrites the journal from `latest_by_id()` into a `.tmp` file, reserializes every entry with a fresh checksum, flushes and `fsync()`s the temp file, and then atomically replaces the original file. `memory/cognitive_journal.py:151-167`

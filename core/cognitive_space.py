@@ -39,7 +39,7 @@ import json
 import logging
 import hashlib
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 
@@ -1467,6 +1467,152 @@ class CognitiveSpace:
             "mass_mean": float(np.mean(masses)) if masses else 0.0,
             "agent_age_seconds": self._agent_age_seconds,
         }
+
+    def compute_interaction_potential(
+        self,
+        position: np.ndarray,
+        threshold: float = 0.5,
+        k_candidates: int = 25,
+    ) -> list[dict]:
+        """Infer tool affordances from points near a position.
+
+        Affordances can be declared explicitly in point metadata using either
+        ``metadata["affordance"]`` (single dict), ``metadata["affordances"]``
+        (list of dicts), or ``metadata["tool_name"]`` (shorthand). When no
+        explicit affordance metadata is present, the method falls back to a
+        conservative keyword match against registered tool names using nearby
+        point content.
+
+        The returned rows are intentionally simple; ``InteractionEngine`` owns
+        cooldowns, deduplication, enrichment, and prompt formatting.
+        """
+        if not self._points:
+            return []
+
+        def _clamp_unit(value: Any, default: float = 0.5) -> float:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                numeric = default
+            return max(0.0, min(1.0, numeric))
+
+        # Pull a slightly wider spatial neighborhood, then let downstream
+        # layers perform cooldown + top-k filtering.
+        candidate_count = max(1, min(int(k_candidates), self.point_count))
+        nearby = self.gravity_ranked_query(
+            position,
+            k=candidate_count,
+            k_candidates=max(candidate_count, candidate_count * 2),
+        )
+        if not nearby:
+            return []
+
+        try:
+            from tools.tool_registry import registry
+
+            tool_names = registry.get_tool_names()
+        except Exception:
+            tool_names = []
+
+        tool_tokens = {
+            name: [tok for tok in name.lower().replace("_", " ").split() if len(tok) > 2]
+            for name in tool_names
+        }
+
+        affordances: list[dict] = []
+        seen = set()
+
+        for point_id, gravity, distance in nearby:
+            point = self.get_point(point_id)
+            if not point:
+                continue
+
+            meta = point.get("metadata", {}) or {}
+            content = str(point.get("content") or meta.get("content") or "").strip()
+            default_urgency = _clamp_unit(
+                meta.get("urgency", point.get("importance", point.get("confidence", 0.5)))
+            )
+
+            explicit_specs = []
+            affordance_meta = meta.get("affordance")
+            if isinstance(affordance_meta, dict):
+                explicit_specs.append(affordance_meta)
+            affordance_list = meta.get("affordances")
+            if isinstance(affordance_list, list):
+                explicit_specs.extend(spec for spec in affordance_list if isinstance(spec, dict))
+            if isinstance(meta.get("tool_name"), str) and meta.get("tool_name"):
+                explicit_specs.append({
+                    "tool_name": meta.get("tool_name"),
+                    "urgency": meta.get("urgency", default_urgency),
+                    "desire": meta.get("desire") or content,
+                    "capability": meta.get("capability") or meta.get("tool_name"),
+                })
+
+            for spec in explicit_specs:
+                tool_name = str(spec.get("tool_name", "")).strip()
+                if not tool_name:
+                    continue
+
+                urgency = _clamp_unit(spec.get("urgency", default_urgency))
+                potential = float(spec.get("potential", gravity * max(0.25, urgency)))
+                if potential < threshold:
+                    continue
+
+                key = (tool_name, point_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                affordances.append({
+                    "tool_name": tool_name,
+                    "potential": round(potential, 4),
+                    "urgency": round(urgency, 4),
+                    "desire": str(spec.get("desire") or content or f"Use {tool_name}")[:200],
+                    "capability": str(spec.get("capability") or tool_name)[:200],
+                    "source_point_id": point_id,
+                    "source_point_type": point.get("type", "memory"),
+                    "distance": round(float(distance), 4),
+                    "gravity": round(float(gravity), 4),
+                })
+
+            # Fallback: infer tool affordances only from strong nearby points
+            # and only when the tool name itself or its normalized phrase is
+            # present in the remembered content.
+            if not content or gravity < threshold or not tool_names:
+                continue
+
+            content_lower = content.lower()
+            for tool_name in tool_names:
+                tool_lower = tool_name.lower()
+                normalized = tool_lower.replace("_", " ")
+                tokens = tool_tokens.get(tool_name, [])
+                matched = (
+                    tool_lower in content_lower
+                    or normalized in content_lower
+                    or (len(tokens) > 1 and all(tok in content_lower for tok in tokens))
+                )
+                if not matched:
+                    continue
+
+                key = (tool_name, point_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                affordances.append({
+                    "tool_name": tool_name,
+                    "potential": round(float(gravity), 4),
+                    "urgency": round(default_urgency, 4),
+                    "desire": content[:200],
+                    "capability": tool_name,
+                    "source_point_id": point_id,
+                    "source_point_type": point.get("type", "memory"),
+                    "distance": round(float(distance), 4),
+                    "gravity": round(float(gravity), 4),
+                })
+
+        affordances.sort(key=lambda item: item.get("potential", 0.0), reverse=True)
+        return affordances
 
 
 # ═══════════════════════════════════════════════════════════════════════
