@@ -1,0 +1,5 @@
+# Ignore all dynamic python scripts in the custom tools directory
+*.py
+
+# Except for the package initialization script
+!__init__.py

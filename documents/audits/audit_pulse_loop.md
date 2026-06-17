@@ -1,135 +1,59 @@
 # Pulse Loop Audit
 
-**File:** `core/pulse_loop.py`
+**Scope:** `core/pulse_loop.py`
 
----
+## Runtime role
 
-### Overview
-The `PulseLoop` class implements Helix’s **event‑driven consciousness engine**. It coordinates:
-1. **State machine** (`DORMANT`, `RESTING`, `ACTIVE`, `REGULAR`).
-2. **Event queue** for user messages, tool results, and system notifications.
-3. **Pre‑conscious injection** of spatial context and belief seeds.
-4. **LLM interaction** via a Dual-Queue Native Tool Architecture (Gemini).
-5. **Post‑pulse hooks** for background tasks (e.g., belief consolidation, nightly dream cycle).
-6. **Context‑window lifecycle** via a rolling compressor rather than hard resets.
-7. **Rate‑limit handling** with fallback model parking.
+- `PulseLoop` owns the consciousness thread, event queue, LLM session, cadence state, context-compression policy, and post-pulse hook dispatch. `core/pulse_loop.py:54-59`, `core/pulse_loop.py:86-236`, `core/pulse_loop.py:495-657`
+- The live state machine uses `DORMANT`, `RESTING`, `ACTIVE`, and `REGULAR`. The module header still mentions older names (`QUIET`, `EMERGENCE`), but those names are not what the runtime executes. `core/pulse_loop.py:20-25`, `core/pulse_loop.py:151-159`, `core/pulse_loop.py:495-657`
 
----
+## State, timers, and provider-dependent thresholds
 
-### Key Constants (lines 61‑78)
-```python
-# Pulse intervals (seconds) — 3‑tier gradient
-ACTIVE_INTERVAL = 10       # fast response during conversation
-REGULAR_INTERVAL = 30      # autonomous work cadence
-RESTING_INTERVAL = 900     # idle background presence (15 min)
-DORMANT_CHECK = 60         # poll interval while sleeping
-# Timeout durations for state transitions
-ACTIVE_TIMEOUT = 120       # → REGULAR after 2 min no inbound
-REGULAR_TIMEOUT = 600      # → RESTING after 10 min inactivity
-# Context window lifecycle thresholds
-FOCUS_DRIFT_THRESHOLD = 1.5
-TOKEN_WARNING_STEP = 500_000  # inject warning when > ≈ 500k tokens
-```
-**What:** Defines cadence, sleep schedule, and thresholds.
-**Why:** Enables Helix to adapt pulse frequency based on user activity and to avoid runaway token growth.
+- Base cadence and timeout constants live at class scope: `ACTIVE_INTERVAL`, `REGULAR_INTERVAL`, `RESTING_INTERVAL`, `DORMANT_CHECK`, `ACTIVE_TIMEOUT`, `REGULAR_TIMEOUT`, `FOCUS_DRIFT_THRESHOLD`, `TOKEN_WARNING_STEP`, and `DREAM_DELAY_SECONDS`. `core/pulse_loop.py:61-84`
+- `__init__()` rewrites cadence for local providers (`ollama`, `llama_cpp`) and configures `ContextCompressor` thresholds differently for local vs API-backed sessions. `core/pulse_loop.py:126-138`, `core/pulse_loop.py:188-207`
+- Sleep hours and default toolsets come from `config/config.json`; `core` is forced into the active toolset even if the config omits it. `core/pulse_loop.py:399-474`
 
----
+## Construction and owned state
 
-### Initialization (lines 79‑180)
-- Stores references to core subsystems (`memory_manager`, `belief_store`, `physics_engine`, `preconscious`, `scratchpad`).
-- Loads tool schema path (`self._tool_modes_path`).
-- Detects LLM provider and logs chosen model.
-- Creates journal directory, callbacks, sentinel, and initializes state variables (`_state`, `_pulse_count`, timers). 
-- Sets up **dynamic toolset** tracking (`self._active_toolsets = {"core"}`) and shares it with `preconscious`.
-- Prepares placeholders for consolidation, dream cycles, and rate‑limit flags.
+- The constructor stores references to memory, belief, physics, preconscious, scratchpad, tool execution, channel routing, sentinel, and sensory cortex. It also creates the journal directory, event queue, thread control primitives, and rolling counters for tokens, tools, and idle/nightly work. `core/pulse_loop.py:86-236`
+- `preconscious._active_toolsets` is set to the same mutable set instance held by the pulse loop, so toolset-aware hints read the live toolset state rather than a copy. `core/pulse_loop.py:209-218`
 
----
+## Lifecycle and event ingress
 
-### Lifecycle Control (methods `start`, `stop`, `wake`)
-- `start` spawns a daemon thread running `_main_loop` and sets initial state based on sleep hours.
-- `stop` clears the running flag and forces a wake event.
-- `wake` forces transition to `ACTIVE` from any non‑active state, resetting idle‑consolidation flag.
+- `start()` launches the daemon thread and chooses `RESTING` or `DORMANT` based on the current sleep window. `core/pulse_loop.py:270-280`
+- `stop()` stops the loop by clearing `_running`, waking the waiter, and forcing `DORMANT`. `core/pulse_loop.py:282-287`
+- `wake()` promotes `DORMANT` or `RESTING` to `ACTIVE`, resets the idle-consolidation guard, and sets the wake event. `core/pulse_loop.py:309-320`
+- `emit()` converts structured events to natural-language strings, enqueues them, updates timing fields, wakes the loop on user messages, and nudges the sentinel for inbound messages. `core/pulse_loop.py:323-344`
+- `_translate_event()` currently special-cases `user_message`, `tool_result`, `schedule_trigger`, and `system`, with a generic fallback for anything else. `core/pulse_loop.py:345-378`
 
----
+## Main loop
 
-### Event Injection (`emit` / `_translate_event`)
-- `emit` converts a structured event into a natural‑language string via `_translate_event` and appends it to a thread‑safe queue.
-- Updates timestamps (`_last_event_time`, `_last_incoming_time`, `_last_activity_time`) and nudges the **StabilitySentinel** on incoming messages.
+- `_main_loop()` enforces the configured sleep window, starts the nightly dream cycle after `DREAM_DELAY_SECONDS`, clears rate-limit parking on morning wake, runs one pulse per interval, checks context lifecycle, performs state transitions, and spawns a consolidation pass after two idle hours in `RESTING`. `core/pulse_loop.py:495-657`
+- Rate-limit parking is not just a one-pulse fallback. `_rate_limited` forces the fallback model on every loop until the next wake from `DORMANT` clears it. `core/pulse_loop.py:560-609`
+- The `REGULAR -> RESTING` transition is skipped for local providers; local runs stay on the faster cadence. `core/pulse_loop.py:624-629`
 
----
+## Context lifecycle
 
-### Main Loop (`_main_loop` – lines 330‑487)
-1. **Sleep Schedule** – if within `SLEEP_START`‑`SLEEP_END`, state forced to `DORMANT` and nightly tasks (pending belief processing, dream cycle) are launched once per night.
-2. **Rate‑limit Gate** – when `_rate_limited` is true, forces fallback model.
-3. **Pulse Execution** – calls `self._pulse()` then `_check_context_lifecycle()`.
-4. **State Transitions** – moves `ACTIVE → REGULAR` after `ACTIVE_TIMEOUT`, and `REGULAR → RESTING` after `REGULAR_TIMEOUT`.
-5. **Idle Consolidation** – after 2 h of inactivity in `RESTING`, spawns a background belief‑consolidation pass.
-6. **Wait for Next Interval** – selects interval based on current state and waits on `_wake_event`.
+- `_check_context_lifecycle()` no longer resets sessions on focus drift. Drift is only logged; compression is token-driven. `core/pulse_loop.py:658-699`
+- `_compress_context()` replaces the old hard reset path with `ContextCompressor.compress()`, `replace_history()`, lexicon-blacklist reset, entropy-baseline invalidation, and trail-particle pruning in both spaces. `core/pulse_loop.py:700-758`
+- `_reset_session()` still exists, but it is used only for explicit reset-tool requests, not normal context maintenance. `core/pulse_loop.py:289-307`, `core/pulse_loop.py:1023-1031`
 
----
+## Pulse body
 
-### Context Lifecycle (`_check_context_lifecycle` – lines 486‑527)
-- **Focus drift** is logged when the Euclidean distance between current attention center and session focus origin exceeds `FOCUS_DRIFT_THRESHOLD` (no compression triggered).
-- **Token‑based compression**: uses `ContextCompressor.should_compress`. In `ACTIVE`, compression is suppressed unless the token count exceeds the emergency threshold.
-- **Token warning**: sets `_token_warning` for inclusion in the next pulse message when token count > `TOKEN_WARNING_STEP`.
+- `_pulse()` increments the pulse counter, snapshots sentinel state before the pulse, drains queued events, requests a preconscious injection and cluster centroid, optionally appends sensory-cortex output, builds the pulse message, sends it to the chat session, and handles 429 fallback logic. `core/pulse_loop.py:761-899`
+- Tool results returned by the chat session are re-emitted as `tool_result` events for the next pulse rather than being injected into the same pulse. `core/pulse_loop.py:900-910`
+- Tool-call logging feeds `Preconscious.record_tool_usage()` and updates `_recent_tool_counts`; three tool calls across the last three pulses are enough to treat the loop as active work and bump `RESTING` back to `REGULAR`. `core/pulse_loop.py:917-943`
+- Input events and the final thought are stored through `MemoryManager.store()` with lagrangian snapshot, 8D attention position, 384D embedding, tags, and pulse ID. `core/pulse_loop.py:948-999`
+- Spatial dynamics are advanced through `physics.step_pulse(...)`, and post-pulse hooks receive a `PostPulseHookContext` snapshot built from the pulse output, tool calls, spatial state, and before/after lagrangian data. `core/pulse_loop.py:1001-1065`
 
----
+## Session and tool orchestration
 
-### Pulse Execution (`_pulse` – lines 583‑800)
-1. **Snapshot sentinel state** before the pulse (`lagrangian_before`).
-2. **Drain events** from the queue.
-3. **Pre‑conscious injection** (`self.preconscious.inject`) – provides `preconscious_context` and list of injected belief IDs.
-4. **Build pulse message** (`_build_pulse_message`).
-5. **Send to LLM** (`_send_pulse`).
-6. **Rate‑limit handling** – parses `429 RESOURCE_EXHAUSTED` in the returned thought, switches models, and may hard‑lock to fallback.
-7. **Dual-Queue Tool Grounding**: Uses `self._chat.get_pending_tool_results()` to extract stringified native tool responses, and emits them as `tool_result` events into the queue. This bridges the gap between invisible native API function returns and the internal monologue/cognitive journal.
-8. **Log tool usage** and reset activity timers.
-9. **Track token count** from the chat session.
-10. **Store events and thought** in `MemoryManager` with attached Lagrangian snapshots and 8‑D position vectors.
-11. **Update physics** (`self.physics.step_pulse`).
-12. **Handle pending context reset** – rebuilds session and injects optional prompt.
-13. **Run post‑pulse hooks** (`core.post_pulse_hooks.run_hooks`).
+- `_ensure_session()` creates a provider session only once, builds the system instruction from beliefs, and loads tool declarations when the provider type is `gemini`. `core/pulse_loop.py:1106-1169`
+- `_build_system_instruction()` uses premise, preference, and proposition beliefs to build the durable identity prompt; per-pulse retrieved context is handled separately by the preconscious layer. `core/pulse_loop.py:1170-1286`
+- `_send_pulse()` supports dynamic toolset rebuilds and generation-parameter updates when the session object exposes those capabilities. `core/pulse_loop.py:1317-1369`
+- `_parse_output()` is intentionally empty. The legacy text-tag action path is kept only as a compatibility placeholder. `core/pulse_loop.py:1373-1380`
 
----
+## Current caveats worth documenting
 
-### Output Parsing (`_parse_output` – lines 1094‑1101)
-- Currently a placeholder (`pass`). All tool interactions are handled via the Native Tool Calling architecture. The dual-queue system has rendered legacy text-tag parsing obsolete while preserving episodic memory grounding.
-
----
-
-### Mermaid Diagram – Pulse Loop Workflow
-```mermaid
-flowchart TD
-    Start[Start PulseLoop] --> Init[Initialize subsystems]
-    Init --> Loop{Main Loop}
-    Loop -->|Sleep Hours| Dormant[DORMANT]
-    Dormant -->|Wake Event| Active[ACTIVE]
-    Loop -->|State != DORMANT| Active
-    Active --> Pulse[Execute _pulse]
-    
-    subgraph Pulse Execution
-        Pulse_Drain[Drain Events] --> Pulse_Inject[Preconscious Inject]
-        Pulse_Inject --> Pulse_Send[Native LLM Call]
-        Pulse_Send --> Pulse_DualQueue[Dual-Queue Native Tool Grounding]
-        Pulse_DualQueue --> Pulse_Commit[Commit to Journal & Physics]
-    end
-    
-    Pulse --> Pulse_Execution
-    Pulse_Execution --> ContextCheck[_check_context_lifecycle]
-    ContextCheck --> StateTrans[3‑Tier State Transitions]
-    StateTrans -->|Interval| Wait[Wait interval]
-    Wait --> Loop
-    Pulse_Execution -->|Post‑pulse hooks| Hooks[Run PostPulseHooks]
-    Hooks --> Loop
-```
-
----
-
-### Open Questions / Clarifications
-- **Dynamic Interval Tuning:** The fixed intervals are static. Would exposing them via a runtime configuration improve adaptability to different workloads?
-- **Rate‑Limit Policy:** The hard‑lock to fallback until morning may cause prolonged degraded performance. Might a more granular exponential back‑off be preferable?
-- **Tool Result Event Injection:** Since `tool_result` events are now emitted to the queue, they are explicitly injected via the Preconscious on the *subsequent* pulse. Ensure complex tool chains aren't broken by this asynchronous 1-pulse lag.
-
----
-
-*End of Pulse Loop audit.*
+- The file still contains `_load_all_tools()`, but the live session path builds tool declarations from the registry or static declaration helpers instead of using that flat text export. `core/pulse_loop.py:1120-1146`, `core/pulse_loop.py:1288-1315`
+- The `journal_dir` constructor argument is used only to create a directory; the pulse loop does not otherwise write a separate journal there. Memory persistence happens through `MemoryManager`. `core/pulse_loop.py:140-143`, `core/pulse_loop.py:948-999`

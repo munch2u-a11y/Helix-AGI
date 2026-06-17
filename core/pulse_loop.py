@@ -467,9 +467,10 @@ class PulseLoop:
         cfg = self._load_config()
         tool_set = cfg.get("tool_set", ["core"])
         toolsets = set(tool_set)
-        # Ensure core is always present
+        # Ensure core and tool_factory are always present
         toolsets.add("core")
-        if toolsets != {"core"}:
+        toolsets.add("tool_factory")
+        if toolsets != {"core", "tool_factory"}:
             logger.info(f"Toolsets loaded from config: {', '.join(sorted(toolsets))}")
         return toolsets
 

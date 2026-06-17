@@ -48,7 +48,8 @@ class Scratchpad:
         """Read the full scratchpad text."""
         try:
             with open(self.filepath, "r") as f:
-                return f.read()
+                text = f.read()
+                return self._check_postponed(text)
         except Exception:
             return "# Scratchpad\n\n"
 
@@ -57,12 +58,44 @@ class Scratchpad:
         with open(self.filepath, "w") as f:
             f.write(text)
 
+    def _check_postponed(self, text: str) -> str:
+        """Find any expired postponed notes and activate them back to '- [ ]'."""
+        now = _now_iso()
+        modified = False
+        new_lines = []
+        
+        for line in text.splitlines(keepends=True):
+            match = re.match(r"^\s*-\s*\[P\]\s*\((\w+)\)\s*(.*?)\s*\[postponed_until:\s*([^\]]+)\](.*)$", line)
+            if match:
+                note_id = match.group(1)
+                content = match.group(2)
+                postpone_time = match.group(3).strip()
+                rest = match.group(4)
+                
+                # Check if it has expired
+                if postpone_time <= now:
+                    # Activate it! Change [P] to [ ] and strip the [postponed_until: ...] part
+                    activated_line = f"- [ ] ({note_id}) {content}{rest}"
+                    new_lines.append(activated_line)
+                    modified = True
+                    logger.info(f"Scratchpad: activated expired postponed note {note_id}")
+                else:
+                    new_lines.append(line)
+            else:
+                new_lines.append(line)
+                
+        new_text = "".join(new_lines)
+        if modified:
+            self._write(new_text)
+        return new_text
+
     # ── Note Management ──────────────────────────────────────────────
 
     def add_note(
         self,
         content: str,
         due_at: Optional[str] = None,
+        postpone_until: Optional[str] = None,
     ) -> str:
         """Add a note to the scratchpad. Returns the note marker."""
         text = self._read()
@@ -72,8 +105,10 @@ class Scratchpad:
         note_id = f"n{int(datetime.now().timestamp()) % 100000}"
 
         # Build the note line
+        status_box = "[P]" if postpone_until else "[ ]"
+        postpone_str = f" [postponed_until: {postpone_until}]" if postpone_until else ""
         due_str = f" [due: {due_at}]" if due_at else ""
-        note_line = f"- [ ] ({note_id}) {content}{due_str}  ← {timestamp}\n"
+        note_line = f"- {status_box} ({note_id}) {content}{due_str}{postpone_str}  ← {timestamp}\n"
 
         # Append the note
         text += note_line
@@ -110,7 +145,7 @@ class Scratchpad:
             nid = f"n{nid}"
 
         text = self._read()
-        pattern = rf"- \[[ x/]\] \({re.escape(nid)}\) .*?(?:\s*←\s*.*?)?(?=\n- \[|\Z)\n?"
+        pattern = rf"- \[[ x/P]\] \({re.escape(nid)}\) .*?(?:\s*←\s*.*?)?(?=\n- \[|\Z)\n?"
         
         new_text, count = re.subn(pattern, "", text, count=1, flags=re.DOTALL)
         if count > 0:
@@ -119,8 +154,8 @@ class Scratchpad:
             return True
         return False
 
-    def update_note(self, note_id: str, new_content: str) -> bool:
-        """Update the content of an existing note in-place."""
+    def update_note(self, note_id: str, new_content: str, postpone_until: Optional[str] = None) -> bool:
+        """Update the content of an existing note in-place, and optionally update postpone lock."""
         nid = str(note_id)
         if not nid.startswith("n"):
             nid = f"n{nid}"
@@ -128,11 +163,48 @@ class Scratchpad:
         text = self._read()
         timestamp = _now_short()
 
-        # Match the note line (checked or unchecked)
-        pattern = rf"(- \[[ x/]\] \({re.escape(nid)}\)) (.*?)(?:\s*←\s*.*?)?(?=\n- \[|\Z)"
-        replacement = rf"\1 {new_content}  ← {timestamp}"
-        new_text, count = re.subn(pattern, replacement, text, count=1, flags=re.DOTALL)
-        if count > 0:
+        lines = text.splitlines(keepends=True)
+        modified = False
+        new_lines = []
+
+        for line in lines:
+            match = re.match(rf"^(\s*-\s*\[([ x/P])\]\s*\({re.escape(nid)}\)\s*)(.*?)(?:\s*←\s*.*?)?(\s*)$", line)
+            if match:
+                prefix = match.group(1)
+                old_status = match.group(2)
+                old_text = match.group(3)
+                suffix = match.group(4)
+
+                # Parse existing due_at
+                due_match = re.search(r"\[due:\s*([^\]]+)\]", old_text)
+                due_str = f" [due: {due_match.group(1)}]" if due_match else ""
+
+                # Strip out existing metadata from new_content
+                clean_content = re.sub(r"\s*\[due:\s*[^\]]+\]", "", new_content)
+                clean_content = re.sub(r"\s*\[postponed_until:\s*[^\]]+\]", "", clean_content).strip()
+
+                # Determine new status box and postpone string
+                if postpone_until == "clear":
+                    status_box = "[ ]"
+                    postpone_str = ""
+                elif postpone_until:
+                    status_box = "[P]"
+                    postpone_str = f" [postponed_until: {postpone_until}]"
+                else:
+                    status_box = f"[{old_status}]"
+                    postpone_match = re.search(r"\[postponed_until:\s*([^\]]+)\]", old_text)
+                    postpone_str = f" [postponed_until: {postpone_match.group(1)}]" if postpone_match else ""
+
+                new_prefix = re.sub(r"-\s*\[[ x/P]\]", f"- {status_box}", prefix)
+
+                new_line = f"{new_prefix}{clean_content}{due_str}{postpone_str}  ← {timestamp}{suffix}"
+                new_lines.append(new_line)
+                modified = True
+            else:
+                new_lines.append(line)
+
+        if modified:
+            new_text = "".join(new_lines)
             self._write(new_text)
             logger.info(f"Scratchpad: updated '{nid}'")
             return True
