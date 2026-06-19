@@ -126,6 +126,11 @@ class StabilitySentinel:
         # Load persisted state
         self._load_state()
 
+        # Re-sync the pulse baseline after loading persisted state.
+        # Without this, the first pulse after reboot would compute a
+        # false Δω = (loaded_omega - init_default_0.5).
+        self._omega_at_pulse_start = self.omega
+
     def _init_friction_damper(self):
         """Initialize the friction damper for smoothing stability signals."""
         try:

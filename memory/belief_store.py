@@ -29,7 +29,7 @@ Each belief entry includes:
   - relations: list[str] — IDs of logically related beliefs
   - memory_refs: list[str] — IDs of source memories
   - position_8d: list[float] — permanent 8D manifold coordinates
-  - encoding_lagrangian: dict — somatic state at encoding {omega, s_total, H, D_KL}
+  - encoding_lagrangian: dict — somatic state at encoding {omega, delta_omega, s_total, H, D_KL}
   - created_at: ISO 8601 timestamp
   - last_accessed: ISO 8601 timestamp
   - access_count: times relied upon
@@ -63,6 +63,13 @@ logger = logging.getLogger("helix.memory.belief_store")
 
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _ensure_delta_omega(lag: dict) -> dict:
+    """Preserve the full lagrangian snapshot, ensuring delta_omega is present."""
+    result = dict(lag)  # shallow copy — don't mutate the caller's dict
+    result.setdefault("delta_omega", 0.0)
+    return result
 
 
 # ── Category Definitions ─────────────────────────────────────────────
@@ -236,13 +243,7 @@ class BeliefStore:
             "relations": relations or [],
             "memory_refs": memory_refs or [],
             "position_8d": position_8d,
-            "encoding_lagrangian": {
-                "omega": (encoding_lagrangian or {}).get("omega", 0.5),
-                "delta_omega": (encoding_lagrangian or {}).get("delta_omega", 0.0),
-                "s_total": (encoding_lagrangian or {}).get("s_total", 0.15),
-                "H": (encoding_lagrangian or {}).get("H", 0.15),
-                "D_KL": (encoding_lagrangian or {}).get("D_KL", 0.0),
-            } if encoding_lagrangian else {
+            "encoding_lagrangian": _ensure_delta_omega(encoding_lagrangian) if encoding_lagrangian else {
                 "omega": 0.5, "delta_omega": 0.0, "s_total": 0.15, "H": 0.15, "D_KL": 0.0,
             },
         }
