@@ -115,6 +115,7 @@ class MemoryManager:
                     "created_at": now,
                     "source": source,
                     "encoding_omega": lagrangian_snapshot.get("omega", 0.5),
+                    "delta_omega": lagrangian_snapshot.get("delta_omega", 0.0),
                 },
             )
 

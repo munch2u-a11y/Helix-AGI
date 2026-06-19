@@ -89,6 +89,16 @@ class Preconscious:
         self.channel_router = channel_router
         self.sentinel = sentinel
 
+        # Initialize High Vector Attention engine
+        from core.high_vector_attention import HighVectorAttention
+        self._hva = HighVectorAttention(
+            num_layers=32,
+            num_heads=4,
+            embed_dim=384,
+            cosine_floor=0.25,
+            top_k=5,
+        )
+
         # Reference to pulse loop's active toolsets (shared, not copied)
         # Used by _toolset_awareness() to detect available-but-unloaded tools
         self._active_toolsets = active_toolsets if active_toolsets is not None else {"core"}
@@ -921,6 +931,7 @@ class Preconscious:
                 "access_count": b.get("access_count", 0),
                 "relations_count": len(b.get("relations", [])),
                 "encoding_omega": lag.get("omega", 0.5),
+                "delta_omega": lag.get("delta_omega", 0.0),
                 "encoding_s_total": lag.get("s_total", 0.15),
                 "creation_pulse": b.get("creation_pulse", 0),
                 "last_accessed_pulse": b.get("last_accessed_pulse", 0),
@@ -1013,125 +1024,45 @@ class Preconscious:
         max_results: int = 15,
         min_results: int = 2,
     ) -> List[Dict[str, Any]]:
-        """Score beliefs by Verlinde gravity, anchored by 384D semantic search.
-
-        Two-phase retrieval that prevents projection-collapse noise:
-
-          Phase 1 — Semantic Anchoring (384D):
-            Compute cosine similarity between the seed text and ALL beliefs
-            using the pre-built belief embedding matrix. Retrieve the top
-            SEMANTIC_ANCHOR_K candidates. This ensures only semantically
-            relevant beliefs enter the gravity calculation.
-
-          Phase 2 — Gravitational Ranking (8D):
-            For each semantic candidate, compute Verlinde entropic gravity
-            (mass / distance²) in the 8D cognitive manifold. Rank by gravity
-            and return the top results.
-
-        This breaks the positive feedback loop where random 8D projection
-        proximity causes unrelated beliefs to dominate via runaway gravity.
-
-        Falls back to brute-force 8D gravity if the 384D matrix is unavailable.
-
-        Args:
-            seed_text: Text to embed as the query center.
-            exclude: Set of content strings to skip (previous pulse, etc).
-            max_results: Hard cap on returned beliefs.
-            min_results: Always return at least this many (if available).
-        """
+        """Score beliefs via High Vector Attention (32-layer, 4-head)."""
         import numpy as np
 
         if not seed_text or not seed_text.strip():
             return []
 
-        # Embed the seed into 8D
+        # If belief_cache is empty, rebuild it
+        self._ensure_belief_cache()
+
+        if not self._belief_cache:
+            return []
+
+        # Embed the seed
         try:
-            query_pos = self.physics.embed_and_project(seed_text[:500])
+            query_emb = self.physics.embed_text(seed_text[:500])
+            norm = np.linalg.norm(query_emb)
+            if norm > 1e-8:
+                query_emb = query_emb / norm
         except Exception:
             return []
 
-        # ── Phase 1: Semantic Anchoring (384D) ────────────────────
-        # Find the top SEMANTIC_ANCHOR_K beliefs by cosine similarity
-        # in the full 384D embedding space. This pre-filters the
-        # candidate set so that only semantically relevant beliefs
-        # are ever evaluated by the gravity engine.
-        anchor_cache_indices = None
-        if (self._belief_emb_matrix is not None
-                and len(self._belief_emb_matrix) > 0):
-            try:
-                query_emb = self.physics.embed_text(seed_text[:500])
-                norm = np.linalg.norm(query_emb)
-                if norm > 1e-8:
-                    query_emb = query_emb / norm
-                    # Cosine similarities via matrix multiply (~7ms for 1700 beliefs)
-                    sims = self._belief_emb_matrix @ query_emb
-                    k = min(self.SEMANTIC_ANCHOR_K, len(sims))
-                    top_k_rows = np.argpartition(sims, -k)[-k:]
-                    # Map rows back to belief cache indices
-                    anchor_cache_indices = set()
-                    for row in top_k_rows:
-                        cache_idx = self._belief_emb_reverse_map.get(int(row))
-                        if cache_idx is not None:
-                            anchor_cache_indices.add(cache_idx)
-            except Exception as e:
-                logger.debug(f"384D anchor search failed, falling back to brute-force: {e}")
-                anchor_cache_indices = None
+        try:
+            results = self._hva.forward(
+                query_text=seed_text,
+                belief_cache=self._belief_cache,
+                belief_emb_matrix=self._belief_emb_matrix,
+                belief_emb_row_map=self._belief_emb_row_map,
+                belief_space=self.physics.spatial_mind.belief_space,
+                query_embedding=query_emb,
+                exclude=exclude,
+            )
+        except Exception as e:
+            logger.error(f"High Vector Attention forward pass failed: {e}", exc_info=True)
+            return []
 
-        # ── Phase 2: Gravitational Ranking (8D) ───────────────────
-        # Within the semantically anchored candidate pool, rank by
-        # Verlinde entropic gravity in the 8D cognitive manifold.
-        scored = []
-        belief_space = self.physics.spatial_mind.belief_space
-        for cache_idx, b in enumerate(self._belief_cache):
-            # If we have semantic anchors, skip beliefs not in the anchor set
-            if anchor_cache_indices is not None and cache_idx not in anchor_cache_indices:
-                continue
-
-            content = b["content"]
-            if content in exclude:
-                continue
-
-            # Fetch active point from the belief space if possible
-            bid = b.get("id")
-            pt = belief_space.get_point(bid) if bid else None
-            if pt:
-                # Use the active spatial state of the belief point
-                mass = belief_space._compute_structural_mass(pt)
-                temperature = belief_space._compute_temperature(pt)
-            else:
-                # Fallback to cache attributes using the same formulas via a fallback dict
-                fallback_pt = {
-                    "type": "belief",
-                    "confidence": b.get("confidence", 0.5),
-                    "importance": b.get("mass", 1.0),
-                    "access_count": b.get("access_count", 0),
-                    "relations_count": b.get("relations_count", 0),
-                    "encoding_omega": b.get("encoding_omega", 0.5),
-                    "stability_index": b.get("stability_index", 0.5),
-                    "creation_pulse": b.get("creation_pulse", 0),
-                    "last_accessed_pulse": b.get("last_accessed_pulse", 0),
-                }
-                mass = belief_space._compute_structural_mass(fallback_pt)
-                temperature = belief_space._compute_temperature(fallback_pt)
-
-            dist_sq = float(np.sum((b["position_8d"] - query_pos) ** 2))
-            gravity = (temperature * mass) / (dist_sq + 1e-4)
-
-            scored.append({
-                "id": bid or "",
-                "content": content,
-                "gravity": gravity,
-                "category": b["category"],
-                "mass": mass,
-                "position_8d": b["position_8d"],
-            })
-
-        # Sort by gravity descending — strongest pulls first
-        scored.sort(key=lambda x: x["gravity"], reverse=True)
-
-        # Take the top N by gravity, guaranteeing at least min_results
+        # Slicing & skill slot reservation
+        # Take the top N by gravity (attention weight), guaranteeing at least min_results
         max_take = max(max_results, min_results)
-        selected = scored[:max_take]
+        selected = results[:max_take]
 
         # ── Reserve a slot for skills ─────────────────────────────
         # Ensure that if a 'skills' belief had any pull, it doesn't
@@ -1140,7 +1071,7 @@ class Preconscious:
 
         if not any(b["category"] == "skills" for b in selected):
             best_skill = next(
-                (b for b in scored if b["category"] == "skills"),
+                (b for b in results if b["category"] == "skills"),
                 None
             )
             if best_skill and best_skill["id"] not in selected_ids:

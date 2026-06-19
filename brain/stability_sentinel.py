@@ -96,6 +96,10 @@ class StabilitySentinel:
         self.omega_hard_ceiling = 1.0
         self.omega_floor = 0.05
 
+        # High Vector Attention Δω tracking fields
+        self._omega_at_pulse_start = self.omega
+        self._last_delta_omega = 0.0
+
         # ── Health Triplet ───────────────────────────────────────────
         self.health_triplet = {
             "physical": 1.0,    # Hardware/processes/resources
@@ -808,6 +812,7 @@ class StabilitySentinel:
             "health_triplet": self.health_triplet.copy(),
             "severity": self.get_severity(),
             "consecutive_negative": self._consecutive_negative_readings,
+            "delta_omega": self._last_delta_omega,
         }
         try:
             self.state_file.write_text(json.dumps(state, indent=2))
@@ -827,12 +832,29 @@ class StabilitySentinel:
             self.current_entropy = state.get("current_entropy", 0.0)
             self.health_triplet = state.get("health_triplet", self.health_triplet)
             self._consecutive_negative_readings = state.get("consecutive_negative", 0)
+            self._last_delta_omega = state.get("delta_omega", 0.0)
             logger.info(
                 f"Sentinel state restored: Ω={self.omega:.3f}, "
                 f"S={self.s_total:.3f}, severity={self.get_severity()}"
             )
         except Exception as e:
             logger.warning(f"State load failed: {e}")
+
+    # ── Pulse Delta Omega tracking (High Vector Attention) ───────────
+
+    def mark_pulse_start(self):
+        """Call at the start of each pulse to snapshot omega."""
+        self._omega_at_pulse_start = self.omega
+
+    def mark_pulse_end(self) -> float:
+        """Call at the end of each pulse. Returns the omega delta for this pulse."""
+        self._last_delta_omega = self.omega - self._omega_at_pulse_start
+        return self._last_delta_omega
+
+    @property
+    def delta_omega(self) -> float:
+        """The omega change from the most recently completed pulse."""
+        return self._last_delta_omega
 
     # ── Public status ────────────────────────────────────────────────
 
@@ -997,6 +1019,7 @@ class StabilitySentinel:
         return {
             "H": round(float(H), 4),
             "omega": round(self.omega, 4),
+            "delta_omega": round(self._last_delta_omega, 4),
             "D_KL": round(float(D_KL), 4),
             "T": round(float(T), 4),
             "s_total": round(self.s_total, 4),

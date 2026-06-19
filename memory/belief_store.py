@@ -236,8 +236,14 @@ class BeliefStore:
             "relations": relations or [],
             "memory_refs": memory_refs or [],
             "position_8d": position_8d,
-            "encoding_lagrangian": encoding_lagrangian or {
-                "omega": 0.5, "s_total": 0.15, "H": 0.15, "D_KL": 0.0,
+            "encoding_lagrangian": {
+                "omega": (encoding_lagrangian or {}).get("omega", 0.5),
+                "delta_omega": (encoding_lagrangian or {}).get("delta_omega", 0.0),
+                "s_total": (encoding_lagrangian or {}).get("s_total", 0.15),
+                "H": (encoding_lagrangian or {}).get("H", 0.15),
+                "D_KL": (encoding_lagrangian or {}).get("D_KL", 0.0),
+            } if encoding_lagrangian else {
+                "omega": 0.5, "delta_omega": 0.0, "s_total": 0.15, "H": 0.15, "D_KL": 0.0,
             },
         }
 

@@ -718,6 +718,7 @@ class PulseLoop:
         #    deltas — how much this pulse changed the system's state.
         lagrangian_before = None
         if self.sentinel:
+            self.sentinel.mark_pulse_start()
             lagrangian_before = self.sentinel.get_lagrangian_snapshot()
 
         # 1. Drain events
@@ -885,6 +886,9 @@ class PulseLoop:
         # 5c. Track tokens for context window lifecycle
         if hasattr(self._chat, 'get_last_token_count'):
             self._session_token_count = self._chat.get_last_token_count()
+
+        if self.sentinel:
+            self.sentinel.mark_pulse_end()
 
         # 6. Store to memory (both input events and output thought)
         #    Include the Lagrangian snapshot so every memory is encoded
