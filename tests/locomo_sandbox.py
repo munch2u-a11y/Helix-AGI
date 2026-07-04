@@ -418,7 +418,7 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="/home/nemo/locomo/data/locomo10.json",
+        default="locomo10.json",
         help="Path to locomo10.json dataset"
     )
     parser.add_argument(
@@ -435,7 +435,7 @@ def main():
     parser.add_argument(
         "--save-results",
         type=str,
-        default="/home/nemo/Helix_AGI (GitHub Repo) (Public)/documents/locomo_benchmark_report.md",
+        default="documents/locomo_benchmark_report.md",
         help="Path to save the markdown benchmark report"
     )
     

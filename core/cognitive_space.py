@@ -343,6 +343,11 @@ class CognitiveSpace:
     MIN_IMPORTANCE_FOR_HEAT = _env_float("HELIX_MIN_IMPORTANCE_FOR_HEAT", 0.3)
     MIN_BACKGROUND_TEMPERATURE = _env_float("HELIX_MIN_BACKGROUND_TEMPERATURE", 0.05)
 
+    # E=mc² Constants — Cognitive Mass-Energy Equivalence
+    COGNITIVE_C = 3.0                                       # Universal cognitive constant (speed of causality)
+    COGNITIVE_C_SQUARED = COGNITIVE_C ** 2                   # c² = 9.0
+    COGNITIVE_K = _env_float("HELIX_COGNITIVE_K", 0.5)      # Volatile mass burn rate (per pulse)
+
     def __init__(self, embedding_dim: int = 384, base_dir: Path = None,
                  seed: int = PROJECTION_SEED):
         self.embedding_dim = embedding_dim
@@ -424,6 +429,7 @@ class CognitiveSpace:
         last_accessed_pulse: Optional[int] = None,
         created_at_ts: Optional[float] = None,
         last_accessed_ts: Optional[float] = None,
+        volatile_mass: float = 0.0,
         **kwargs,
     ):
         """Add a belief or memory to the cognitive space.
@@ -458,6 +464,7 @@ class CognitiveSpace:
             "created_at": created_at,
             "creation_pulse": created_pulse,
             "last_accessed_pulse": accessed_pulse,
+            "volatile_mass": volatile_mass,
             "metadata": metadata or {},
         }
 
@@ -473,6 +480,12 @@ class CognitiveSpace:
             self._points[point_id]["last_accessed"] = time.time()
             self._points[point_id]["last_accessed_pulse"] = self._current_pulse
             self._points[point_id]["access_count"] = self._points[point_id].get("access_count", 0) + 1
+
+    def mark_surfaced(self, point_id: str):
+        """Mark point as surfaced, updating only last_surfaced timestamp/pulse without changing last_accessed_pulse or access_count."""
+        if point_id in self._points:
+            self._points[point_id]["last_surfaced"] = time.time()
+            self._points[point_id]["last_surfaced_pulse"] = self._current_pulse
 
     def update_metadata(self, point_id: str, **kwargs):
         """Update metadata fields on a point."""
@@ -564,7 +577,8 @@ class CognitiveSpace:
 
             epsilon = 0.05
             d = max(distance, epsilon)
-            gravity = temperature * mass / (d * d)
+            alpha = float(os.environ.get("HELIX_GRAVITY_MASS_EXPONENT", 0.6))
+            gravity = temperature * (mass ** alpha) / (d * d)
 
             ranked.append((point_id, gravity, distance))
 
@@ -941,8 +955,9 @@ class CognitiveSpace:
             else:
                 soft_factor = 1.0 / (dist ** 3)
 
-            # Verlinde: F = T × mass × dir × soft_factor
-            force += temperature * mass * direction * soft_factor
+            # Verlinde: F = T × mass^alpha × dir × soft_factor
+            alpha = float(os.environ.get("HELIX_GRAVITY_MASS_EXPONENT", 0.6))
+            force += temperature * (mass ** alpha) * direction * soft_factor
 
         # ---- Dynamic force clamp based on current density ----
         if self._points:
@@ -1115,7 +1130,24 @@ class CognitiveSpace:
             stability = point_data.get("stability_index", 0.5)
             s_somatic *= (self.BELIEF_STABILITY_MASS_BONUS + stability)
 
-        mass = c * s_reliance * s_somatic * s_recency
+        m_0 = c * s_reliance * s_somatic * s_recency
+
+        # 3. Volatile Mass (Energy Absorption $E=mc^2$)
+        # Volatile mass burns off over time as heat. We compute its current state analytically.
+        m_v_initial = float(point_data.get("volatile_mass", 0.0))
+        
+        # Calculate pulse_age specifically for the volatile burn (time since energy injection)
+        pulse_age_burn = 0
+        if self._current_pulse > 0:
+            last_accessed = point_data.get("last_accessed_pulse", 0)
+            pulse_age_burn = max(0, self._current_pulse - last_accessed)
+            
+        # Volatile mass decays exponentially: m_v(t) = m_{v,0} * exp(-k*t)
+        m_v_current = m_v_initial * math.exp(-self.COGNITIVE_K * pulse_age_burn)
+
+        # Total Mass = Intrinsic (Solid) + Volatile (Burning Fuel)
+        mass = m_0 + m_v_current
+
         return max(0.01, mass)
 
     def _compute_temperature(self, point_data: dict) -> float:
@@ -1163,12 +1195,26 @@ class CognitiveSpace:
             pulse_age = self._current_pulse - most_recent_pulse
 
             # Lorentzian: T₀ at age=0, T₀/2 at age=τ, T₀/10 at age=3τ
-            T = T_0 / (1.0 + (pulse_age / tau) ** 2)
+            T_base = T_0 / (1.0 + (pulse_age / tau) ** 2)
         else:
-            T = T_0
+            T_base = T_0
+            pulse_age = 0
+
+        # E=mc^2 Radiation (Volatile Mass burns into Heat)
+        # As Volatile Mass decays over time, it generates intense Heat.
+        # T_{burn} = rate_of_loss * c^2 = (k * m_v * exp(-k*t)) * c^2
+        m_v_initial = float(point_data.get("volatile_mass", 0.0))
+        
+        pulse_age_burn = 0
+        if self._current_pulse > 0:
+            pulse_age_burn = max(0, self._current_pulse - last_accessed_pulse)
+            
+        T_burn = self.COGNITIVE_K * m_v_initial * self.COGNITIVE_C_SQUARED * math.exp(-self.COGNITIVE_K * pulse_age_burn)
+
+        # Total Temperature
+        T = T_base + T_burn
 
         # Minimum temperature — cosmic microwave background equivalent
-        # Even ancient concepts have SOME thermal presence
         return max(self.MIN_BACKGROUND_TEMPERATURE, T)
 
     # ── Internal ──────────────────────────────────────────────────────

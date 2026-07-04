@@ -66,84 +66,6 @@ CORE_TOOLS = [
         },
     },
     {
-        "name": "search",
-        "description": "Search the web via DuckDuckGo. Returns top results with titles, snippets, and URLs.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query",
-                },
-            },
-            "required": ["query"],
-        },
-    },
-    {
-        "name": "read_url",
-        "description": "Fetch and extract readable text content from a URL.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The URL to read",
-                },
-            },
-            "required": ["url"],
-        },
-    },
-    {
-        "name": "read_file",
-        "description": "Read the contents of a local file.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Absolute or home-relative path to the file",
-                },
-            },
-            "required": ["path"],
-        },
-    },
-    {
-        "name": "write_file",
-        "description": "Write or create a file with the given content. WARNING: This OVERWRITES the entire file. To add to an existing file, use append_file instead.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Absolute or home-relative path to write to",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The content to write to the file",
-                },
-            },
-            "required": ["path", "content"],
-        },
-    },
-    {
-        "name": "append_file",
-        "description": "Append content to the end of an existing file. Creates the file if it doesn't exist. Use this instead of write_file when you want to ADD to a document without replacing what's already there — e.g. adding a new section to an essay or appending log entries.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Absolute or home-relative path to the file",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The content to append to the end of the file",
-                },
-            },
-            "required": ["path", "content"],
-        },
-    },
-    {
         "name": "verbalize",
         "description": "Speak text out loud through the LOCAL PC speakers via TTS. This is NOT for messaging people — use 'reply' or 'send_message' for that. This is for speaking aloud in the physical room.",
         "parameters": {
@@ -172,80 +94,39 @@ CORE_TOOLS = [
         },
     },
     {
-        "name": "note",
-        "description": "Write a note to your active scratchpad to keep track of current tasks or thoughts. You can optionally postpone the note to act as a locked reminder (ignored/hidden until the ISO timestamp, e.g. '2026-06-17T10:00:00-04:00').",
+        "name": "note_write",
+        "description": "Overwrite the entire scratchpad with new content. Use this to set the main tasks/reminders or clear out old scratchpad state with a single update.",
         "parameters": {
             "type": "object",
             "properties": {
                 "content": {
                     "type": "string",
-                    "description": "The content of the note",
-                },
-                "postpone_until": {
-                    "type": "string",
-                    "description": "Optional ISO timestamp (with timezone offset) until when the note should be locked/postponed.",
+                    "description": "The content to write to the scratchpad",
                 },
             },
             "required": ["content"],
         },
     },
     {
-        "name": "note_done",
-        "description": "Mark an active scratchpad note as complete and remove it, using its ID (e.g. 'n9565').",
+        "name": "note_append",
+        "description": "Append content to the end of the scratchpad. Use this to add new reminders, task updates, or notes without clearing existing content.",
         "parameters": {
             "type": "object",
             "properties": {
-                "note_id": {
+                "content": {
                     "type": "string",
-                    "description": "The ID of the note to mark complete (e.g. 'n9565')",
+                    "description": "The content to append to the scratchpad",
                 },
             },
-            "required": ["note_id"],
+            "required": ["content"],
         },
     },
     {
-        "name": "list_notes",
-        "description": "List all active (unchecked) notes on your scratchpad, showing their IDs and content. Use this to see what is on your scratchpad before clearing or updating notes.",
+        "name": "note_clear",
+        "description": "Clear all content from the scratchpad, leaving it empty.",
         "parameters": {
             "type": "object",
             "properties": {},
-        },
-    },
-    {
-        "name": "clear_notes",
-        "description": "Clear notes from your scratchpad. Use mode 'completed' to remove only checked-off notes, or 'all' to wipe the entire scratchpad clean and start fresh.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "mode": {
-                    "type": "string",
-                    "description": "Either 'completed' (remove only done notes) or 'all' (remove everything)",
-                    "enum": ["completed", "all"],
-                },
-            },
-            "required": ["mode"],
-        },
-    },
-    {
-        "name": "update_note",
-        "description": "Update the content or status of an existing scratchpad note in-place. You can optionally add, change, or clear a postpone lock.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "note_id": {
-                    "type": "string",
-                    "description": "The ID of the note to update (e.g. 'n9565')",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The new content for the note",
-                },
-                "postpone_until": {
-                    "type": "string",
-                    "description": "Optional ISO timestamp (with timezone offset) to lock/postpone the note. Pass 'clear' to remove an existing postpone lock.",
-                },
-            },
-            "required": ["note_id", "content"],
         },
     },
     {
@@ -262,6 +143,25 @@ CORE_TOOLS = [
             "required": ["content"],
         },
     },
+    {
+        "name": "nap",
+        "description": "Voluntarily rest to reset your context window and start a fresh thought thread. You can provide a resumption context that will be saved to your scratchpad so you remember where you left off.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "resumption_context": {
+                    "type": "string",
+                    "description": "Brief context summary to write to the scratchpad so you can resume your task when you wake up",
+                },
+            },
+            "required": [],
+        },
+    },
+]
+
+# ── Perception Tools ─────────────────────────────────────────────────
+
+PERCEPTION_TOOLS = [
     {
         "name": "listen",
         "description": "Listen through the microphone for a duration, transcribe speech to text.",
@@ -330,24 +230,98 @@ CORE_TOOLS = [
                 },
                 "focus": {
                     "type": "string",
-                    "description": "Optional focus description for analysis (e.g. 'the doorway', 'Joshua's expression')",
+                    "description": "Optional focus description for analysis (e.g. 'the doorway', 'User\\'s expression')",
                 },
             },
             "required": [],
         },
     },
+]
+
+# ── Web Tools ────────────────────────────────────────────────────────
+
+WEB_TOOLS = [
     {
-        "name": "nap",
-        "description": "Take a nap — pause your pulse loop for a period of rest and run a belief consolidation cycle. Use this when you feel you've been running for a long time and want to process and integrate what you've learned. Your beliefs will be consolidated, merged, and strengthened during this period. You'll wake up refreshed.",
+        "name": "search",
+        "description": "Search the web via DuckDuckGo. Returns top results with titles, snippets, and URLs.",
         "parameters": {
             "type": "object",
             "properties": {
-                "duration": {
-                    "type": "integer",
-                    "description": "How long to rest in minutes (default 60, range 5-180)",
+                "query": {
+                    "type": "string",
+                    "description": "The search query",
                 },
             },
-            "required": [],
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "read_url",
+        "description": "Fetch and extract readable text content from a URL.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to read",
+                },
+            },
+            "required": ["url"],
+        },
+    },
+]
+
+# ── Files Tools ──────────────────────────────────────────────────────
+
+FILES_TOOLS = [
+    {
+        "name": "read_file",
+        "description": "Read the contents of a local file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or home-relative path to the file",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "write_file",
+        "description": "Write or create a file with the given content. WARNING: This OVERWRITES the entire file. To add to an existing file, use append_file instead.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or home-relative path to write to",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The content to write to the file",
+                },
+            },
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "append_file",
+        "description": "Append content to the end of an existing file. Creates the file if it doesn't exist. Use this instead of write_file when you want to ADD to a document without replacing what's already there — e.g. adding a new section to an essay or appending log entries.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or home-relative path to the file",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The content to append to the end of the file",
+                },
+            },
+            "required": ["path", "content"],
         },
     },
 ]
@@ -895,19 +869,6 @@ EMAIL_TOOLS = [
             "properties": {
                 "message_id": {"type": "string", "description": "Gmail message ID to reply to"},
                 "body": {"type": "string", "description": "Reply body text"},
-                "reply_all": {"type": "boolean", "description": "Whether to reply to all recipients (default False)"},
-            },
-            "required": ["message_id", "body"],
-        },
-    },
-    {
-        "name": "email_reply_all",
-        "description": "Reply to all recipients of an email.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "message_id": {"type": "string", "description": "Gmail message ID to reply to all"},
-                "body": {"type": "string", "description": "Reply body text"},
             },
             "required": ["message_id", "body"],
         },
@@ -1205,8 +1166,8 @@ TOOLSET_MANAGEMENT_TOOLS = [
         "description": (
             "Load additional tool capabilities into your current session. "
             "Call list_toolsets() first to see what's available. "
-            "Available toolsets: browser, git, github, social (Moltbook), "
-            "email, calendar, drive, tasks, desktop, sensory (camera/mic/PTZ). "
+            "Available toolsets: perception, web, files, browser, git, github, "
+            "social (Moltbook), email, calendar, drive, tasks, desktop. "
             "Tools remain active until you disable them or context compresses."
         ),
         "parameters": {
@@ -1216,7 +1177,7 @@ TOOLSET_MANAGEMENT_TOOLS = [
                     "type": "string",
                     "description": (
                         "Name of the toolset to enable "
-                        "(e.g., 'github', 'social', 'email')"
+                        "(e.g., 'perception', 'web', 'files')"
                     ),
                 },
             },
@@ -1260,137 +1221,25 @@ TOOLSET_MANAGEMENT_TOOLS = [
 # Only "core" is loaded by default. All others require conscious
 # enable_toolset() to activate.
 
-import os
-
-_lean_names = {
-    "reply",
-    "send_message",
-    "memory_recall",
-    "nap",
-    "note",
-    "note_done",
-    "list_notes",
-    "clear_notes",
-    "update_note",
-    "journal",
-}
-_system_names = {"terminal", "read_file", "write_file", "append_file"}
-_web_names = {"search", "read_url"}
-_sensory_names = {
-    "verbalize",
-    "listen",
-    "look",
-    "ptz_look",
-    "camera_auto_track",
-    "record_video",
-}
-
-CORE_LEAN_TOOLS = [t for t in CORE_TOOLS if t["name"] in _lean_names]
-SYSTEM_TOOLS = [t for t in CORE_TOOLS if t["name"] in _system_names]
-WEB_TOOLS = [t for t in CORE_TOOLS if t["name"] in _web_names]
-SENSORY_TOOLS = [t for t in CORE_TOOLS if t["name"] in _sensory_names]
-
-# In local mode, only load lean core tools by default.
-# Segmented tools can be consciously enabled on demand.
-_is_local = os.environ.get("HELIX_PULSE_MODE") == "local"
-_default_core = CORE_LEAN_TOOLS if _is_local else CORE_TOOLS
-
-TOOL_FACTORY_TOOLS = [
-    {
-        "name": "create_custom_tool_template",
-        "description": "Create a skeleton python script template for a new custom tool inside tools/custom/.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Name of the custom tool (must be snake_case, e.g. 'convert_doc_to_pdf')"
-                },
-                "toolset": {
-                    "type": "string",
-                    "description": "The toolset/group name to assign this tool to (e.g. 'custom', 'file_utils', 'git')"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "A brief description of what the tool does"
-                },
-                "parameters": {
-                    "type": "object",
-                    "description": "Gemini Function Declaration parameters object (defining properties, types, required args)"
-                },
-                "requires_env": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "description": "Optional list of required environment variables for this tool"
-                }
-            },
-            "required": ["name", "toolset", "description", "parameters"]
-        }
-    },
-    {
-        "name": "register_custom_tool",
-        "description": "Dynamically validate, load and register a custom tool from tools/custom/<name>.py into the running registry and session.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "The name of the custom tool (e.g. 'convert_doc_to_pdf' corresponding to tools/custom/convert_doc_to_pdf.py)"
-                }
-            },
-            "required": ["name"]
-        }
-    },
-    {
-        "name": "list_custom_tools",
-        "description": "List all custom tools in tools/custom/ with their name, toolset, description, and registration status.",
-        "parameters": {
-            "type": "object",
-            "properties": {}
-        }
-    },
-    {
-        "name": "delete_custom_tool",
-        "description": "Deregister a custom tool from the running session and delete its file from tools/custom/.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "The name of the custom tool to delete"
-                }
-            },
-            "required": ["name"]
-        }
-    }
-]
-
 TOOLSETS = {
-    "tool_factory": {
-        "description": "Dynamic tool creation and registration",
-        "tools": TOOL_FACTORY_TOOLS,
-        "default": True,
-    },
     "core": {
         "description": "Core cognitive tools — always loaded",
-        "tools": _default_core + TOOLSET_MANAGEMENT_TOOLS,
+        "tools": CORE_TOOLS + TOOLSET_MANAGEMENT_TOOLS,
         "default": True,
     },
-    "system": {
-        "description": "System access — terminal, read/write files",
-        "tools": SYSTEM_TOOLS,
+    "perception": {
+        "description": "Physical senses — camera and microphone",
+        "tools": PERCEPTION_TOOLS,
         "default": False,
     },
     "web": {
-        "description": "Web search and read URL",
+        "description": "Web search and page content reading",
         "tools": WEB_TOOLS,
         "default": False,
     },
-    "sensory": {
-        "description": "Sensory and hardware interaction — camera, microphone, verbalization",
-        "tools": SENSORY_TOOLS,
+    "files": {
+        "description": "Local filesystem operations (read, write, append)",
+        "tools": FILES_TOOLS,
         "default": False,
     },
     "browser": {
@@ -1496,6 +1345,9 @@ def get_toolset_info() -> dict:
 TOOL_DECLARATIONS = (
     CORE_TOOLS
     + TOOLSET_MANAGEMENT_TOOLS
+    + PERCEPTION_TOOLS
+    + WEB_TOOLS
+    + FILES_TOOLS
     + BROWSER_TOOLS
     + GIT_TOOLS
     + GITHUB_TOOLS
@@ -1505,5 +1357,4 @@ TOOL_DECLARATIONS = (
     + DRIVE_TOOLS
     + TASKS_TOOLS
     + DESKTOP_TOOLS
-    + TOOL_FACTORY_TOOLS
 )

@@ -261,7 +261,7 @@ The legacy fragmented SQLite/ChromaDB architecture has been replaced by a **unif
 
 **Unified Write:** Every `store()` call writes to the append-only `cognitive_journal.jsonl`. If an embedding is provided, it is immediately registered in the `SemanticIndex` for instant conscious recall. The journal uses SHA-256 checksums to guarantee data integrity across restarts.
 
-**Conscious Semantic Recall:** The conscious `memory_recall` tool invokes `MemoryManager.search_semantic()`, which queries the `SemanticIndex` for exact cosine-similarity matches. This operates completely independently of the 8D preconscious gravity field, providing precise factual retrieval when explicitly requested.
+**Conscious Contextual Recall:** The conscious `memory_recall` tool now invokes `MemoryManager.search_contextual()`, which first anchors candidates in the 384D semantic index, then re-ranks them against the current attention trajectory in the 8D manifold. This preserves precision while letting lived focus influence which matching memories feel most salient.
 
 **Somatic Echo on Recall** ([memory_manager.py](memory/memory_manager.py)): When a memory is retrieved that was formed under stress, the system nudges the Sentinel's Ω downward, mildly reproducing the stress. This creates visceral recall — the system doesn't just *remember* the event, it briefly *re-experiences* the emotional context.
 

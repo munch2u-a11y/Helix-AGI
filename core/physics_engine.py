@@ -87,6 +87,10 @@ class PhysicsEngine:
         # ── Load persisted attention state ──
         self._load_attention()
 
+        # Continue the mind's proper time from the persisted state
+        # instead of restarting at pulse 0 every boot.
+        self._pulse_count = getattr(self.spatial_mind, "_pulse_count", 0)
+
         logger.info("PhysicsEngine initialized (dual 8D manifold + 384D semantic index)")
 
     # ── Properties delegated to SpatialMind ───────────────────────────
@@ -114,6 +118,50 @@ class PhysicsEngine:
     @property
     def _velocity(self) -> np.ndarray:
         return self.spatial_mind._velocity
+
+    def derive_query_center(
+        self,
+        focus_text: str = None,
+        focus_position: np.ndarray = None,
+        attention_relative: bool = False,
+    ) -> np.ndarray:
+        """Resolve a query center for recall without mutating live state.
+
+        For conscious/preconscious recall we often want new input to perturb
+        the current attention trajectory rather than replacing it outright.
+        ``attention_relative=True`` keeps the carried-forward center and
+        velocity as the base frame, then nudges toward the incoming stimulus.
+        """
+        if focus_position is not None:
+            stimulus_center = np.asarray(focus_position, dtype=np.float32).reshape(-1)
+        elif focus_text:
+            stimulus_center = self.embed_and_project(focus_text)
+        else:
+            stimulus_center = None
+
+        base_center = np.asarray(self.attention_center, dtype=np.float32).reshape(-1)
+        if stimulus_center is None:
+            return base_center.copy()
+        if not attention_relative:
+            return stimulus_center
+
+        trajectory_center = base_center.copy()
+        velocity = np.asarray(self._velocity, dtype=np.float32).reshape(-1)
+        velocity_mag = float(np.linalg.norm(velocity))
+        if velocity_mag > 1e-6:
+            trajectory_center = trajectory_center + (self._gamma * velocity / (1.0 + velocity_mag))
+
+        displacement = float(np.linalg.norm(stimulus_center - trajectory_center))
+        novelty = min(1.0, displacement / 3.0)
+        stimulus_weight = 0.20 + (0.25 * novelty)
+        if self._gamma > 0.85:
+            stimulus_weight *= 0.75
+        stimulus_weight = max(0.15, min(0.50, stimulus_weight))
+
+        return (
+            trajectory_center * (1.0 - stimulus_weight)
+            + stimulus_center * stimulus_weight
+        ).astype(np.float32)
 
     # ── Embedder ──────────────────────────────────────────────────────
 
@@ -272,19 +320,18 @@ class PhysicsEngine:
         focus_position: np.ndarray = None,
         k: int = 8,
         exclude_trails: bool = True,
+        attention_relative: bool = False,
     ) -> List[Dict[str, Any]]:
         """Query the K most gravitationally relevant points.
 
         Queries BOTH belief and memory spaces and merges results.
         Points scored by gravity = T × mass / distance².
         """
-        # Determine focus position
-        if focus_position is not None:
-            center = focus_position
-        elif focus_text:
-            center = self.embed_and_project(focus_text)
-        else:
-            center = self.attention_center
+        center = self.derive_query_center(
+            focus_text=focus_text,
+            focus_position=focus_position,
+            attention_relative=attention_relative,
+        )
 
         # Query both spaces
         belief_results = self.spatial_mind.belief_space.gravity_ranked_query(
@@ -510,6 +557,8 @@ class PhysicsEngine:
                 "stability_index": belief.get("stability_index", 0.5),
                 "weight": belief.get("weight", "surface"),
                 "position_override": belief.get("position_8d"),
+                "volatile_mass": belief.get("volatile_mass", 0.0),
+                "last_accessed_pulse": belief.get("last_accessed_pulse"),
                 "metadata": {
                     "category": belief.get("_category", ""),
                     "verifications": belief.get("verifications", 0),

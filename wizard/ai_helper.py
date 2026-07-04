@@ -46,8 +46,10 @@ AI_TIPS = {
     "tools": {
         "title": "💡 AI Setup Tip — Tools",
         "body": (
-            "• <b>Core tools</b> (reply, memory, journal) are always enabled — they're "
-            "essential for basic operation.\n\n"
+            "• <b>Operational tools</b> are always enabled — they keep the agent able "
+            "to respond and manage its active tool groups.\n\n"
+            "• <b>Core</b> is now an optional cognitive bundle (memory recall, notes, "
+            "journal, verbalization) that you can leave off when you want a leaner schema.\n\n"
             "• <b>Web + Filesystem + Terminal</b> are recommended for most users. "
             "They let your agent browse the web, manage files, and run commands.\n\n"
             "• <b>Desktop control</b> (mouse/keyboard) is powerful but risky — "

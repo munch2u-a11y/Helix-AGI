@@ -273,8 +273,9 @@ class AffectField:
         7: anticipation (interest → anticipation → vigilance)
     """
 
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = "data", restore_state: bool = False):
         self.data_dir = Path(data_dir)
+        self.restore_state = restore_state
         self.packets: List[WavePacket] = []
         self.current_pulse: int = 0
 
@@ -289,8 +290,11 @@ class AffectField:
         self._summary_cache: Optional[dict] = None
         self._summary_cache_pulse: int = -1
 
-        # Load persisted state
-        self._load_state()
+        # Restore persisted state only when explicitly requested.
+        # Launches should begin from a neutral affect baseline so stale
+        # emotional packets do not spike the dashboard on boot.
+        if self.restore_state:
+            self._load_state()
 
     # ── Deposit ──────────────────────────────────────────────────────
 
@@ -388,7 +392,7 @@ class AffectField:
         surprise = abs(delta_s) * 5.0
         sadness = max(0.0, -omega_vel) * 10.0
         disgust = self._stagnation_counter / 10.0
-        anger = H * (1.0 - omega) * 2.0
+        anger = math.log1p(H) * (1.0 - omega) * 0.8
         anticipation = max(0.0, omega_vel) * 10.0
 
         # ── Spatial metric compounds ─────────────────────────────────

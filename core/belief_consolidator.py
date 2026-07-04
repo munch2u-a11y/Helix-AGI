@@ -140,23 +140,78 @@ def _load_lexicon_terms(lexicon_path: Path) -> Dict[str, str]:
 def _extract_dominant_term(text: str) -> Optional[str]:
     """Extract the most significant proper noun from belief text.
 
-    Returns the most frequently occurring proper noun, or the first
-    one found if all appear equally. Returns None if no proper nouns.
+    A word only counts as a proper noun if it appears capitalized in a
+    NON-sentence-initial position somewhere in the text. Sentence-start
+    capitalization alone is not evidence of a name — the old behavior
+    turned words like 'Cognitive' and 'Internal' into lexicon anchor
+    terms that matched on nearly every pulse. A sentence-initial word
+    still qualifies if the same word recurs capitalized mid-sentence.
+
+    Returns the most frequent qualifying proper noun, or None.
     """
-    words = _tokenize(text)
-    proper_nouns = [w for w in words if _is_proper_noun(w)]
-    if not proper_nouns:
+    # Words that start the text or follow sentence punctuation are
+    # positionally capitalized — capitalization there proves nothing.
+    sentence_initial = set()
+    for m in re.finditer(r"(?:^|[.!?:]\s+|\n\s*)([A-Za-z][A-Za-z0-9_]*)", text):
+        sentence_initial.add((m.start(1), m.group(1)))
+
+    initial_positions = {pos for pos, _ in sentence_initial}
+
+    mid_sentence_caps = []
+    all_caps_words = []
+    for m in re.finditer(r"[A-Za-z][A-Za-z0-9_]*", text):
+        w = m.group(0)
+        if not _is_proper_noun(w) or w.lower() in _STOPWORDS:
+            continue
+        all_caps_words.append(w)
+        if m.start() not in initial_positions:
+            mid_sentence_caps.append(w)
+
+    if not mid_sentence_caps:
         return None
 
-    # Count occurrences, return the most frequent
+    # Any word proven mid-sentence qualifies at ALL its occurrences
+    proven = {w.lower() for w in mid_sentence_caps}
+    proper_nouns = [w for w in all_caps_words if w.lower() in proven]
+
     from collections import Counter
     counts = Counter(w.lower() for w in proper_nouns)
     winner_lower, _ = counts.most_common(1)[0]
-    # Return original casing from first occurrence
     for w in proper_nouns:
         if w.lower() == winner_lower:
             return w
     return proper_nouns[0]
+
+
+def term_survives_corpus_check(term: str, contents) -> bool:
+    """Corpus-level term quality check: names stay capitalized in use.
+
+    A genuine entity name ('Joshua', 'Antigravity') appears capitalized
+    wherever the agent writes it; a generic word captured at a sentence
+    start ('Cognitive') appears mostly lowercase across the store. Used
+    by the Curator before assigning a Layer 2 anchor term.
+
+    Args:
+        term: Candidate term.
+        contents: Iterable of belief content strings (the corpus).
+
+    Returns:
+        True if the term should be allowed as a lexicon anchor.
+    """
+    if not term or len(term) < 3:
+        return False
+    tl = term.lower()
+    cap_form = term[0].upper() + term[1:].lower()
+    cap = low = 0
+    for c in contents:
+        if not c:
+            continue
+        cap += len(re.findall(r"\b" + re.escape(cap_form) + r"\b", c))
+        low += len(re.findall(r"\b" + re.escape(tl) + r"\b", c))
+    seen = cap + low
+    if seen < 3:
+        return True  # too rare to judge — allow (new entities start rare)
+    return (cap / seen) >= 0.7
 
 
 # ── Tokenizer ────────────────────────────────────────────────────────
@@ -541,7 +596,7 @@ def consolidate_new_beliefs(
 
     # Load Layer 2 terms as matching index
     # _load_lexicon_terms reads from people.json, concepts.json, etc.
-    beliefs_dir = Path("data/beliefs")
+    beliefs_dir = Path(os.environ.get("HELIX_DATA_DIR", "data")) / "beliefs"
     lexicon_terms = _load_lexicon_terms(beliefs_dir / "_placeholder")
     logger.info(
         "Consolidator loaded %d Layer 2 terms for matching", len(lexicon_terms),

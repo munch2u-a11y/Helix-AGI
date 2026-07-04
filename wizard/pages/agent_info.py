@@ -1,17 +1,26 @@
 """
 Wizard Page 3: Agent Info
 
-Collects agent name, creator name, bootstrap profile, and personality archetype.
+Collects agent name, creator name, bootstrap profile, and bootstrap voice seed.
 Uses clickable card buttons instead of radio buttons for easy selection.
 """
+
+from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QGroupBox, QFormLayout, QScrollArea,
     QSpacerItem, QSizePolicy, QGraphicsDropShadowEffect,
+    QFileDialog,
 )
 from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, QTimer
 from PyQt6.QtGui import QColor
+from bootstrap import (
+    PERSONALITY_OPTIONS,
+    PROFILE_OPTIONS,
+    canonicalize_bootstrap_profile,
+    canonicalize_personality,
+)
 from wizard.ai_helper import AiHelperBanner
 
 
@@ -80,10 +89,15 @@ class AgentInfoPage(QWidget):
     def __init__(self, wizard):
         super().__init__()
         self.wizard = wizard
-        self._selected_profile = wizard.config.get("bootstrap_profile", "prepared")
-        self._selected_personality = wizard.config.get("personality", "curious")
+        self._selected_profile = canonicalize_bootstrap_profile(
+            wizard.config.get("bootstrap_profile", "standard")
+        )
+        self._selected_personality = canonicalize_personality(
+            wizard.config.get("personality", "curious")
+        )
         self._profile_buttons = {}
         self._personality_buttons = {}
+        self._import_paths: list[str] = []
         self._build()
 
     def _build(self):
@@ -97,8 +111,8 @@ class AgentInfoPage(QWidget):
         layout.addWidget(heading)
 
         sub = QLabel(
-            "Give your agent a name and personality. These define its initial beliefs\n"
-            "and communication style. The name and bootstrap profile cannot be changed after creation."
+            "Give your agent a name and choose its initial bootstrap depth and wording style.\n"
+            "These shape the first beliefs it starts from. The name and bootstrap profile cannot be changed after creation."
         )
         sub.setProperty("class", "subheading")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -140,26 +154,24 @@ class AgentInfoPage(QWidget):
         profile_layout.setSpacing(10)
 
         profile_desc = QLabel(
-            "⚠️  Choose how much pre-loaded knowledge your agent starts with. "
+            "⚠️  Choose how much starter belief structure your agent begins with. "
             "This cannot be changed after creation."
         )
         profile_desc.setWordWrap(True)
         profile_desc.setStyleSheet("color: #fbbf24; font-size: 11px;")
         profile_layout.addWidget(profile_desc)
 
-        profiles = [
-            ("birth", "🐣  Birth — Blank Slate",
-             "Minimal beliefs. Your agent learns everything from scratch. "
-             "Develops its own unique perspective over time."),
-            ("prepared", "📚  Prepared — Recommended",
-             "Standard identity, tool skills, and system knowledge. "
-             "Ready to help from pulse #1. Best for most users."),
-            ("developed", "🎓  Developed — Advanced",
-             "Includes meta-cognition, debugging strategies, and "
-             "multi-step autonomy. For power users wanting full autonomy."),
-        ]
+        profile_icons = {
+            "basic": "🐣",
+            "standard": "📚",
+            "predeveloped": "🎓",
+            "import": "📥",
+        }
 
-        for value, title, desc in profiles:
+        for option in PROFILE_OPTIONS:
+            value = option["value"]
+            title = f"{profile_icons.get(value, '')}  {option['title']}".strip()
+            desc = option["description"]
             btn = QPushButton()
             btn.setMinimumHeight(60)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -170,28 +182,46 @@ class AgentInfoPage(QWidget):
             self._profile_buttons[value] = btn
             profile_layout.addWidget(btn)
 
+        # ── Import file selection (shown only when "import" profile is active)
+        self._import_section = QWidget()
+        import_layout = QVBoxLayout(self._import_section)
+        import_layout.setContentsMargins(8, 4, 8, 4)
+        import_layout.setSpacing(6)
+
+        browse_btn = QPushButton("📂 Browse for identity files...")
+        browse_btn.setProperty("class", "secondary")
+        browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        browse_btn.clicked.connect(self._browse_import_files)
+        import_layout.addWidget(browse_btn)
+
+        self._import_files_label = QLabel("No files selected")
+        self._import_files_label.setWordWrap(True)
+        self._import_files_label.setStyleSheet("color: #8888aa; font-size: 11px;")
+        import_layout.addWidget(self._import_files_label)
+
+        self._import_section.setVisible(self._selected_profile == "import")
+        profile_layout.addWidget(self._import_section)
+
         self._update_profile_styles()
         inner.addWidget(profile_group)
 
         # ── Personality ───────────────────────────────────────────────
-        personality_group = QGroupBox("Personality Archetype")
+        personality_group = QGroupBox("Bootstrap Voice")
         personality_layout = QVBoxLayout(personality_group)
         personality_layout.setSpacing(8)
 
-        personalities = [
-            ("curious", "🔍  Curious",
-             "Exploratory, inquisitive, loves to learn"),
-            ("friendly", "🤝  Friendly",
-             "Warm, collaborative, supportive"),
-            ("safe", "🛡️  Safe",
-             "Cautious, validation-focused, stable"),
-            ("professional", "💼  Professional",
-             "Concise, objective, efficient"),
-        ]
-
+        personality_icons = {
+            "curious": "🔍",
+            "friendly": "🤝",
+            "safe": "🛡️",
+            "professional": "💼",
+        }
         p_container = QHBoxLayout()
         p_container.setSpacing(8)
-        for value, title, desc in personalities:
+        for option in PERSONALITY_OPTIONS:
+            value = option["value"]
+            title = f"{personality_icons.get(value, '')}  {option['title']}".strip()
+            desc = option["description"]
             btn = QPushButton()
             btn.setMinimumHeight(55)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -228,6 +258,7 @@ class AgentInfoPage(QWidget):
         self._selected_profile = value
         self._update_profile_styles()
         self._animate_card(self._profile_buttons[value])
+        self._import_section.setVisible(value == "import")
 
     def _select_personality(self, value):
         self._selected_personality = value
@@ -285,10 +316,30 @@ class AgentInfoPage(QWidget):
         btn._pop_anim = anim
         anim.start()
 
+    def _browse_import_files(self):
+        """Open a file dialog to select identity/soul files for import."""
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select identity files to import",
+            "",
+            "Identity files (*.md *.txt *.json *.yaml *.yml);;All files (*)",
+        )
+        if paths:
+            self._import_paths = paths
+            names = "\n".join(Path(p).name for p in paths)
+            self._import_files_label.setText(f"Selected {len(paths)} file(s):\n{names}")
+            self._import_files_label.setStyleSheet("color: #4ade80; font-size: 11px;")
+        else:
+            self._import_paths = []
+            self._import_files_label.setText("No files selected")
+            self._import_files_label.setStyleSheet("color: #8888aa; font-size: 11px;")
+
     def _save_and_next(self):
         cfg = self.wizard.config
         cfg["agent_name"] = self.agent_name.text().strip() or "Helix"
         cfg["creator_name"] = self.creator_name.text().strip() or "User"
-        cfg["bootstrap_profile"] = self._selected_profile
-        cfg["personality"] = self._selected_personality
+        cfg["bootstrap_profile"] = canonicalize_bootstrap_profile(self._selected_profile)
+        cfg["personality"] = canonicalize_personality(self._selected_personality)
+        if cfg["bootstrap_profile"] == "import":
+            cfg["import_soul_paths"] = self._import_paths
         self.wizard.next_page()

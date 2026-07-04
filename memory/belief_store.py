@@ -190,6 +190,7 @@ class BeliefStore:
             "formation_type": belief.get("formation_type", ""),
             "term": belief.get("term", ""),
             "aliases": belief.get("aliases", []),
+            "volatile_mass": belief.get("volatile_mass", 0.0),
         }
         self._memory.journal.append_belief(
             id=str(belief.get("id", "")),
@@ -265,6 +266,13 @@ class BeliefStore:
 
     def _read_category(self, category: str) -> List[Dict[str, Any]]:
         """Read all beliefs from a category file."""
+        # Normalize singular → plural (LLM often returns singular forms)
+        _SINGULAR_MAP = {
+            "premise": "premises", "proposition": "propositions",
+            "preference": "preferences", "person": "people",
+            "skill": "skills", "desire": "desires", "concept": "concepts",
+        }
+        category = _SINGULAR_MAP.get(category, category)
         filename = BELIEF_CATEGORIES.get(category)
         if not filename:
             logger.warning(f"Unknown belief category: {category}")
@@ -279,6 +287,13 @@ class BeliefStore:
 
     def _write_category(self, category: str, beliefs: List[Dict[str, Any]]):
         """Write all beliefs to a category file."""
+        # Normalize singular → plural
+        _SINGULAR_MAP = {
+            "premise": "premises", "proposition": "propositions",
+            "preference": "preferences", "person": "people",
+            "skill": "skills", "desire": "desires", "concept": "concepts",
+        }
+        category = _SINGULAR_MAP.get(category, category)
         filename = BELIEF_CATEGORIES.get(category)
         if not filename:
             return
@@ -522,7 +537,7 @@ class BeliefStore:
             "content", "relations", "memory_refs", "confidence",
             "verifications", "stability_index", "position_8d",
             "mass", "last_accessed", "access_count",
-            "encoding_lagrangian", "tags",
+            "encoding_lagrangian", "tags", "tool_bindings",
         }
 
         for category in BELIEF_CATEGORIES:
@@ -555,6 +570,30 @@ class BeliefStore:
 
         logger.warning(f"Belief not found for update: {belief_id}")
         return None
+
+    def get_beliefs_by_tool(self, tool_name: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Return beliefs whose tool_bindings contain the given tool name.
+
+        Sorted by stability_index descending. Used by the preconscious
+        to pull targeted lessons when a tool is actively in use.
+        """
+        tool_lower = tool_name.strip().lower()
+        matches = []
+        for b in self.get_all_beliefs_flat():
+            bindings = b.get("tool_bindings", [])
+            if not isinstance(bindings, list):
+                continue
+            if any(
+                isinstance(tb, str) and tb.strip().lower() == tool_lower
+                for tb in bindings
+            ):
+                matches.append(b)
+
+        matches.sort(
+            key=lambda b: b.get("stability_index", 0.5),
+            reverse=True,
+        )
+        return matches[:limit]
 
     # ── Relation Graph Operations (Restored from V3-V7) ──────────────
 
@@ -1186,6 +1225,60 @@ class BeliefStore:
         m_a = omega_enc * (1.0 - s_total_enc) * (0.5 + stability)
 
         return max(0.01, m_s + m_a)
+
+    def get_mean_mass(self) -> float:
+        """Calculate the average structural mass of all beliefs in the cognitive space."""
+        total_mass = 0.0
+        count = 0
+        for category in BELIEF_CATEGORIES:
+            beliefs = self._read_category(category)
+            for b in beliefs:
+                total_mass += b.get("mass", 1.0)
+                count += 1
+        return total_mass / count if count > 0 else 1.0
+
+    def register_reliance(self, belief_id: str, current_pulse: int):
+        r"""Register that a belief was actively relied upon by the conscious mind.
+        
+        This handles the Energy ($E=mc^2$) reliance reward:
+        For non-skills: Injects a burst of cognitive Energy ($\Delta E$) into the belief.
+        For skills specifically: Routes repeated reliance into stability_index and verifications.
+        """
+        COGNITIVE_C_SQUARED = 9.0  # c = 3.0
+        import os
+        default_delta_energy = float(os.environ.get("HELIX_RELIANCE_DELTA_ENERGY", 18.0))
+        DELTA_MASS = default_delta_energy / COGNITIVE_C_SQUARED  # default +1.0 volatile mass
+
+        for category in BELIEF_CATEGORIES:
+            beliefs = self._read_category(category)
+            for b in beliefs:
+                if b.get("id") == belief_id:
+                    # 1. Reset timeline so analytical burn starts from t=0
+                    b["last_accessed_pulse"] = current_pulse
+                    b["access_count"] = b.get("access_count", 0) + 1
+                    
+                    if category == "skills":
+                        # Route repeated reliance into stability_index / verifications gains (permanent)
+                        current_stability = float(b.get("stability_index", 0.5))
+                        b["stability_index"] = round(min(1.0, current_stability + 0.05), 4)
+                        
+                        current_verifications = float(b.get("verifications", 1.0))
+                        b["verifications"] = current_verifications + 1.0
+                        
+                        # Recompute cognitive mass immediately
+                        b["mass"] = round(self.compute_cognitive_mass(b), 4)
+                        logger.debug(f"Skill belief {belief_id} reliance: stability={b['stability_index']}, verifications={b['verifications']}, mass={b['mass']}")
+                    else:
+                        # 2. Absorb Energy as Volatile Mass (non-skills)
+                        current_volatile = float(b.get("volatile_mass", 0.0))
+                        new_volatile = min(5.0, current_volatile + DELTA_MASS)
+                        b["volatile_mass"] = round(new_volatile, 4)
+                        logger.debug(f"Belief {belief_id} absorbed Energy (Volatile Mass: {current_volatile} -> {b['volatile_mass']})")
+                        
+                    self._write_category(category, beliefs)
+                    self._sync_runtime(b, category)
+                    return
+        logger.warning(f"Failed to register reliance: Belief {belief_id} not found.")
 
     def recompute_all_masses(self):
         """Recompute cognitive mass for every belief across all categories.

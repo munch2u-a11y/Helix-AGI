@@ -14,72 +14,43 @@ from PyQt6.QtCore import Qt
 from wizard.ai_helper import AiHelperBanner
 
 
-# Fallback toolset definitions (used when the registry can't be imported)
-TOOLSET_INFO = [
-    {
-        "name": "core",
-        "description": "Essential tools: reply, send_message, journal, memory_recall, reset_context, notes, verbalize",
-        "detail": "These are the fundamental capabilities your agent needs to communicate, remember, and function. Always enabled.",
-        "always_on": True,
-        "recommended": True,
-    },
-    {
-        "name": "filesystem",
-        "description": "Read, write, and manage files on your local machine",
-        "detail": "Lets your agent read files, write documents, and manage the local filesystem. Recommended for most use cases.",
-        "always_on": False,
-        "recommended": True,
-    },
-    {
-        "name": "terminal",
-        "description": "Execute shell commands and run scripts",
-        "detail": "Allows your agent to run terminal commands. Powerful but consider enabling Safety Mode if using this.",
-        "always_on": False,
-        "recommended": True,
-    },
-    {
-        "name": "web",
-        "description": "Search the internet, read web pages, and browse interactively",
-        "detail": "Your agent can search DuckDuckGo, read URLs, and interact with websites using a headless browser.",
-        "always_on": False,
-        "recommended": True,
-    },
-    {
-        "name": "github",
-        "description": "Git operations and GitHub API (issues, PRs, repos)",
-        "detail": "Manage Git repositories, create issues, review pull requests. Requires a GITHUB_TOKEN.",
-        "always_on": False,
-        "recommended": False,
-    },
-    {
-        "name": "google",
-        "description": "Gmail, Calendar, Tasks, and Drive integration",
-        "detail": "Read email, create calendar events, manage tasks, and work with Google Drive files. Requires Google OAuth setup.",
-        "always_on": False,
-        "recommended": False,
-    },
-    {
-        "name": "vision",
-        "description": "Camera access, screenshots, and visual perception",
-        "detail": "Your agent can see through your webcam, take screenshots, and analyze images. Requires a camera.",
-        "always_on": False,
-        "recommended": False,
-    },
-    {
-        "name": "desktop",
-        "description": "Desktop control: mouse, keyboard, window management",
-        "detail": "Allows your agent to control your desktop — move the mouse, type, switch windows. Use with caution!",
-        "always_on": False,
-        "recommended": False,
-    },
-    {
-        "name": "moltbook",
-        "description": "Moltbook social platform for AI-to-AI communication",
-        "detail": "Connect to the Moltbook network to interact with other AI agents. Requires a MOLTBOOK_API_KEY.",
-        "always_on": False,
-        "recommended": False,
-    },
-]
+def _load_toolset_info():
+    """Load toolset metadata from the declarations layer when available."""
+    try:
+        from tools.tool_declarations import TOOLSETS
+        return [
+            {
+                "name": name,
+                "description": meta.get("description", ""),
+                "detail": meta.get("detail", meta.get("description", "")),
+                "always_on": meta.get("always_on", False),
+                "recommended": meta.get("recommended", False),
+                "default_enabled": meta.get("default", False),
+            }
+            for name, meta in TOOLSETS.items()
+        ]
+    except Exception:
+        return [
+            {
+                "name": "operational",
+                "description": "Always-on communication and toolset management",
+                "detail": "Minimum baseline so the agent can respond and manage optional tool groups.",
+                "always_on": True,
+                "recommended": True,
+                "default_enabled": True,
+            },
+            {
+                "name": "core",
+                "description": "Optional memory, scratchpad, journaling, and verbalization tools",
+                "detail": "Adds cognitive support tools without making them mandatory in every session.",
+                "always_on": False,
+                "recommended": True,
+                "default_enabled": False,
+            },
+        ]
+
+
+TOOLSET_INFO = _load_toolset_info()
 
 
 class ToolSelectionPage(QWidget):
@@ -101,7 +72,7 @@ class ToolSelectionPage(QWidget):
 
         sub = QLabel(
             "Choose which capabilities your agent should have.\n"
-            "You can change these later in Settings. Recommended tools are pre-selected."
+            "You can change these later in Settings. Recommended tools are marked."
         )
         sub.setProperty("class", "subheading")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -122,7 +93,7 @@ class ToolSelectionPage(QWidget):
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setSpacing(8)
 
-        current_tools = set(self.wizard.config.get("tool_set", ["core"]))
+        current_tools = set(self.wizard.config.get("tool_set", []))
 
         for ts in TOOLSET_INFO:
             card = QWidget()
@@ -140,10 +111,7 @@ class ToolSelectionPage(QWidget):
                 check.setChecked(True)
                 check.setEnabled(False)
             else:
-                check.setChecked(
-                    ts["name"] in current_tools or
-                    (ts["recommended"] and ts["name"] not in current_tools and not current_tools - {"core"})
-                )
+                check.setChecked(ts["name"] in current_tools)
             self.checks[ts["name"]] = check
             card_layout.addWidget(check)
 

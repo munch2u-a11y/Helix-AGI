@@ -26,8 +26,14 @@ class HelixTelegramBot:
     """
 
     def __init__(self, token: str = None):
-        self.token = token or os.environ.get("HELIX_TELEGRAM_TOKEN", "")
-        self.enabled = bool(self.token)
+        disable_flag = os.environ.get("HELIX_DISABLE_TELEGRAM", "").strip().lower()
+        if disable_flag in {"1", "true", "yes", "on"}:
+            self.token = ""
+            self.enabled = False
+            logger.info("Telegram bot disabled by HELIX_DISABLE_TELEGRAM")
+        else:
+            self.token = token or os.environ.get("HELIX_TELEGRAM_TOKEN", "")
+            self.enabled = bool(self.token)
 
         self._thread: Optional[threading.Thread] = None
         self._app = None
@@ -40,7 +46,7 @@ class HelixTelegramBot:
         # Track known chat IDs for proactive messaging
         self._known_chats: dict[int, str] = {}  # chat_id → display_name
 
-        if not self.token:
+        if not self.token and disable_flag not in {"1", "true", "yes", "on"}:
             logger.warning("Telegram token not set. Bot disabled.")
             self.enabled = False
 

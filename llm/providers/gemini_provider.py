@@ -26,6 +26,27 @@ from llm.providers.base import ChatSession
 
 logger = logging.getLogger("helix.llm.providers.gemini")
 
+# Hard cap on a single tool result entering the conversation. Native
+# FunctionResponses live in history permanently — an uncapped read of a
+# large file (e.g. a 1.9MB world_state.json) injects ~500K tokens in
+# one shot, blowing past compression straight into the 1M hard limit.
+# Head+tail windowing keeps both the schema and the trailing state.
+MAX_TOOL_RESULT_CHARS = 48_000
+
+
+def _cap_tool_result(result: str) -> str:
+    """Truncate an oversized tool result with head+tail windowing."""
+    if not result or len(result) <= MAX_TOOL_RESULT_CHARS:
+        return result or ""
+    half = MAX_TOOL_RESULT_CHARS // 2
+    omitted = len(result) - MAX_TOOL_RESULT_CHARS
+    return (
+        result[:half]
+        + f"\n\n[... {omitted} characters omitted — result too large for "
+        f"context. Re-read in smaller pieces if the middle is needed ...]\n\n"
+        + result[-half:]
+    )
+
 
 class GeminiSession(ChatSession):
     """Gemini session with manual history — one API call per pulse.
@@ -198,7 +219,9 @@ class GeminiSession(ChatSession):
                     result_str = f"Tool executor not available for: {name}"
                     
                 logger.info(f"FC result ({name}): {result_str[:500] if result_str else '(empty)'}")
-                
+
+                result_str = _cap_tool_result(result_str)
+
                 res_dict = {
                     "name": name,
                     "response": {"result": result_str or ""}

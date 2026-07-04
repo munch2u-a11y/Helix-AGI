@@ -169,10 +169,20 @@ def _crystallize_pattern(
         # Get lagrangian snapshot if sentinel is available
         lagrangian = None
         position = None
+        embedding = None
         if _sentinel:
             lagrangian = _sentinel.get_lagrangian_snapshot()
-        if _physics_engine.attention_center is not None:
-            position = _physics_engine.attention_center.tolist()
+
+        # Position derives from the pattern's CONTENT, not from wherever
+        # the attention center happens to be — same coordinate frame as
+        # every other point in the manifold.
+        try:
+            embedding = _physics_engine.embed_text(belief_text)
+            position = _physics_engine.spatial_mind.belief_space.projection.project(
+                embedding
+            ).tolist()
+        except Exception:
+            position = None
 
         # Save to memory system
         _memory_manager.store(
@@ -183,12 +193,19 @@ def _crystallize_pattern(
             tags=["workflow", "auto_crystallized"] + list(sequence),
             lagrangian_snapshot=lagrangian,
             position_8d=position,
+            embedding_384d=embedding.tolist() if embedding is not None else None,
         )
         
-        # Inject into spatial field so Helix is immediately aware
-        omega = _sentinel.omega if _sentinel else 0.5
-        _physics_engine.step_pulse(belief_text, omega=omega)
-        
+        # Also write directly as a `skills` belief with tool bindings.
+        # The template text needs no LLM pass, and this preserves the
+        # skills category (batch service would demote it) plus the
+        # express-lane reachability via tool_bindings.
+        try:
+            from core.tool_lesson_tracker import record_workflow_skill
+            record_workflow_skill(belief_text, list(sequence))
+        except Exception as e:
+            logger.debug("Direct skill write failed (non-fatal): %s", e)
+
         _crystallized_hashes.add(seq_hash)
         logger.info(
             "Stored workflow pattern in memory: %s (seen %dx) → %s",

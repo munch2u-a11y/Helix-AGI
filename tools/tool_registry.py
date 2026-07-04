@@ -1,10 +1,10 @@
 """
-Helix — Tool Registry (Dynamic Registration)
+Helix — Tool Registry (Hermes-Style Dynamic Registration)
 
 Central registry that collects tool schemas, handlers, and availability
 checks. Replaces the static _FC_DISPATCH dict and TOOL_DECLARATIONS list.
 
-Features:
+Features (adapted from Hermes):
   - register() with check_fn for runtime availability gating
   - TTL-cached check_fn results (30s) to avoid re-probing external state
   - Thread-safe with generation counter for cache invalidation
@@ -114,7 +114,7 @@ class ToolEntry:
 class ToolRegistry:
     """Thread-safe registry for tool schemas, handlers, and availability checks.
 
-    Provides:
+    Adapted from Hermes's ToolRegistry. Provides:
       - register()/deregister() for dynamic tool management
       - check_fn with TTL caching for availability gating
       - get_declarations() that filters by active toolsets + check_fn
@@ -128,6 +128,10 @@ class ToolRegistry:
         self._toolset_descriptions: Dict[str, str] = {}
         self._lock = threading.RLock()
         self._generation: int = 0
+        self._toolset_last_used_turn: Dict[str, int] = {}
+        # Original schema descriptions, saved before learned notes are
+        # appended (ToolEntry has __slots__, so this lives registry-side).
+        self._base_schema_desc: Dict[str, str] = {}
 
     @property
     def generation(self) -> int:
@@ -181,6 +185,8 @@ class ToolRegistry:
                 description=description,
                 focus_type=focus_type,
             )
+            # Fresh schema — any saved base description is stale
+            self._base_schema_desc.pop(name, None)
             # Store the first check_fn we see for a toolset as the
             # toolset-level availability check
             if check_fn and toolset not in self._toolset_checks:
@@ -191,6 +197,66 @@ class ToolRegistry:
         """Set a human-readable description for a toolset."""
         with self._lock:
             self._toolset_descriptions[toolset] = description
+
+    # ── Learned Notes (Lane 1 of dynamic tool learning) ───────────────
+    #
+    # Tool descriptions are the one injection point guaranteed to be in
+    # the model's view at the moment it chooses a tool. The nightly
+    # Curator compiles the heaviest tool-bound beliefs into short notes;
+    # this applies them to the live schemas. The base description is
+    # preserved so notes REPLACE previous notes rather than stacking.
+
+    def apply_learned_notes(self, notes_by_tool: Dict[str, List[str]]) -> int:
+        """Append learned notes to tool schema descriptions.
+
+        Args:
+            notes_by_tool: tool name → list of short note strings.
+
+        Returns:
+            Number of tools whose descriptions were updated.
+        """
+        updated = 0
+        with self._lock:
+            for name, entry in self._tools.items():
+                base = self._base_schema_desc.get(name)
+                if base is None:
+                    base = entry.schema.get("description", "") or ""
+                    self._base_schema_desc[name] = base
+
+                notes = [
+                    n.strip() for n in notes_by_tool.get(name, []) if n.strip()
+                ]
+                if notes:
+                    entry.schema["description"] = (
+                        base + "\nLearned: " + " | ".join(notes)
+                    )
+                    updated += 1
+                else:
+                    # No notes (or notes removed by attrition) — restore base
+                    if entry.schema.get("description", "") != base:
+                        entry.schema["description"] = base
+            if updated:
+                self._generation += 1
+        if updated:
+            logger.info("Learned notes applied to %d tool descriptions", updated)
+        return updated
+
+    def load_learned_notes(self, path="data/tool_learned_notes.json") -> int:
+        """Load compiled notes from disk and apply them. Called at boot
+        and on morning wake after the nightly compile."""
+        import json
+        from pathlib import Path
+        p = Path(path)
+        if not p.exists():
+            return 0
+        try:
+            data = json.loads(p.read_text())
+            notes = data.get("notes", {})
+            if isinstance(notes, dict) and notes:
+                return self.apply_learned_notes(notes)
+        except Exception as e:
+            logger.warning("Failed to load learned tool notes: %s", e)
+        return 0
 
     def deregister(self, name: str):
         """Remove a tool from the registry."""
@@ -426,6 +492,36 @@ class ToolRegistry:
             })
 
         return result
+
+    # ── Turn-based Usage Tracking (for auto-disengage) ────────────────
+
+    def record_tool_use(self, name: str, turn: int):
+        """Record that a tool was used in the current turn."""
+        with self._lock:
+            entry = self._tools.get(name)
+            if entry:
+                self._toolset_last_used_turn[entry.toolset] = turn
+
+    def record_toolset_active(self, toolset: str, turn: int):
+        """Record that a toolset is active/enabled in the current turn."""
+        with self._lock:
+            self._toolset_last_used_turn[toolset] = turn
+
+    def deactivate_toolset_tracking(self, toolset: str):
+        """Remove a toolset from usage tracking when it is disabled."""
+        with self._lock:
+            self._toolset_last_used_turn.pop(toolset, None)
+
+    def get_idle_toolsets(self, current_turn: int, idle_threshold: int = 2) -> Set[str]:
+        """Return a set of active toolsets that have been idle for > idle_threshold turns."""
+        with self._lock:
+            idle = set()
+            for toolset, last_turn in list(self._toolset_last_used_turn.items()):
+                if toolset == "core":
+                    continue
+                if current_turn - last_turn > idle_threshold:
+                    idle.add(toolset)
+            return idle
 
 
 # ── Module-level singleton ───────────────────────────────────────────

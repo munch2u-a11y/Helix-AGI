@@ -616,6 +616,19 @@ class SpatialMind:
         if self._memory_state_path and self._memory_state_path.exists():
             m_loaded = self.memory_space.load_state(self._memory_state_path)
 
+        # Restore the mind's proper time — pulse counters persist in the
+        # space state files. Without this, every restart reset pulse-time
+        # to zero and all recency/temperature computations lost history.
+        restored_pulse = max(
+            self.belief_space._current_pulse,
+            self.memory_space._current_pulse,
+        )
+        if restored_pulse > getattr(self, "_pulse_count", 0):
+            self._pulse_count = restored_pulse
+            self.belief_space._current_pulse = restored_pulse
+            self.memory_space._current_pulse = restored_pulse
+            logger.info(f"Pulse-time restored: {restored_pulse}")
+
         self._load_attention()
         self.refresh_identity_center()
 

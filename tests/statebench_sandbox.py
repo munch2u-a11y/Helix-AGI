@@ -429,7 +429,7 @@ def main():
     parser.add_argument(
         "--state-bench",
         type=str,
-        default="/home/nemo/state_bench",
+        default="state_bench",
         help="Path to STATE-Bench repository"
     )
     parser.add_argument(
@@ -446,7 +446,7 @@ def main():
     parser.add_argument(
         "--save-results",
         type=str,
-        default="/home/nemo/Helix_AGI (GitHub Repo) (Public)/documents/statebench_benchmark_report.md",
+        default="documents/statebench_benchmark_report.md",
         help="Path to save report"
     )
 

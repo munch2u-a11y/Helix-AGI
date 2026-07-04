@@ -29,7 +29,7 @@ class TestToolFactory(unittest.TestCase):
         
         # Mock PulseLoop
         self.mock_pulse_loop = MagicMock()
-        self.mock_pulse_loop._active_toolsets = {"core"}
+        self.mock_pulse_loop._active_toolsets = {"operational"}
         self.mock_pulse_loop._pending_toolset_rebuild = False
         
         # Instantiate ToolExecutor

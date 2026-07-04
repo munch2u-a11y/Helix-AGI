@@ -362,7 +362,7 @@ def main():
             physics_engine=physics,
             scratchpad=scratchpad,
             channel_router=MockChannelRouter(),
-            active_toolsets={"core"}
+            active_toolsets={"operational"}
         )
 
         provider_config = detect_available_provider()

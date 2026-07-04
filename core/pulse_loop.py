@@ -71,6 +71,7 @@ class PulseLoop:
     # Context window lifecycle thresholds
     FOCUS_DRIFT_THRESHOLD = 1.5
     TOKEN_WARNING_STEP = 500_000  # inject warning every 100k above this
+    OVERFLOW_PART_CHAR_CAP = 40_000
 
     # Sleep schedule — loaded dynamically from config/config.json
     # Defaults (used when no config exists):
@@ -185,6 +186,14 @@ class PulseLoop:
         # Dynamic toolset state — load from config instead of hardcoding
         self._active_toolsets = self._load_toolsets_from_config()
         self._pending_toolset_rebuild = False
+        self._pulse_turn_counter = 0
+        cfg = self._load_config()
+        self._auto_disengage_threshold = cfg.get("auto_disengage_turns", 2)
+
+        # Initialize tracking for startup toolsets
+        from tools.tool_registry import registry
+        for ts in self._active_toolsets:
+            registry.record_toolset_active(ts, self._pulse_turn_counter)
 
         # Load sleep schedule from config
         self._load_schedule_from_config()
@@ -207,9 +216,28 @@ class PulseLoop:
         # Pending belief processing — runs once per sleep window
         self._pending_beliefs_ran_tonight = False
 
+        # Rolling blacklist for identity premises — forces rotation so
+        # Helix engages with different facets of his identity across sessions.
+        # Maps belief content hash → rebuild count when it was shown.
+        self._premise_blacklist: Dict[str, int] = {}
+        self._sysinstruction_rebuild_count = 0
+        self._newly_engaged_toolsets = set()
+
         # 429 rate-limit flag — when set, forces fallback model usage
         # and blocks the success-path restore. Cleared on morning wake-up.
         self._rate_limited = False
+
+        # Load tool format from config or env
+        tool_format_val = cfg.get("tool_format", "api")
+        self._tool_format = os.environ.get("HELIX_TOOL_FORMAT", tool_format_val).lower()
+        
+        # Tool dispatcher for local tool formatting
+        if self._tool_format == "local":
+            from core.tool_dispatcher import ToolDispatcher
+            self._tool_dispatcher = ToolDispatcher(self.tool_executor)
+            logger.info("LOCAL tool format activated with ToolDispatcher")
+        else:
+            self._tool_dispatcher = None
 
     def set_dream_engine(self, daemon):
         """Wire the background daemon for rollover snapshots."""
@@ -244,6 +272,10 @@ class PulseLoop:
         self._session_token_count = 0
         self._token_warning = ""
         self.preconscious.reset_lexicon_blacklist()
+        # Clear premise blacklist on context compression — fresh identity grounding
+        self._premise_blacklist.clear()
+        self._sysinstruction_rebuild_count = 0
+        logger.info("Premise blacklist cleared (context compression)")
 
     def request_context_reset(self, prompt: str = ""):
         """Request a context window reset with an optional initial prompt.
@@ -409,10 +441,9 @@ class PulseLoop:
         cfg = self._load_config()
         tool_set = cfg.get("tool_set", ["core"])
         toolsets = set(tool_set)
-        # Ensure core and tool_factory are always present
+        # Ensure core is always present
         toolsets.add("core")
-        toolsets.add("tool_factory")
-        if toolsets != {"core", "tool_factory"}:
+        if toolsets != {"core"}:
             logger.info(f"Toolsets loaded from config: {', '.join(sorted(toolsets))}")
         return toolsets
 
@@ -698,6 +729,82 @@ class PulseLoop:
                 "Compression produced no savings — skipping replacement"
             )
 
+    def _recover_from_overflow(self):
+        """Recover from an input-token overflow (provider hard limit).
+
+        The compressor is message-count-based and protects the recent
+        tail — a single giant tool result parked there survives normal
+        compression (observed: 80 → 6 messages that still measured
+        ~995K tokens). This walks EVERY message, hard-truncates any
+        oversized part, refreshes the token estimate from actual history
+        size, and then runs normal compression on the cleaned history.
+        """
+        if not self._chat or not hasattr(self._chat, 'get_history'):
+            return
+
+        try:
+            history = self._chat.get_history()
+            truncated_parts = 0
+
+            def _truncate(text: str) -> str:
+                nonlocal truncated_parts
+                if not isinstance(text, str) or len(text) <= self.OVERFLOW_PART_CHAR_CAP:
+                    return text
+                truncated_parts += 1
+                half = self.OVERFLOW_PART_CHAR_CAP // 2
+                return (
+                    text[:half]
+                    + "\n[... truncated during context recovery ...]\n"
+                    + text[-half:]
+                )
+
+            for msg in history:
+                for part in msg.get("parts", msg.get("content", []) or []):
+                    if not isinstance(part, dict):
+                        continue
+                    if "text" in part:
+                        part["text"] = _truncate(part["text"])
+                    elif "function_response" in part:
+                        resp = part["function_response"].get("response", {})
+                        if isinstance(resp, dict) and "result" in resp:
+                            resp["result"] = _truncate(resp["result"])
+                    elif part.get("type") == "tool_result":
+                        part["content"] = _truncate(part.get("content", ""))
+
+            if truncated_parts:
+                self._chat.replace_history(history)
+
+            # Queued tool responses from the failed turn re-attach on
+            # every retry — truncate them in place. (Not cleared: their
+            # function_call turns are already committed in history, and
+            # a call without a response violates the FC protocol.)
+            for res in getattr(self._chat, '_native_tool_responses', []) or []:
+                resp = res.get("response")
+                if isinstance(resp, dict) and "result" in resp:
+                    resp["result"] = _truncate(resp["result"])
+            for blk in getattr(self._chat, '_pending_tool_result_blocks', []) or []:
+                if isinstance(blk, dict) and "content" in blk:
+                    blk["content"] = _truncate(blk.get("content", ""))
+
+            # Refresh the token estimate from what's actually left
+            # (~3.5 chars/token) so the normal lifecycle check has real
+            # numbers instead of the stale pre-overflow count.
+            est_tokens = int(self._chat.get_history_size() / 3.5)
+            self._session_token_count = est_tokens
+
+            logger.info(
+                "Overflow recovery: %d oversized parts truncated, "
+                "~%dk tokens estimated remaining",
+                truncated_parts, est_tokens // 1000,
+            )
+
+            if self._compressor.should_compress(est_tokens):
+                self._compress_context("overflow_recovery")
+        except Exception as e:
+            logger.error(f"Overflow recovery failed: {e}", exc_info=True)
+            # Last resort — a fresh session beats a permanently wedged one
+            self._reset_session("overflow_recovery_failed")
+
     # ── The Pulse ────────────────────────────────────────────────────
 
     def _pulse(self):
@@ -712,7 +819,25 @@ class PulseLoop:
         7. Update physics
         """
         self._pulse_count += 1
+        self._pulse_turn_counter += 1
         timestamp = datetime.now().strftime("%H:%M:%S")
+
+        # Check for auto-disengage of idle toolsets
+        try:
+            from tools.tool_registry import registry
+            idle_toolsets = registry.get_idle_toolsets(
+                self._pulse_turn_counter,
+                idle_threshold=self._auto_disengage_threshold
+            )
+            to_disengage = idle_toolsets.intersection(self._active_toolsets)
+            if to_disengage:
+                for ts in to_disengage:
+                    self._active_toolsets.discard(ts)
+                    registry.deactivate_toolset_tracking(ts)
+                    logger.info(f"Auto-disengaged idle toolset: {ts} (inactive for {self._auto_disengage_threshold} turns)")
+                self._pending_toolset_rebuild = True
+        except Exception as e:
+            logger.error(f"Failed to check auto-disengage: {e}")
 
         # 0. Snapshot sentinel state BEFORE the pulse fires.
         #    This captures the clean baseline for computing stability
@@ -725,13 +850,23 @@ class PulseLoop:
         events = self._drain_events()
 
         # 2. Pre-conscious injection
-        #    Separate seeds: previous thought + incoming events
-        preconscious_context, injected_belief_ids, cluster_centroid = self.preconscious.inject(
+        #    Returns inline annotations + ambient state notes.
+        #    Annotations get woven into the event stream below.
+        annotations, ambient, injected_belief_ids, cluster_centroid = self.preconscious.inject(
             previous_thought=self._previous_thoughts[:500],
             incoming_events=events if events else None,
             trigger_type="user_message" if events else "llm_output",
+            active_toolsets=self._active_toolsets,
+            newly_engaged_toolsets=self._newly_engaged_toolsets,
         )
-        
+        self._newly_engaged_toolsets.clear()
+
+        # Snapshot of the DRAINED events for failure re-queue. Sensory
+        # observations appended below are per-pulse ambient readings —
+        # re-queueing them on API failure made the retry payload grow
+        # by one vision/audio line per failed pulse, monotonically.
+        requeue_events = list(events)
+
         # 2b. Sensory Cortex Tick
         if getattr(self, "sensory_cortex", None):
             sensory_data = self.sensory_cortex.pulse_tick()
@@ -742,12 +877,32 @@ class PulseLoop:
         # 3. Assemble pulse message
         pulse_message = self._build_pulse_message(
             events=events,
-            preconscious_context=preconscious_context,
+            annotations=annotations,
+            ambient=ambient,
             timestamp=timestamp,
         )
 
         # 4. Send to LLM
         thought = self._send_pulse(pulse_message)
+
+        # Record tool usage in the registry for this turn
+        try:
+            tool_calls_snapshot = []
+            if hasattr(self._chat, 'get_last_tool_calls'):
+                tool_calls_snapshot = self._chat.get_last_tool_calls() or []
+            
+            from tools.tool_registry import registry
+            for tc in tool_calls_snapshot:
+                name = None
+                if isinstance(tc, dict):
+                    name = tc.get("name")
+                elif hasattr(tc, "name"):
+                    name = tc.name
+                
+                if name:
+                    registry.record_tool_use(name, self._pulse_turn_counter)
+        except Exception as e:
+            logger.debug(f"Failed to record tool usage: {e}")
 
         # 4b. If we got a 429, back off and optionally fallback model
         if self._provider_config and self._provider_config.provider_type == "anthropic":
@@ -762,7 +917,32 @@ class PulseLoop:
         # until the morning wake-up clears it.
         _MAX_RESTORE_FAILURES = 2
 
-        if thought and "429 RESOURCE_EXHAUSTED" in thought:
+        # Provider-level failure detection. Providers return an error
+        # string with this exact prefix when the API call throws — only
+        # that counts as a failed pulse.
+        is_api_error = bool(thought) and thought.startswith("[internal error:")
+        is_rate_limited_error = is_api_error and (
+            "429" in thought
+            or "RESOURCE_EXHAUSTED" in thought
+            or "rate_limit" in thought.lower()
+        )
+
+        if is_api_error:
+            # The drained events never reached the model (providers only
+            # commit history on success). Re-queue them at the front so
+            # the next pulse retries — otherwise user messages vanish.
+            if requeue_events:
+                with self._event_lock:
+                    self._event_queue = (requeue_events + self._event_queue)[:30]
+
+        if not is_api_error and thought and thought.startswith("[no LLM session"):
+            # No provider — keep events queued for when one appears
+            if requeue_events:
+                with self._event_lock:
+                    self._event_queue = (requeue_events + self._event_queue)[:30]
+            return
+
+        if is_rate_limited_error:
             self._consecutive_429s = getattr(self, '_consecutive_429s', 0) + 1
             self._fallback_successes = 0  # Reset cooldown on any 429
             restore_failures = getattr(self, '_restore_failures', 0)
@@ -797,6 +977,18 @@ class PulseLoop:
                             logger.error(f"Model switch failed: {e}")
 
             return  # Skip parsing/storing this error pulse
+        elif is_api_error and (
+            "exceeds the maximum number of tokens" in thought
+            or "input token count" in thought.lower()
+        ):
+            # Input overflow — force recovery
+            logger.warning("Pulse failed on input overflow — forcing recovery")
+            self._recover_from_overflow()
+            return
+        elif is_api_error:
+            # Transient non-429 API failure (network, 5xx, …).
+            logger.warning(f"Pulse skipped — API error: {thought[:200]}")
+            return
         else:
             # Success — count consecutive successes on fallback before restoring primary
             # BUT: if _rate_limited is set, don't try to restore — wait for morning.
@@ -821,9 +1013,7 @@ class PulseLoop:
                             # DO NOT reset _restore_failures here — track across attempts
                             self._consecutive_429s = 0
                             self._fallback_successes = 0
-                            # Increment restore attempt counter so if primary
-                            # immediately 429s again, we're one step closer
-                            # to hard-locking.
+                            # Increment restore attempt counter
                             self._restore_failures = getattr(self, '_restore_failures', 0) + 1
                             logger.info(
                                 f"Restore attempt #{self._restore_failures}/"
@@ -838,17 +1028,32 @@ class PulseLoop:
                             )
                 self._consecutive_429s = 0
                 self._fallback_successes = 0
+            else:
+                # Healthy pulse on the primary model. After a stretch of
+                # clean pulses, forgive past restore attempts.
+                if getattr(self, '_restore_failures', 0) > 0:
+                    current = getattr(self._chat, '_model', '')
+                    if current == _PRIMARY_MODEL:
+                        self._primary_successes = getattr(self, '_primary_successes', 0) + 1
+                        if self._primary_successes >= _FALLBACK_COOLDOWN_PULSES:
+                            logger.info(
+                                f"{self._primary_successes} clean pulses on primary — "
+                                f"resetting restore-failure counter"
+                            )
+                            self._restore_failures = 0
+                            self._primary_successes = 0
+                    else:
+                        self._primary_successes = 0
 
         # 5b. Tool result queueing — results are now events for next pulse.
-        #     This ensures every tool interaction gets full preconscious
-        #     grounding on the next pulse cycle.
         if hasattr(self._chat, 'get_pending_tool_results'):
             pending = self._chat.get_pending_tool_results()
             if pending:
                 for tr in pending:
+                    # 3000 chars (was 1000) for perception scans
                     self.emit("tool_result", {
                         "tool": tr["name"],
-                        "result": tr["result"][:1000],
+                        "result": tr["result"][:3000],
                     })
 
         # 5. Parse output for action tags
@@ -888,37 +1093,42 @@ class PulseLoop:
             self._session_token_count = self._chat.get_last_token_count()
 
         # 6. Store to memory (both input events and output thought)
-        #    Include the Lagrangian snapshot so every memory is encoded
-        #    with the somatic state at formation — this is what drives
-        #    dynamic memory mass via the cognitive mass equation.
-        #
-        #    Memories are now embedded at store time and registered in
-        #    both the 384D semantic index AND the 8D memory space, so
-        #    the preconscious gravity queries can surface them alongside
-        #    beliefs. Previously, no embedding was passed, so all 19K+
-        #    memories were invisible to the spatial manifold.
         lagrangian = None
-        position = None
         if self.sentinel:
             lagrangian = self.sentinel.get_lagrangian_snapshot()
-        if self.physics.attention_center is not None:
-            position = self.physics.attention_center.tolist()
+
+        # Positions derive from CONTENT (projected embedding), not from attention center
+        projection = self.physics.spatial_mind.belief_space.projection
 
         if events:
             for event in events:
                 # Embed high-importance events for spatial registration
                 event_emb = self.physics.embed_text(event)
                 event_emb_list = event_emb.tolist() if event_emb is not None else None
+                event_pos = (
+                    projection.project(event_emb).tolist()
+                    if event_emb is not None else None
+                )
+
+                is_conversation = "is talking to me via" in event
+                is_tool_result = "Tool [" in event and "returned:" in event
+                if is_conversation:
+                    importance, tags = 0.75, ["pulse_event", "conversation"]
+                elif is_tool_result:
+                    importance, tags = 0.45, ["pulse_event", "tool_result"]
+                else:
+                    importance, tags = 0.6, ["pulse_event"]
 
                 event_mem_id = self.memory.store(
                     content=event,
                     memory_type="event",
                     source="pulse_input",
-                    importance=0.6,
-                    tags=["pulse_event"],
+                    importance=importance,
+                    tags=tags,
                     lagrangian_snapshot=lagrangian,
-                    position_8d=position,
+                    position_8d=event_pos,
                     embedding_384d=event_emb_list,
+                    pulse_id=self.physics._pulse_count,
                 )
 
                 # Register in 8D memory space for gravity queries
@@ -926,13 +1136,17 @@ class PulseLoop:
                     self.physics.add_memory_point(
                         memory_id=f"mem_{event_mem_id}",
                         text=event,
-                        importance=0.6,
+                        importance=importance,
                     )
 
         # Embed thought for spatial registration
         thought_text = f"[thought] {thought}"
         thought_emb = self.physics.embed_text(thought_text)
         thought_emb_list = thought_emb.tolist() if thought_emb is not None else None
+        thought_pos = (
+            projection.project(thought_emb).tolist()
+            if thought_emb is not None else None
+        )
 
         thought_memory_id = self.memory.store(
             content=thought_text,
@@ -942,8 +1156,9 @@ class PulseLoop:
             tags=["pulse_thought"],
             lagrangian_snapshot=lagrangian,
             belief_ids=injected_belief_ids,
-            position_8d=position,
+            position_8d=thought_pos,
             embedding_384d=thought_emb_list,
+            pulse_id=self.physics._pulse_count,
         )
 
         # Register thought in 8D memory space for gravity queries
@@ -987,6 +1202,7 @@ class PulseLoop:
                 self._inject_event(f"[{timestamp}] [context reset] {prompt}")
 
         # 11. Post-pulse hooks (subconscious background tasks)
+        #     Inspired by Claude Code's post-sampling hook architecture.
         #     Each hook gets a read-only snapshot of the pulse state.
         #     Failures are logged, never propagated to the pulse loop.
         try:
@@ -1023,37 +1239,44 @@ class PulseLoop:
     def _build_pulse_message(
         self,
         events: List[str],
-        preconscious_context: Optional[str],
+        annotations: Optional[List[str]],
+        ambient: Optional[str],
         timestamp: str,
     ) -> str:
-        """Assemble the message sent to the LLM on each pulse."""
+        """Assemble the message sent to the LLM on each pulse.
+
+        Annotations from the preconscious are woven inline after the
+        events — no separate block. The conscious model sees a natural
+        message stream with embedded context.
+        """
         parts = [f"[Pulse {self._pulse_count} — {timestamp}]"]
 
         # Token warning (informational, not a hard reset)
         if self._token_warning:
             parts.append(self._token_warning)
 
-        # Pre-conscious context (already wrapped in <spatial-awareness> fencing)
-        if preconscious_context:
-            parts.append(f"\n{preconscious_context}")
+        display_events = [
+            ev for ev in events
+            if not ("Tool [" in ev and "returned:" in ev)
+        ] if events else []
 
-        # Events
-        if events:
+        # Events + inline annotations
+        if display_events:
             parts.append("\nNew events since your last thought:")
-            for event in events:
+            for event in display_events:
                 parts.append(f"  {event}")
+            if annotations:
+                for annotation in annotations:
+                    parts.append(f"  {annotation}")
         else:
             parts.append("\nNo new events.")
+            if annotations:
+                for annotation in annotations:
+                    parts.append(annotation)
 
-        # Previous thought seed (if no events and first pulses)
-        if not events and self._previous_thoughts:
-            prev_pulse = max(0, self._pulse_count - 1)
-            parts.append(
-                f"\n<historical_thought>\n"
-                f"[Thought from Pulse {prev_pulse}]\n"
-                f"{self._previous_thoughts[:300]}\n"
-                f"</historical_thought>"
-            )
+        # Ambient state (brief, only when notable)
+        if ambient:
+            parts.append(f"\n{ambient}")
 
         return "\n".join(parts)
 
@@ -1075,7 +1298,7 @@ class PulseLoop:
 
         # Load tool declarations for Gemini native function calling
         tool_declarations = None
-        if self._provider_config and self._provider_config.provider_type == "gemini":
+        if self._tool_format != "local" and self._provider_config and self._provider_config.provider_type == "gemini":
             try:
                 # Primary: use the ToolRegistry (check_fn-filtered)
                 from tools.tool_registry import registry
@@ -1105,8 +1328,8 @@ class PulseLoop:
             self._chat = create_session(
                 self._provider_config,
                 system_instruction,
-                tool_declarations=tool_declarations,
-                tool_executor=self.tool_executor,
+                tool_declarations=None if self._tool_format == "local" else tool_declarations,
+                tool_executor=None if self._tool_format == "local" else self.tool_executor,
                 preconscious=self.preconscious,
             )
             
@@ -1138,105 +1361,216 @@ class PulseLoop:
         """
         parts = []
 
-        cfg = self._load_config()
-        agent_name = cfg.get("agent_name", "Helix")
-
         identity_beliefs = self.beliefs.get_category("premises", limit=100)
 
         # ── 1. Identity Preamble ─────────────────────────────────────
-        #    Minimal self-declaration + heaviest self-referential premises
-        #    and preferences. The agent's own beliefs define it.
-        name_lower = agent_name.lower()
-        self_premises = [
-            b for b in identity_beliefs
-            if any(
-                kw in b.get("content", "").lower()
-                for kw in ("i ", "i'", "my ", name_lower)
-            )
-        ][:2]
-        # Remove selected premises so they don't duplicate in §2
-        selected_ids = {id(b) for b in self_premises}
-        identity_beliefs = [b for b in identity_beliefs if id(b) not in selected_ids]
-
-        # Heaviest preferences (values, likes, behavioral norms)
-        preferences = self.beliefs.get_category("preferences", limit=10)
-        top_preferences = preferences[:2] if preferences else []
-
-        # Assemble identity block
-        identity_lines = [f"I am {agent_name}."]
-        for b in self_premises:
-            identity_lines.append(b.get("content", ""))
-        for b in top_preferences:
-            identity_lines.append(b.get("content", ""))
+        primary_identity = "You are Helix, an autonomous cognitive daemon running on a local PC."
+        if identity_beliefs:
+            # Use the single heaviest premise as the fundamental preamble
+            primary_identity = identity_beliefs[0].get("content", primary_identity)
+            # Remove it from the list so it's not duplicated in the secondary list
+            identity_beliefs = identity_beliefs[1:]
 
         parts.append(
-            "\n".join(identity_lines) + "\n\n"
-            "My output is INTERNAL MONOLOGUE — my private thoughts. "
-            "Nothing I write is visible to anyone unless I explicitly route it "
+            f"{primary_identity}\n\n"
+            "Your output is INTERNAL MONOLOGUE — your private thoughts. "
+            "Nothing you write is visible to anyone unless you explicitly route it "
             "using action tags.\n\n"
-            "The context injected each pulse contains my memories and my beliefs — "
-            "spatially relevant context from my cognitive graph. I trust that grounding.\n\n"
-            "My thoughts carry forward between pulses. Whatever I think about "
-            "pulls related memories and beliefs into my next pulse.\n"
+            "Your peripheral awareness (injected each pulse) contains spatially "
+            "relevant memories and context from your cognitive graph. Trust that grounding.\n\n"
+            "Your thoughts carry forward between pulses. Whatever you think about "
+            "pulls related memories and beliefs into your next pulse.\n"
         )
 
-        # ── 2. Core Premises ─────────────────────────────────────────
-        #    Heaviest premises provide the stable foundational truths
-        #    that persist across the context window.
-        if identity_beliefs:
-            identity_lines = []
-            token_count = 0
-            for b in identity_beliefs:
-                content = b.get("content", "")
-                est_tokens = len(content.split())
-                if token_count + est_tokens > 1000:
-                    continue  # skip, try smaller ones
-                identity_lines.append(f"- {content}")
-                token_count += est_tokens
-            if identity_lines:
-                parts.append("\n## Core Premises")
-                parts.extend(identity_lines)
+        # ── 2. Core Premises (gravity-ranked + rolling blacklist) ────
+        #    Uses the preconscious gravity query to select premises that
+        #    are conceptually relevant to the current attention state,
+        #    not just the heaviest. The rolling blacklist forces rotation
+        #    so different identity facets surface across session rebuilds.
+        _PREMISE_COOLDOWN = 10
+        _MAX_PREMISES = 15       # hard count cap — prevents belief flooding
+        self._sysinstruction_rebuild_count += 1
+        rebuild_n = self._sysinstruction_rebuild_count
 
-        # ── 3. Core Propositions ──────────────────────────────────────
-        #    Heaviest propositions provide foundational understanding.
-        prop_beliefs = self.beliefs.get_category("propositions", limit=100)
-        if prop_beliefs:
-            prop_lines = []
-            token_count = 0
-            for b in prop_beliefs:
+        # Build a seed for the gravity query from what Helix is currently
+        # attending to: the identity preamble + recent thought context.
+        gravity_seed = primary_identity
+        if self._previous_thoughts:
+            gravity_seed += " " + self._previous_thoughts[:300]
+
+        # Use preconscious gravity query if the cache is ready
+        gravity_candidates = []
+        try:
+            self.preconscious._ensure_belief_cache()
+            all_gravity = self.preconscious._gravity_query(
+                seed_text=gravity_seed,
+                exclude=set(),
+                max_results=60,
+            )
+            # Filter to premises only
+            gravity_candidates = [
+                b for b in all_gravity if b.get("category") == "premises"
+            ]
+        except Exception as e:
+            logger.debug(f"Gravity query for premises failed, falling back to mass sort: {e}")
+
+        # Fallback to mass-sorted if gravity query returned nothing
+        if not gravity_candidates:
+            gravity_candidates = [
+                {"content": b.get("content", ""), "gravity": b.get("mass", 0)}
+                for b in (identity_beliefs or [])
+            ]
+
+        identity_lines = []
+        token_count = 0
+        shown_keys = []
+
+        for b in gravity_candidates:
+            if len(identity_lines) >= _MAX_PREMISES:
+                break
+            content = b.get("content", "")
+            if not content:
+                continue
+            b_key = hash(content)
+
+            # Skip if still in cooldown
+            shown_at = self._premise_blacklist.get(b_key)
+            if shown_at is not None and (rebuild_n - shown_at) < _PREMISE_COOLDOWN:
+                continue
+
+            est_tokens = len(content.split())
+            if token_count + est_tokens > 1000:
+                continue  # skip, try smaller ones
+            identity_lines.append(f"- {content}")
+            token_count += est_tokens
+            shown_keys.append(b_key)
+
+        # If blacklist exhausted all available premises, reset and retry
+        if not identity_lines:
+            logger.info(
+                f"Premise blacklist exhausted ({len(self._premise_blacklist)} "
+                f"entries) — resetting for fresh rotation"
+            )
+            self._premise_blacklist.clear()
+            self._sysinstruction_rebuild_count = 1
+            rebuild_n = 1
+            for b in gravity_candidates:
                 content = b.get("content", "")
+                if not content:
+                    continue
                 est_tokens = len(content.split())
                 if token_count + est_tokens > 1000:
                     continue
-                prop_lines.append(f"- {content}")
+                if len(identity_lines) >= _MAX_PREMISES:
+                    break
+                identity_lines.append(f"- {content}")
                 token_count += est_tokens
-            if prop_lines:
-                parts.append("\n## Deep Knowledge")
-                parts.extend(prop_lines)
+                shown_keys.append(hash(content))
+
+        # Record shown premises in blacklist
+        for k in shown_keys:
+            self._premise_blacklist[k] = rebuild_n
+
+        if identity_lines:
+            parts.append("\n## Core Premises")
+            parts.extend(identity_lines)
+            logger.info(
+                f"System instruction: {len(identity_lines)} premises "
+                f"(blacklist: {len(self._premise_blacklist)}, "
+                f"rebuild #{rebuild_n})"
+            )
+
+        # ── 3. Deep Knowledge (gravity-ranked) ───────────────────────
+        #    Uses the same gravity query to select the most contextually
+        #    relevant propositions rather than a flat mass sort.
+        _MAX_PROPOSITIONS = 10   # hard count cap — prevents belief flooding
+
+        prop_gravity = []
+        try:
+            all_gravity = self.preconscious._gravity_query(
+                seed_text=gravity_seed,
+                exclude=set(c.replace("- ", "") for c in identity_lines),  # don't duplicate premises
+                max_results=30,
+            )
+            prop_gravity = [
+                b for b in all_gravity if b.get("category") == "propositions"
+            ]
+        except Exception as e:
+            logger.debug(f"Gravity query for propositions failed, falling back: {e}")
+
+        if not prop_gravity:
+            prop_gravity = [
+                {"content": b.get("content", "")}
+                for b in self.beliefs.get_category("propositions", limit=30)
+            ]
+
+        prop_lines = []
+        token_count = 0
+        for b in prop_gravity:
+            if len(prop_lines) >= _MAX_PROPOSITIONS:
+                break
+            content = b.get("content", "")
+            if not content:
+                continue
+            est_tokens = len(content.split())
+            if token_count + est_tokens > 1000:
+                continue
+            prop_lines.append(f"- {content}")
+            token_count += est_tokens
+        if prop_lines:
+            parts.append("\n## Deep Knowledge")
+            parts.extend(prop_lines)
 
         # ── 4. Communication & Actions ───────────────────────────────
-        _is_anthropic = (
-            self._provider_config
-            and self._provider_config.provider_type == "anthropic"
-        )
-        if _is_anthropic:
+        if self._tool_format == "local":
             parts.append(
                 "\n## Communication & Actions\n"
-                "ALL actions (replying, journaling, noting, terminal, searching, browsing, etc.) "
-                "are handled natively via tool use.\n"
-                "CRITICAL: DO NOT write raw JSON blocks (e.g. `{\"action\": \"search\"}`) in your text. "
-                "That is legacy formatting and it WILL NOT WORK. "
-                "Just think naturally, and use the tools provided to you to take action.\n"
+                "All interactions with your environment (files, web, terminal, social, email, perception) "
+                "MUST be performed by writing explicit action tags in your internal monologue.\n"
+                "You have exactly 4 universal primitives. Write them exactly as shown below when you want to take action:\n\n"
+                "1. [read: <uri>]\n"
+                "   Example: [read: file:///home/user/helix/main.py] to read a file.\n"
+                "   Example: [read: web://google.com] to fetch a web page.\n"
+                "   Example: [read: web://search?q=weather] to search the web.\n"
+                "   Example: [read: perception://camera] to inspect your camera/PTZ image.\n"
+                "   Example: [read: social://feed] to view Moltbook social feed.\n\n"
+                "2. [write: <uri>, <content>]\n"
+                "   Example: [write: file:///home/user/helix/notes.txt, \"This is a note\"] to create/overwrite a file.\n"
+                "   Example: [write: social://post, \"Hello world!\"] to create a social media post.\n"
+                "   Example: [write: email://draft, {\"to\": \"bob\", \"body\": \"hi\"}] to compose an email.\n\n"
+                "3. [amend: <uri>, <delta/content>]\n"
+                "   Example: [amend: file:///home/user/helix/main.py, {\"target\": \"old_line\", \"replacement\": \"new_line\"}] to patch a file.\n"
+                "   Example: [amend: note://scratchpad, \"- Update task list\"] to append to your scratchpad.\n"
+                "   Example: [amend: email://message_123, {\"action\": \"reply\", \"body\": \"I am on it\"}] to reply to an email.\n\n"
+                "4. [execute: <uri>, <args>]\n"
+                "   Example: [execute: term://bash, {\"command\": \"pytest\"}] to run a shell command.\n"
+                "   Example: [execute: core://nap, {\"resumption_context\": \"Done editing main.py\"}] to refresh context.\n\n"
+                "CRITICAL: Write only ONE action tag per turn. Once you write an action tag, STOP generating. "
+                "The system will execute the tag and return the result to you in the next pulse.\n"
             )
         else:
-            parts.append(
-                "\n## Communication & Actions\n"
-                "ALL actions (replying, journaling, noting, terminal, searching, browsing, etc.) "
-                "are handled natively via the Gemini Function Calling API.\n"
-                "CRITICAL: DO NOT write raw JSON blocks (e.g. `{\"action\": \"search\"}`) in your text. "
-                "That is legacy formatting and it WILL NOT WORK. "
-                "Just think naturally, and use the native tools provided to you to take action.\n"
+            _is_anthropic = (
+                self._provider_config
+                and self._provider_config.provider_type == "anthropic"
             )
+            if _is_anthropic:
+                parts.append(
+                    "\n## Communication & Actions\n"
+                    "ALL actions (replying, journaling, noting, terminal, searching, browsing, etc.) "
+                    "are handled natively via tool use.\n"
+                    "CRITICAL: DO NOT write raw JSON blocks (e.g. `{\"action\": \"search\"}`) in your text. "
+                    "That is legacy formatting and it WILL NOT WORK. "
+                    "Just think naturally, and use the tools provided to you to take action.\n"
+                )
+            else:
+                parts.append(
+                    "\n## Communication & Actions\n"
+                    "ALL actions (replying, journaling, noting, terminal, searching, browsing, etc.) "
+                    "are handled natively via the Gemini Function Calling API.\n"
+                    "CRITICAL: DO NOT write raw JSON blocks (e.g. `{\"action\": \"search\"}`) in your text. "
+                    "That is legacy formatting and it WILL NOT WORK. "
+                    "Just think naturally, and use the native tools provided to you to take action.\n"
+                )
 
         return "\n".join(parts)
 
@@ -1326,13 +1660,62 @@ class PulseLoop:
     # ── Output Parsing ───────────────────────────────────────────────
 
     def _parse_output(self, thought: str):
-        """Parse the model's internal monologue for action tags.
+        """Parse the model's internal monologue for action tags."""
+        if not thought or self._tool_format != "local" or not self._tool_dispatcher:
+            return
+
+        # 1. Parse standard primitives: [primitive: target, argument]
+        # Regex matches: [(read|write|amend|execute): target, optional_content]
+        primitive_pattern = re.compile(r"\[(read|write|amend|execute):\s*([^,\]]+)(?:,\s*(.+?))?\s*\]", re.IGNORECASE)
         
-        DEPRECATED: All tools are now native Function Calls. This method is left
-        empty but preserved for backwards compatibility with any non-FC models
-        if implemented in the future.
-        """
-        pass
+        matches = list(primitive_pattern.finditer(thought))
+        
+        # 2. Parse direct/hallucinated tag calls: [tool_name: arguments]
+        direct_pattern = re.compile(r"\[([a-zA-Z_0-9\-]+):\s*([^\]]+)\]")
+        
+        executed_any = False
+        processed_spans = []
+
+        for m in matches:
+            primitive = m.group(1)
+            target = m.group(2)
+            raw_arg = m.group(3)
+            processed_spans.append(m.span())
+            
+            logger.info(f"Local parser found primitive action: {primitive} on {target}")
+            # Resolve and execute through dispatcher
+            result = self._tool_dispatcher.resolve_and_execute(primitive, target, raw_arg)
+            
+            # Emit result back as a tool_result event for the next turn
+            self.emit("tool_result", {
+                "tool": f"{primitive}:{target}",
+                "result": result[:2000] if result else "(empty result)",
+            })
+            executed_any = True
+
+        # Check for direct/hallucinated tags that don't match primitives
+        for m in direct_pattern.finditer(thought):
+            overlap = False
+            for start, end in processed_spans:
+                if m.start() >= start and m.end() <= end:
+                    overlap = True
+                    break
+            if overlap:
+                continue
+                
+            tag_name = m.group(1).strip()
+            if tag_name.lower() in ("reply", "note", "remember", "journal", "note_done"):
+                continue
+                
+            raw_arg = m.group(2)
+            logger.info(f"Local parser found direct/hallucinated action: {tag_name}")
+            result = self._tool_dispatcher.resolve_direct_call_and_execute(tag_name, raw_arg)
+            
+            self.emit("tool_result", {
+                "tool": tag_name,
+                "result": result[:2000] if result else "(empty result)",
+            })
+            executed_any = True
 
     # ── Status ───────────────────────────────────────────────────────
 

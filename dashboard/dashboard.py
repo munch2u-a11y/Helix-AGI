@@ -10,6 +10,8 @@ Usage:
     python dashboard/dashboard.py --port 8080  # custom port
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
@@ -20,7 +22,10 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 # Suppress Flask's default request logging
 log = logging.getLogger("werkzeug")
@@ -32,6 +37,7 @@ LOG_PATH = BASE_DIR / "logs" / "helix.log"
 BELIEFS_DIR = BASE_DIR / "data" / "beliefs"
 SPATIAL_DIR = BASE_DIR / "data" / "spatial"
 CONFIG_PATH = BASE_DIR / "config" / "config.json"
+NUMPY_AVAILABLE = np is not None
 
 def _read_config() -> Dict[str, Any]:
     """Read agent config for dashboard personalization."""
@@ -95,12 +101,30 @@ CATEGORY_COLORS = {
 }
 
 
+def _coerce_int(
+    value: Any,
+    default: int = 0,
+    minimum: Optional[int] = None,
+    maximum: Optional[int] = None,
+) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
+
+
 # ── Log Tailer ────────────────────────────────────────────────────────
 
 class LogTailer:
     """Tails helix.log and caches recent lines per tab."""
 
-    def __init__(self, path: Path, max_lines: int = 200):
+    def __init__(self, path: Path, max_lines: int = 1000):
         self._path = path
         self._max = max_lines
         self._offset = 0
@@ -108,6 +132,8 @@ class LogTailer:
             tab: deque(maxlen=max_lines) for tab in TAB_FILTERS
         }
         self._all = deque(maxlen=max_lines)
+        self._lines_total = {tab: 0 for tab in TAB_FILTERS}
+        self._lines_total["all"] = 0
 
     def poll(self) -> None:
         if not self._path.exists():
@@ -125,31 +151,54 @@ class LogTailer:
                 if not line or NOISE_PATTERNS.search(line):
                     continue
                 self._all.append(line)
+                self._lines_total["all"] += 1
                 for tab, pattern in TAB_FILTERS.items():
                     if pattern.search(line):
                         self._lines[tab].append(line)
+                        self._lines_total[tab] += 1
         except Exception:
             pass
 
     def get(self, tab: str = "thoughts", since: int = 0) -> List[str]:
         self.poll()
-        buf = self._lines.get(tab, self._all)
-        return list(buf)[since:]
+        buf = self._lines.get(tab)
+        total = self._lines_total.get(tab, 0)
+        if buf is None:
+            buf = self._all
+            total = self._lines_total.get("all", 0)
+
+        start_idx = total - len(buf)
+        idx = max(0, since - start_idx)
+        return list(buf)[idx:]
+
+    def get_total(self, tab: str = "thoughts") -> int:
+        if tab in self._lines_total:
+            return self._lines_total[tab]
+        return self._lines_total.get("all", 0)
 
 
 # ── Spatial Data Reader ───────────────────────────────────────────────
 
-def _load_npy(path: Path) -> Optional[np.ndarray]:
+def _load_npy(path: Path) -> Optional[Any]:
     try:
-        if path.exists():
+        if NUMPY_AVAILABLE and path.exists():
             return np.load(str(path))
     except Exception:
         pass
     return None
 
 
-def _pca_3d(positions: np.ndarray) -> np.ndarray:
+def _coerce_xyz(position: List[float]) -> tuple[float, float, float]:
+    values = list(position[:3])
+    while len(values) < 3:
+        values.append(0.0)
+    return float(values[0]), float(values[1]), float(values[2])
+
+
+def _pca_3d(positions: Any) -> Any:
     """Project Nx8 positions to Nx3 via PCA (numpy only)."""
+    if not NUMPY_AVAILABLE:
+        return positions
     if len(positions) < 2:
         return positions[:, :3] if positions.shape[1] >= 3 else positions
     centered = positions - positions.mean(axis=0)
@@ -222,28 +271,44 @@ def read_spatial() -> Dict[str, Any]:
     # Project to 3D
     projected = []
     if all_positions:
-        pos_array = np.array(all_positions, dtype=np.float32)
-        proj_3d = _pca_3d(pos_array)
-        for i, meta in enumerate(point_meta):
-            cat = belief_categories.get(meta["id"], meta["category"])
-            projected.append({
-                "x": round(float(proj_3d[i, 0]), 4),
-                "y": round(float(proj_3d[i, 1]), 4),
-                "z": round(float(proj_3d[i, 2]), 4),
-                "id": meta["id"],
-                "type": meta["type"],
-                "content": meta["content"],
-                "mass": round(meta["mass"], 3),
-                "category": cat,
-                "color": CATEGORY_COLORS.get(cat, "#666666"),
-            })
+        if NUMPY_AVAILABLE:
+            pos_array = np.array(all_positions, dtype=np.float32)
+            proj_3d = _pca_3d(pos_array)
+            for i, meta in enumerate(point_meta):
+                cat = belief_categories.get(meta["id"], meta["category"])
+                projected.append({
+                    "x": round(float(proj_3d[i, 0]), 4),
+                    "y": round(float(proj_3d[i, 1]), 4),
+                    "z": round(float(proj_3d[i, 2]), 4),
+                    "id": meta["id"],
+                    "type": meta["type"],
+                    "content": meta["content"],
+                    "mass": round(meta["mass"], 3),
+                    "category": cat,
+                    "color": CATEGORY_COLORS.get(cat, "#666666"),
+                })
+        else:
+            for raw_pos, meta in zip(all_positions, point_meta):
+                cat = belief_categories.get(meta["id"], meta["category"])
+                x, y, z = _coerce_xyz(raw_pos)
+                projected.append({
+                    "x": round(x, 4),
+                    "y": round(y, 4),
+                    "z": round(z, 4),
+                    "id": meta["id"],
+                    "type": meta["type"],
+                    "content": meta["content"],
+                    "mass": round(meta["mass"], 3),
+                    "category": cat,
+                    "color": CATEGORY_COLORS.get(cat, "#666666"),
+                })
 
     # Attention center
     attn = {"x": 0, "y": 0, "z": 0}
     attn_prev = {"x": 0, "y": 0, "z": 0}
     identity = {"x": 0, "y": 0, "z": 0}
 
-    if all_positions:
+    if NUMPY_AVAILABLE and all_positions:
         pos_array = np.array(all_positions, dtype=np.float32)
         mean = pos_array.mean(axis=0)
         centered = pos_array - mean
@@ -346,7 +411,10 @@ def read_status() -> Dict[str, Any]:
 
 def create_app():
     from flask import Flask, jsonify, request, send_from_directory
-    from dashboard.dashboard_comms import get_comms
+    try:
+        from dashboard.dashboard_comms import get_comms
+    except ImportError:
+        from dashboard_comms import get_comms
 
     app = Flask(__name__, static_folder=None)
     tailer = LogTailer(LOG_PATH)
@@ -373,9 +441,10 @@ def create_app():
     @app.route("/api/logs")
     def api_logs():
         tab = request.args.get("tab", "thoughts")
-        since = int(request.args.get("since", 0))
+        since = _coerce_int(request.args.get("since", 0), default=0, minimum=0)
         lines = tailer.get(tab, since)
-        return jsonify({"lines": lines, "total": since + len(lines)})
+        total = tailer.get_total(tab)
+        return jsonify({"lines": lines, "total": total})
 
     @app.route("/api/spatial")
     def api_spatial():
@@ -414,11 +483,7 @@ def create_app():
 
     @app.route("/api/spatial_injection_history")
     def api_spatial_injection_history():
-        try:
-            limit = int(request.args.get("limit", 30))
-        except (TypeError, ValueError):
-            limit = 30
-        limit = max(1, min(limit, 200))
+        limit = _coerce_int(request.args.get("limit", 30), default=30, minimum=1, maximum=200)
         if SPATIAL_INJECTION_HISTORY_PATH.exists():
             try:
                 with open(SPATIAL_INJECTION_HISTORY_PATH) as f:
@@ -460,7 +525,7 @@ def create_app():
     @app.route("/api/messages/outbound")
     def api_outbound_messages():
         """Browser polls for Helix's replies."""
-        since = int(request.args.get("since", 0))
+        since = _coerce_int(request.args.get("since", 0), default=0, minimum=0)
         messages = comms.get_outbound(since)
         total = comms.get_outbound_count()
         return jsonify({"messages": messages, "total": total})
@@ -488,4 +553,9 @@ def main():
 
 
 if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    _project_root = str(Path(__file__).parent.parent.resolve())
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
     main()

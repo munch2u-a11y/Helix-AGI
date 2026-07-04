@@ -9,6 +9,7 @@ profile (those are immutable after creation).
 
 import json
 from pathlib import Path
+from bootstrap import profile_label
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QCheckBox, QGroupBox, QTextEdit, QSlider, QScrollArea,
@@ -48,7 +49,10 @@ class SettingsTab(QWidget):
         info_layout = QVBoxLayout(info_group)
         cfg = self.app.config
 
-        name_lbl = QLabel(f"Agent: {cfg.get('agent_name', 'Helix')}  ·  Creator: {cfg.get('creator_name', '')}  ·  Profile: {cfg.get('bootstrap_profile', 'prepared').title()}")
+        name_lbl = QLabel(
+            f"Agent: {cfg.get('agent_name', 'Helix')}  ·  Creator: {cfg.get('creator_name', '')}  ·  "
+            f"Profile: {profile_label(cfg.get('bootstrap_profile', 'standard'))}"
+        )
         name_lbl.setStyleSheet("font-size: 12px; color: #8888aa; background: transparent; border: none;")
         info_layout.addWidget(name_lbl)
         settings_layout.addWidget(info_group)
@@ -156,7 +160,7 @@ class SettingsTab(QWidget):
 
         from wizard.pages.tool_selection import TOOLSET_INFO
         self.tool_checks = {}
-        current_tools = set(cfg.get("tool_set", ["core"]))
+        current_tools = set(cfg.get("tool_set", []))
 
         for ts in TOOLSET_INFO:
             row = QHBoxLayout()

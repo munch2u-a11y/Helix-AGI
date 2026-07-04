@@ -97,6 +97,38 @@ class TestAffectDampening(unittest.TestCase):
         # delta_s - omega_vel = 0.15. somatic fear = 0.15 * 5.0 = 0.75
         self.assertAlmostEqual(fear_losing, 0.75)
 
+    def test_default_startup_ignores_persisted_affect(self):
+        """Cold starts should not rehydrate stale emotional packets."""
+        snapshot = {
+            "omega": 0.2,
+            "H": 1.0,
+            "D_KL": 1.5,
+            "T": 1.2,
+            "s_total": 0.9,
+        }
+        self.field.deposit(snapshot, anchor_ids=["m1"], stagnation_counter=3)
+        self.field.save_state()
+
+        cold_start = AffectField(data_dir=self.temp_dir)
+        self.assertEqual(cold_start.packet_count, 0)
+        self.assertEqual(cold_start.current_pulse, 0)
+
+    def test_explicit_restore_keeps_saved_affect_state(self):
+        """Explicit restoration should still be available when needed."""
+        snapshot = {
+            "omega": 0.2,
+            "H": 1.0,
+            "D_KL": 1.5,
+            "T": 1.2,
+            "s_total": 0.9,
+        }
+        self.field.deposit(snapshot, anchor_ids=["m1"], stagnation_counter=3)
+        self.field.save_state()
+
+        warm_start = AffectField(data_dir=self.temp_dir, restore_state=True)
+        self.assertGreater(warm_start.packet_count, 0)
+        self.assertGreaterEqual(warm_start.current_pulse, 0)
+
 
 def run_tests():
     """Run tests."""

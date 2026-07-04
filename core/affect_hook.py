@@ -59,7 +59,7 @@ def register_affect_hook(
 
     from core.post_pulse_hooks import register_hook
 
-    _affect_field = AffectField(data_dir=data_dir)
+    _affect_field = AffectField(data_dir=data_dir, restore_state=False)
     _spatial_mind = spatial_mind
     _sentinel = sentinel
 

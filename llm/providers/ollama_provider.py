@@ -53,6 +53,7 @@ class OllamaSession(ChatSession):
         self.max_output_tokens = max_output_tokens
         self.options = options or {}
         self.history: List[Dict[str, str]] = []
+        self._last_token_count = 0
 
         # Ensure options include context window
         if "num_ctx" not in self.options:
@@ -101,6 +102,8 @@ class OllamaSession(ChatSession):
             # Log performance
             total_s = response.total_duration / 1e9 if response.total_duration else 0
             eval_count = response.eval_count or 0
+            prompt_eval_count = getattr(response, "prompt_eval_count", 0) or 0
+            self._last_token_count = eval_count + prompt_eval_count
             logger.debug(
                 f"Ollama response: {eval_count} tokens in {total_s:.1f}s"
             )
@@ -108,6 +111,7 @@ class OllamaSession(ChatSession):
 
         except Exception as e:
             logger.error(f"Ollama package call failed: {e}")
+            self._last_token_count = self.get_history_size() // 4
             return f"[internal error: LLM call failed — {str(e)[:100]}]"
 
     def _send_via_rest(self, messages: List[Dict[str, str]]) -> str:
@@ -134,6 +138,8 @@ class OllamaSession(ChatSession):
             # Log performance
             total_s = data.get("total_duration", 0) / 1e9
             eval_count = data.get("eval_count", 0)
+            prompt_eval_count = data.get("prompt_eval_count", 0)
+            self._last_token_count = eval_count + prompt_eval_count
             if eval_count:
                 logger.debug(
                     f"Ollama REST response: {eval_count} tokens in {total_s:.1f}s"
@@ -142,6 +148,7 @@ class OllamaSession(ChatSession):
 
         except Exception as e:
             logger.error(f"Ollama REST call failed: {e}")
+            self._last_token_count = self.get_history_size() // 4
             return f"[internal error: LLM call failed — {str(e)[:100]}]"
 
     def get_history_size(self) -> int:
@@ -150,3 +157,41 @@ class OllamaSession(ChatSession):
         for msg in self.history:
             total += len(msg.get("content", ""))
         return total
+
+    def get_history(self) -> List[Dict[str, Any]]:
+        """Return conversation history converted to Gemini format for the compressor."""
+        gemini_history = []
+        for msg in self.history:
+            role = msg.get("role")
+            gemini_role = "model" if role == "assistant" else "user"
+            gemini_history.append({
+                "role": gemini_role,
+                "parts": [{"text": msg.get("content", "")}]
+            })
+        return gemini_history
+
+    def replace_history(self, compressed_history: List[Dict[str, Any]]):
+        """Replace history with compressed history mapped from Gemini format."""
+        new_history = []
+        for msg in compressed_history:
+            role = msg.get("role")
+            cpp_role = "assistant" if role == "model" else "user"
+            text_parts = []
+            for part in msg.get("parts", []):
+                if isinstance(part, dict) and "text" in part:
+                    text_parts.append(part["text"])
+                elif isinstance(part, str):
+                    text_parts.append(part)
+            content = "\n".join(text_parts)
+            new_history.append({
+                "role": cpp_role,
+                "content": content
+            })
+        self.history = new_history
+        self._last_token_count = 0
+
+    def get_last_token_count(self) -> int:
+        """Return token count of the last chat completion, or estimate it."""
+        if hasattr(self, '_last_token_count') and self._last_token_count > 0:
+            return self._last_token_count
+        return self.get_history_size() // 4

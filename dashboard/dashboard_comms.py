@@ -21,8 +21,9 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("helix.dashboard.comms")
 
-# Default path — relative to project root
-_DEFAULT_PATH = Path("data/dashboard_messages.json")
+# Default path — anchored to the repo root so both main.py and the dashboard
+# use the same message bus regardless of the current working directory.
+_DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "dashboard_messages.json"
 
 
 class DashboardComms:
@@ -41,15 +42,23 @@ class DashboardComms:
         """Create the message file if it doesn't exist."""
         if not self._path.exists():
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._write_state({"inbound": [], "outbound": []})
+            self._write_state({"inbound": [], "outbound": [], "outbound_base": 0})
 
     def _read_state(self) -> dict:
         """Read the full message state from disk."""
         try:
             with open(self._path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                state = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
-            return {"inbound": [], "outbound": []}
+            return {"inbound": [], "outbound": [], "outbound_base": 0}
+
+        if not isinstance(state, dict):
+            return {"inbound": [], "outbound": [], "outbound_base": 0}
+
+        state.setdefault("inbound", [])
+        state.setdefault("outbound", [])
+        state.setdefault("outbound_base", 0)
+        return state
 
     def _write_state(self, state: dict):
         """Write the full message state to disk."""
@@ -105,7 +114,9 @@ class DashboardComms:
             state["outbound"].append(msg)
             # Keep max 200 outbound messages
             if len(state["outbound"]) > 200:
+                trimmed = len(state["outbound"]) - 200
                 state["outbound"] = state["outbound"][-200:]
+                state["outbound_base"] = int(state.get("outbound_base", 0)) + trimmed
             self._write_state(state)
         logger.info(f"Dashboard outbound → {recipient}: {message[:80]}")
 
@@ -117,13 +128,16 @@ class DashboardComms:
         with self._lock:
             state = self._read_state()
         outbound = state.get("outbound", [])
-        return outbound[since:]
+        base = int(state.get("outbound_base", 0))
+        if since <= base:
+            return outbound
+        return outbound[since - base:]
 
     def get_outbound_count(self) -> int:
         """Get total number of outbound messages."""
         with self._lock:
             state = self._read_state()
-        return len(state.get("outbound", []))
+        return int(state.get("outbound_base", 0)) + len(state.get("outbound", []))
 
 
 # ── Module-level singleton ────────────────────────────────────────────

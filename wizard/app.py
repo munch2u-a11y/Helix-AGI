@@ -18,7 +18,6 @@ import subprocess
 import threading
 import logging
 from pathlib import Path
-
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QMessageBox, QTabWidget,
@@ -50,12 +49,12 @@ DEFAULT_CONFIG = {
     "telegram_owner_id": "",
     "discord_enabled": False,
     "discord_token": "",
-    "tool_set": ["core"],
+    "tool_set": [],
     "safety_mode": True,
     "whitelist": [],
     "active_hours": {"start": "08:00", "end": "23:00"},
     "resting_pulse_minutes": 15,
-    "bootstrap_profile": "prepared",
+    "bootstrap_profile": "standard",
     "personality": "curious",
     "vision_provider": "local",
     "ai_assist": False,
@@ -392,7 +391,7 @@ class WizardProgressBar(QWidget):
 class HelixApp(QMainWindow):
     """Main application window combining wizard and dashboard."""
 
-    launch_signal = pyqtSignal()
+    launch_status_signal = pyqtSignal(bool, str)
 
     def __init__(self, force_wizard: bool = False):
         super().__init__()
@@ -416,14 +415,22 @@ class HelixApp(QMainWindow):
         # Dashboard mode (lazy‑loaded on launch)
         self.dashboard_widget = None
 
-        self.launch_signal.connect(self._on_launch_complete)
+        self.launch_status_signal.connect(self._on_launch_status)
 
         if config_exists() and not force_wizard:
             self._switch_to_dashboard()
 
-    def _on_launch_complete(self):
-        """Signal handler for when background launch finishes."""
-        self._switch_to_dashboard()
+    def _on_launch_status(self, success: bool, error_msg: str):
+        """Signal handler for when Flask background launch status changes."""
+        if not success:
+            if hasattr(self, "_check_flask_timer") and self._check_flask_timer.isActive():
+                self._check_flask_timer.stop()
+            if self._web_view:
+                self._web_view.setHtml(self._dashboard_status_html("error"))
+            QMessageBox.warning(
+                self, "Dashboard Server Error",
+                f"The Flask dashboard server failed to start:\n\n{error_msg}\n\nPlease check logs."
+            )
 
     def _build_wizard(self) -> QWidget:
         """Build the multi-step wizard UI."""
@@ -645,7 +652,8 @@ class HelixApp(QMainWindow):
         QApplication.processEvents()
 
         # Thread-safe output buffer (QTimer polling — signals can't be added at runtime)
-        self._install_lines = []
+        import queue
+        self._install_lines = queue.Queue()
         self._install_rc = None
 
         def _install_thread():
@@ -656,11 +664,11 @@ class HelixApp(QMainWindow):
                     text=True, cwd=str(BASE_DIR)
                 )
                 for line in proc.stdout:
-                    self._install_lines.append(line.rstrip())
+                    self._install_lines.put(line.rstrip())
                 proc.wait()
                 self._install_rc = proc.returncode
             except Exception as e:
-                self._install_lines.append(f"❌ Error: {e}")
+                self._install_lines.put(f"❌ Error: {e}")
                 self._install_rc = 1
 
         thread = threading.Thread(target=_install_thread, daemon=True)
@@ -668,9 +676,12 @@ class HelixApp(QMainWindow):
 
         # Poll for output
         def _poll():
-            while self._install_lines:
-                line = self._install_lines.pop(0)
-                log_output.append(line)
+            while not self._install_lines.empty():
+                try:
+                    line = self._install_lines.get_nowait()
+                    log_output.append(line)
+                except queue.Empty:
+                    break
                 # Auto-scroll
                 log_output.verticalScrollBar().setValue(
                     log_output.verticalScrollBar().maximum()
@@ -747,7 +758,7 @@ class HelixApp(QMainWindow):
     def _run_bootstrap(self):
         """Run the belief bootstrap from setup.py logic."""
         import subprocess
-        profile = self.config.get("bootstrap_profile", "prepared")
+        profile = self.config.get("bootstrap_profile", "standard")
         personality = self.config.get("personality", "curious")
         agent_name = self.config.get("agent_name", "Helix")
         creator_name = self.config.get("creator_name", "User")
@@ -764,6 +775,20 @@ class HelixApp(QMainWindow):
             subprocess.run(cmd, cwd=str(BASE_DIR), check=True, capture_output=True, timeout=60)
         except Exception as e:
             logger.warning(f"Bootstrap subprocess error: {e}")
+
+        # If "import" profile, run the soul importer after bootstrap
+        import_paths = self.config.get("import_soul_paths", [])
+        if self.config.get("bootstrap_profile") == "import" and import_paths:
+            import_cmd = [
+                sys.executable, str(BASE_DIR / "scripts" / "import_agent_soul.py"),
+                "--apply",
+                "--overwrite-bootstrap",
+                f"--data-dir={BASE_DIR / 'data'}",
+            ] + import_paths
+            try:
+                subprocess.run(import_cmd, cwd=str(BASE_DIR), check=True, capture_output=True, timeout=120)
+            except Exception as e:
+                logger.warning(f"Soul import error: {e}")
 
     def _switch_to_dashboard(self):
         """Switch from wizard to the dashboard + settings tabs."""
@@ -874,8 +899,8 @@ class HelixApp(QMainWindow):
                 app.run(host="127.0.0.1", port=5050, debug=False, use_reloader=False)
             except Exception as e:
                 logger.error(f"Flask server error: {e}")
-                # Show error in web view from main thread
-                self.launch_signal.emit()
+                self._flask_started = False
+                self.launch_status_signal.emit(False, str(e))
 
         self._flask_thread = threading.Thread(target=_run, daemon=True, name="flask-dashboard")
         self._flask_thread.start()

@@ -39,7 +39,7 @@ def run_benchmark(num_tools=20):
 
     # Mock PulseLoop to avoid rebuilding actual session
     mock_pulse_loop = MagicMock()
-    mock_pulse_loop._active_toolsets = {"core"}
+    mock_pulse_loop._active_toolsets = {"operational"}
     mock_pulse_loop._pending_toolset_rebuild = False
 
     executor = ToolExecutor()

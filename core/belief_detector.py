@@ -37,6 +37,7 @@ Follows the same pattern as workflow_detector.py:
 
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -54,7 +55,7 @@ SCAN_INTERVAL = 1
 MIN_THOUGHT_LENGTH = 100
 
 # Pending beliefs file
-_PENDING_FILE = Path("data/pending_beliefs.json")
+_PENDING_FILE = Path(os.environ.get("HELIX_DATA_DIR", "data")) / "pending_beliefs.json"
 
 # Maximum pending tags before we stop queuing (safety valve)
 MAX_PENDING = 200
@@ -74,18 +75,26 @@ _sentinel = None
 _gguf_manager = None
 
 
-def set_dependencies(belief_store, physics_engine, sentinel=None, gguf_manager=None):
+def set_dependencies(
+    belief_store,
+    physics_engine,
+    sentinel=None,
+    gguf_manager=None,
+    data_dir: Optional[str] = None,
+):
     """Wire dependencies at startup. Called from main.py.
 
     belief_store and physics_engine are accepted for forward-compatibility
     (the night cycle uses them) but the detector itself no longer needs
     them for real-time operation.
     """
-    global _belief_store, _physics_engine, _sentinel, _gguf_manager
+    global _belief_store, _physics_engine, _sentinel, _gguf_manager, _PENDING_FILE
     _belief_store = belief_store
     _physics_engine = physics_engine
     _sentinel = sentinel
     _gguf_manager = gguf_manager
+    if data_dir:
+        _PENDING_FILE = Path(data_dir) / "pending_beliefs.json"
     logger.info("Belief detector: dependencies wired")
 
 
@@ -104,13 +113,28 @@ _SIGNAL_PROMPT = (
 )
 
 
+# Character budget for classifier input. Must fit the micro-model's
+# context window (~4 chars/token, leave room for the prompt scaffold).
+# Head + tail windowing: realizations usually appear at the start or
+# end of a long thought, rarely in the middle.
+_MAX_SIGNAL_CHARS = 12_000
+
+
+def _clamp_for_classifier(text: str) -> str:
+    """Fit text into the micro-model's context via head+tail windowing."""
+    if len(text) <= _MAX_SIGNAL_CHARS:
+        return text
+    half = _MAX_SIGNAL_CHARS // 2
+    return text[:half] + "\n[...]\n" + text[-half:]
+
+
 def _has_belief_signal(text: str) -> bool:
     """Ask the micro-model if the text contains a belief signal."""
     if not text or len(text) < 20:
         return False
-        
-    prompt = _SIGNAL_PROMPT.format(text=text)
-    
+
+    prompt = _SIGNAL_PROMPT.format(text=_clamp_for_classifier(text))
+
     # Fallback if GGUFManager is not wired or the fast_classifier model is not loaded
     if not _gguf_manager or "fast_classifier" not in _gguf_manager.models:
         from core.auxiliary_llm import get_auxiliary_client

@@ -80,7 +80,14 @@ class PostPulseHookContext:
         self.pulse_count = pulse_count
         self.tool_calls = tool_calls or []
         self.spatial_state = spatial_state or {}
-        self.active_toolsets = active_toolsets or {"core"}
+        if active_toolsets is not None:
+            self.active_toolsets = active_toolsets
+        else:
+            try:
+                from tools.tool_declarations import get_default_toolsets
+                self.active_toolsets = get_default_toolsets()
+            except Exception:
+                self.active_toolsets = {"operational"}
         self.memory_id = memory_id
         self.lagrangian_before = lagrangian_before or {}
         self.lagrangian_after = lagrangian_after or {}

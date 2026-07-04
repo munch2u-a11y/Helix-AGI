@@ -11,13 +11,14 @@ Key Architectural Upgrades:
 4. Co-Occurrence Wiring: Real-time Hebbian wiring via post-pulse hooks replaces batch UMAP/HDBSCAN.
    Nightly Phase 3 reads pre-built relation clusters for compound synthesis.
 5. Layer 2 Precipitation: UMAP/HDBSCAN clustering identifies dense belief
-   clusters that exceed a density threshold. These are consolidated into
-   Layer 2 beliefs (people, skills, desires, concepts).
+   clusters that exceed the gravitational binding threshold (tied to expansion
+   rate). These collapse into Layer 2 beliefs (people, skills, desires, concepts).
 """
 
 import json
 import re
 import logging
+import sqlite3
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -40,6 +41,10 @@ class Curator:
     to process recent logs, extract beliefs, cluster them, and update the belief_store
     without blocking Helix's active context window.
     """
+
+    # Mean pairwise binding gravity a cluster must exceed to collapse
+    # into a Layer 2 belief (see _precipitate_layer2 for derivation).
+    PRECIPITATION_THRESHOLD = 3.0
 
     def __init__(
         self,
@@ -161,6 +166,17 @@ class Curator:
                 stats["beliefs_rejected"] = batch_stats.get("rejected", 0)
             except Exception as e:
                 logger.error(f"Pending belief integration failed: {e}")
+
+            # Phase 7: Compile Tool Notes (Lane 1 of tool learning)
+            #   Deterministic — the heaviest tool-bound beliefs (including
+            #   any written tonight in Phase 6) become short "Learned:"
+            #   notes on the tool schema descriptions. Runs AFTER
+            #   integration and attrition so it reflects tonight's state.
+            logger.info("Curator Phase 7: Tool Note Compilation")
+            try:
+                stats["tool_notes"] = self._compile_tool_notes()
+            except Exception as e:
+                logger.error(f"Tool note compilation failed: {e}")
             
         except Exception as e:
             logger.error(f"Curator cycle failed: {e}")
@@ -171,6 +187,212 @@ class Curator:
             logger.info("Curator cycle finished.")
             
         return stats
+
+    # ── Entity Profile Maintenance ────────────────────────────────────
+
+    def _find_existing_layer2_term(self, term: str):
+        """Find the best existing Layer 2 entry for a term (or None).
+
+        Prefers a consolidated profile entry; otherwise the heaviest
+        same-term entry. Returns the belief dict tagged with _category.
+        """
+        tl = term.lower()
+        best = None
+        for cat in ("people", "concepts", "skills", "desires"):
+            try:
+                for b in self.beliefs._read_category(cat):
+                    bt = (b.get("term") or "").lower()
+                    aliases = {a.lower() for a in (b.get("aliases") or []) if a}
+                    if bt != tl and tl not in aliases:
+                        continue
+                    b["_category"] = cat
+                    if b.get("formation_type") == "profile_consolidation":
+                        return b  # profiles always win
+                    if best is None or b.get("mass", 1.0) > best.get("mass", 1.0):
+                        best = b
+            except Exception:
+                continue
+        return best
+
+    def _merge_into_entity(self, existing, new_content, cand, members,
+                           all_mem_refs=None):
+        """Merge a precipitated realization into an existing entity entry.
+
+        The LLM integrates the new understanding into the existing
+        profile text (bounded); everything else is deterministic:
+        mass accretes, verifications bump, refs/relations union.
+
+        Returns the existing entry's id on success, None on failure.
+        """
+        existing_id = existing.get("id", "")
+        old_content = existing.get("content", "")
+        if not existing_id or not self.llm_client:
+            return None
+
+        prompt = (
+            "EXISTING PROFILE:\n" + old_content + "\n\n"
+            "NEW REALIZATION:\n" + new_content + "\n\n"
+            "Integrate the new realization into the profile. Keep "
+            "everything from the existing profile that is not directly "
+            "superseded. Max 500 chars, plain text, same voice. "
+            "Output ONLY the updated profile text."
+        )
+        try:
+            response = self.llm_client.generate(
+                prompt=prompt,
+                system_instruction=(
+                    "You maintain entity profiles by integrating new "
+                    "understanding. Preserve existing wording where "
+                    "possible. Output only the profile text."
+                ),
+            )
+            merged = (response.text or "").strip().strip('"')[:500]
+            if len(merged) < 40:
+                raise ValueError("merged profile too short")
+        except Exception as e:
+            logger.error("Entity merge LLM failed for %s: %s", existing_id, e)
+            return None
+
+        # Deterministic bookkeeping
+        refs = list(dict.fromkeys(
+            (existing.get("memory_refs") or [])
+            + [r for m in members for r in (m.get("memory_refs") or [])]
+        ))[:80]
+        relations = list(dict.fromkeys(
+            (existing.get("relations") or [])
+            + [m.get("id", "") for m in members if m.get("id")]
+        ))[:60]
+        new_mass = min(20.0, float(existing.get("mass", 1.0)) + 0.5 * float(cand["total_mass"]))
+
+        self.beliefs.update_belief(
+            existing_id,
+            content=merged,
+            mass=new_mass,
+            verifications=float(existing.get("verifications", 1.0)) + 1.0,
+            memory_refs=refs,
+            relations=relations,
+        )
+
+        # Wire component beliefs to the entity anchor
+        for m in members:
+            rels = m.get("relations", []) or []
+            if existing_id not in rels:
+                rels.append(existing_id)
+                self.beliefs.update_belief(m.get("id", ""), relations=rels)
+
+        # Refresh the live manifold + semantic index with the new text
+        if self.physics:
+            try:
+                emb = self.physics.embed_text(merged)
+                pos = self.physics.embed_and_project(merged)
+                self.beliefs.update_belief(
+                    existing_id,
+                    position_8d=[round(float(x), 6) for x in pos],
+                )
+                self.physics._register_point(
+                    point_id=existing_id,
+                    emb=emb,
+                    point_type="belief",
+                    spatial_kwargs={
+                        "confidence": existing.get("confidence", 0.6),
+                        "importance": new_mass,
+                        "content": merged,
+                    },
+                    semantic_metadata={
+                        "content": merged[:500],
+                        "type": "belief",
+                        "confidence": existing.get("confidence", 0.6),
+                        "importance": new_mass,
+                        "category": existing.get("_category", ""),
+                    },
+                )
+            except Exception as e:
+                logger.warning("Entity merge manifold refresh failed: %s", e)
+
+        logger.info(
+            "⭐ ENTITY DEEPENED [%s] %s: %s",
+            existing.get("_category", ""), existing_id, merged[:80],
+        )
+        return existing_id
+
+    # ── Tool Note Compilation (Phase 7) ──────────────────────────────
+
+    # Per-tool budget for compiled notes
+    TOOL_NOTES_MAX = 3          # notes per tool
+    TOOL_NOTE_MAX_CHARS = 140   # per note
+
+    def _compile_tool_notes(self) -> int:
+        """Compile the strongest tool-bound beliefs into tool descriptions.
+
+        Deterministic: no LLM. For each tool, take the top beliefs bound
+        to it by mass × confidence, condense each to one short line, and
+        write them to data/tool_learned_notes.json + the live registry.
+
+        Beliefs are the source of truth — the description is a compiled
+        view. A lesson that stops being verified loses confidence via
+        nightly attrition and drops out of the description naturally.
+
+        Returns the number of tools that received notes.
+        """
+        all_beliefs = self.beliefs.get_all_beliefs_flat()
+
+        by_tool: Dict[str, list] = {}
+        for b in all_beliefs:
+            bindings = b.get("tool_bindings", [])
+            if not isinstance(bindings, list):
+                continue
+            for t in bindings:
+                if isinstance(t, str) and t.strip():
+                    by_tool.setdefault(t.strip(), []).append(b)
+
+        notes: Dict[str, list] = {}
+        for tool, beliefs in by_tool.items():
+            beliefs.sort(
+                key=lambda b: b.get("mass", 1.0) * b.get("confidence", 0.5),
+                reverse=True,
+            )
+            tool_notes = []
+            for b in beliefs[: self.TOOL_NOTES_MAX]:
+                content = (b.get("content", "") or "").strip()
+                if not content:
+                    continue
+                if len(content) > self.TOOL_NOTE_MAX_CHARS:
+                    # Cut at a sentence boundary if one exists in range
+                    cut = content[: self.TOOL_NOTE_MAX_CHARS]
+                    period = cut.rfind(". ")
+                    if period > self.TOOL_NOTE_MAX_CHARS // 2:
+                        cut = cut[: period + 1]
+                    else:
+                        cut = cut.rstrip() + "…"
+                    content = cut
+                tool_notes.append(content)
+            if tool_notes:
+                notes[tool] = tool_notes
+
+        # Persist for boot-time reload
+        notes_path = self.data_dir / "tool_learned_notes.json"
+        try:
+            notes_path.write_text(json.dumps({
+                "updated_at": datetime.now().isoformat(),
+                "notes": notes,
+            }, indent=2))
+        except Exception as e:
+            logger.error("Failed to write tool notes file: %s", e)
+
+        # Apply to the live registry (session declarations rebuild on
+        # the morning wake — see pulse_loop DORMANT → RESTING).
+        applied = 0
+        try:
+            from tools.tool_registry import registry
+            applied = registry.apply_learned_notes(notes)
+        except Exception as e:
+            logger.warning("Could not apply notes to registry: %s", e)
+
+        logger.info(
+            "Phase 7: %d tools have learned notes (%d applied to registry)",
+            len(notes), applied,
+        )
+        return applied
 
     def _precipitate_layer2(self) -> List[Dict[str, Any]]:
         """Phase 3.5: Gravitational collapse of Layer 1 clusters into Layer 2.
@@ -185,7 +407,6 @@ class Curator:
         This ties directly to the Hubble expansion rate — a cluster must be
         gravitationally bound against the cumulative drift.
         """
-        from core.belief_cosmology import EXPANSION_PER_BELIEF
         import numpy as np
         from itertools import combinations
 
@@ -201,10 +422,18 @@ class Curator:
             return []
 
         total_beliefs = len(all_beliefs)
-        threshold = (1 + EXPANSION_PER_BELIEF) ** total_beliefs
+        # Fixed binding-gravity threshold. The previous formula
+        # (1 + EXPANSION_PER_BELIEF) ** total_beliefs assumed Hubble
+        # expansion inflates positions over time — but expansion was
+        # never applied to any position, so the threshold grew
+        # exponentially against static gravity and precipitation would
+        # have silently stopped (~150 at 10k beliefs). 3.0 matches the
+        # formula's value at the belief count where precipitation was
+        # last observed working.
+        threshold = self.PRECIPITATION_THRESHOLD
         logger.info(
-            "Phase 3.5: %d beliefs, expansion factor %.3f, threshold %.2f",
-            total_beliefs, threshold, threshold,
+            "Phase 3.5: %d beliefs, binding-gravity threshold %.2f",
+            total_beliefs, threshold,
         )
 
         # ── Step 1: Re-embed from text content (384D) ────────────────
@@ -399,9 +628,49 @@ class Curator:
             weights = member_masses / (member_masses.sum() + 1e-8)
             centroid = (member_pos * weights[:, np.newaxis]).sum(axis=0)
 
-            # Extract dominant term for preconscious string matching
-            from core.belief_consolidator import _extract_dominant_term
+            # Extract dominant term for preconscious string matching.
+            # Corpus check keeps sentence-start captures ('Cognitive',
+            # 'Internal') from becoming anchors that match every pulse.
+            from core.belief_consolidator import (
+                _extract_dominant_term, term_survives_corpus_check,
+            )
             term = _extract_dominant_term(content) or ""
+            if term and not term_survives_corpus_check(
+                term, (b.get("content", "") for b in all_beliefs)
+            ):
+                logger.info("Phase 3.5: term '%s' failed corpus check — anchor suppressed", term)
+                term = ""
+
+            # ── Known entity? Deepen the profile instead of fragmenting ──
+            # Precipitating a new same-term sibling is how one entity
+            # became 94 scattered entries. If this term already has a
+            # Layer 2 entry, merge tonight's realization INTO it.
+            if term:
+                existing = self._find_existing_layer2_term(term)
+                if existing is not None:
+                    merged_id = self._merge_into_entity(
+                        existing, content, cand, members, all_mem_refs=None,
+                    )
+                    if merged_id:
+                        precipitated.append({
+                            "id": merged_id,
+                            "category": existing.get("_category", ""),
+                            "content": content,
+                            "mass": cand["total_mass"],
+                            "component_count": len(members),
+                            "binding_gravity": cand["mean_gravity"],
+                            "merged": True,
+                        })
+                        cand["cluster_info"]["precipitated_as"] = f"{merged_id} (merged)"
+                        continue
+                    # Merge failed — fall through and skip rather than
+                    # spawn a duplicate entity entry. The realization
+                    # survives in its Layer 1 component beliefs.
+                    logger.warning(
+                        "Phase 3.5: merge into existing '%s' failed — skipping to avoid fragmentation",
+                        term,
+                    )
+                    continue
 
             # Aggregate metadata from cluster members
             member_omegas = []
@@ -456,6 +725,37 @@ class Curator:
             )
 
             if stored:
+                # Register in the live manifold + semantic index so the
+                # new anchor is retrievable without a restart.
+                if self.physics:
+                    try:
+                        emb = self.physics.embed_text(content)
+                        self.physics._register_point(
+                            point_id=belief_id,
+                            emb=emb,
+                            point_type="belief",
+                            spatial_kwargs={
+                                "confidence": 0.6,
+                                "importance": cand["total_mass"],
+                                "content": content,
+                                "encoding_omega": mean_omega,
+                                "encoding_s_total": mean_s_total,
+                                "stability_index": mean_stability,
+                            },
+                            semantic_metadata={
+                                "content": content[:500],
+                                "type": "belief",
+                                "confidence": 0.6,
+                                "importance": cand["total_mass"],
+                                "category": category,
+                            },
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Phase 3.5: manifold registration failed for %s: %s",
+                            belief_id, e,
+                        )
+
                 # Wire component beliefs to the new Layer 2 anchor
                 for m in members:
                     existing_relations = m.get("relations", [])
@@ -487,20 +787,13 @@ class Curator:
         try:
             audit_path = self.data_dir / "logs" / "manifold_clusters.json"
             audit_path.parent.mkdir(parents=True, exist_ok=True)
-            # Sanitize numpy bools/ints to native Python types for JSON
-            for ci in cluster_audit:
-                for k, v in ci.items():
-                    if isinstance(v, (bool,)):
-                        continue  # already native
-                    if hasattr(v, 'item'):  # numpy scalar
-                        ci[k] = v.item()
             audit_data = {
                 "timestamp": datetime.now().isoformat(),
                 "total_beliefs": total_beliefs,
                 "expansion_factor": round(threshold, 4),
                 "precipitation_threshold": round(threshold, 4),
                 "clusters_found": n_clusters,
-                "noise_points": int(noise),
+                "noise_points": noise,
                 "precipitated": len(precipitated),
                 "clusters": cluster_audit,
             }
@@ -516,60 +809,71 @@ class Curator:
         return precipitated
 
     def _collect_raw_memories(self) -> List[Dict[str, Any]]:
-        """Collect memories from structured journals AND thought output logs.
-        Skips redundant scanning of the transient scratchpad.
+        """Collect memories from the CognitiveJournal (JSONL) AND markdown journals.
         Returns dicts containing the text and metadata (lagrangian, belief_ids).
         """
         memories = []
+        cutoff_time = (datetime.now() - timedelta(hours=24)).isoformat()
 
-        # 1. Thought memories from the canonical cognitive journal
-        if self.memory and hasattr(self.memory, "journal"):
+        # 1. CognitiveJournal (JSONL) — primary memory source
+        #    The MemoryManager now uses CognitiveJournal (append-only JSONL),
+        #    not the legacy SQLite DB. Read entries directly from the journal.
+        if self.memory:
             try:
-                cutoff_dt = datetime.now().astimezone() - timedelta(hours=24)
-
-                def _parse_timestamp(raw: str):
-                    """Parse ISO timestamp, ensuring result is always timezone-aware."""
-                    if not raw:
-                        return None
-                    parsed = None
-                    try:
-                        parsed = datetime.fromisoformat(raw)
-                    except ValueError:
-                        if len(raw) >= 5 and raw[-5] in "+-" and raw[-3] != ":":
+                journal = getattr(self.memory, 'journal', None)
+                if journal and hasattr(journal, 'path') and journal.path.exists():
+                    collected = 0
+                    with journal.path.open("r", encoding="utf-8") as f:
+                        for raw_line in f:
+                            raw_line = raw_line.strip()
+                            if not raw_line:
+                                continue
                             try:
-                                parsed = datetime.fromisoformat(f"{raw[:-2]}:{raw[-2:]}")
-                            except ValueError:
-                                return None
-                        else:
-                            return None
-                    # Ensure timezone-aware so comparison with cutoff_dt never fails
-                    if parsed is not None and parsed.tzinfo is None:
-                        parsed = parsed.astimezone()
-                    return parsed
+                                entry = json.loads(raw_line)
+                            except json.JSONDecodeError:
+                                continue
 
-                thought_count = 0
-                for entry in self.memory.journal.load_all():
-                    if entry.get("type") != "memory":
-                        continue
-                    meta = entry.get("metadata", {})
-                    if meta.get("memory_type") != "thought":
-                        continue
-                    timestamp = _parse_timestamp(entry.get("timestamp", ""))
-                    if timestamp is None or timestamp < cutoff_dt:
-                        continue
-                    memories.append({
-                        "text": entry.get("content", ""),
-                        "memory_id": entry.get("id"),
-                        "lagrangian_snapshot": entry.get("lagrangian", {}) or {},
-                        "belief_ids": meta.get("belief_ids", []) or [],
-                        "position_8d": entry.get("position_8d", []) or [],
-                        "pulse_id": entry.get("pulse_id", 0),
-                    })
-                    thought_count += 1
-                logger.info("Phase 1: extracted %d thoughts from last 24h journal", thought_count)
+                            # Filter to last 24h
+                            entry_ts = entry.get("timestamp", "")
+                            # Compare ISO timestamps (both formats work with string comparison)
+                            if entry_ts and entry_ts < cutoff_time:
+                                continue
+
+                            # Extract content and metadata
+                            content = entry.get("content", "")
+                            if not content or len(content) < 20:
+                                continue
+
+                            # Skip low-value system entries
+                            entry_type = entry.get("type", "")
+                            metadata = entry.get("metadata", {})
+                            source = metadata.get("source", "")
+
+                            # Only extract from the agent's actual thoughts and outbound messages.
+                            # pulse_input = raw sensory data, system events, executive decisions (noise)
+                            # pulse_output = the agent's monologue/thoughts (signal)
+                            # helix_outbound = messages the agent sent (signal)
+                            if source not in ("pulse_output", "helix_outbound"):
+                                continue
+
+                            # Include thoughts, memories, and events — skip pure system noise
+                            snap = entry.get("lagrangian", {})
+                            bids = metadata.get("belief_ids", [])
+
+                            memories.append({
+                                "text": content,
+                                "memory_id": entry.get("id", -1),
+                                "lagrangian_snapshot": snap,
+                                "belief_ids": bids if isinstance(bids, list) else []
+                            })
+                            collected += 1
+
+                    logger.info(f"Phase 1: extracted {collected} entries from CognitiveJournal (last 24h)")
+                else:
+                    logger.warning("memory_manager has no accessible CognitiveJournal")
             except Exception as e:
-                logger.error(f"Failed to fetch thought memories from journal: {e}")
-                
+                logger.error(f"Failed to read CognitiveJournal: {e}")
+
         # 2. Journals (from project root journals directory)
         #    Journals live at ./journals/, not data/journals/
         try:
@@ -612,9 +916,15 @@ class Curator:
         return text
 
     def _extract_beliefs(self, memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Uses the auxiliary LLM to extract beliefs from raw memories."""
+        """Uses the auxiliary LLM to extract beliefs from raw memories.
+
+        Batches memories into groups to minimize API calls. Each batch is
+        sent as a single prompt with numbered entries, and the LLM returns
+        beliefs for the entire batch.
+        """
         extracted = []
-        
+        BATCH_SIZE = 15  # ~15 memories per call balances context vs. call count
+
         # This prompt enforces the belief_format_spec.md
         system_prompt = """
         You are the Curator. Extract durable beliefs from the provided memories.
@@ -626,29 +936,64 @@ class Curator:
            - premises: Foundational truths, axioms, self-observations, abilities (I am..., I can..., [declarative fact])
            - propositions: Learned or derived facts, conditional rules, knowledge about others ([Name]..., If X then Y)
            - preferences: Values, likes, behavioral norms (I want/prefer/value...)
+        5. Skip trivial system logs, sensor readings, and status messages.
+           Only extract genuinely meaningful beliefs worth remembering.
+        6. For each belief, include the source memory index (0-based) in a "src" field.
+        7. Each belief MUST STAND ALONE with zero surrounding context — name the
+           specific person, tool, or project; never "this", "that issue", or
+           "the recent problem". It will be recalled months from now.
+        8. Preserve the original wording where possible — reformat the memory's
+           own phrasing into a belief, do not reinterpret it.
            
-        Output ONLY a raw JSON list: [{"category": "...", "content": "..."}]
+        Output ONLY a raw JSON list: [{"category": "...", "content": "...", "src": 0}]
         No markdown, no code fences, no explanation. Just the JSON array.
+        If no meaningful beliefs can be extracted, return an empty array: []
         """
-        
-        for mem_obj in memories:
+
+        # Chunk memories into batches
+        batches = [memories[i:i + BATCH_SIZE] for i in range(0, len(memories), BATCH_SIZE)]
+        logger.info(f"Phase 2: processing {len(memories)} memories in {len(batches)} batches (batch_size={BATCH_SIZE})")
+
+        for batch_idx, batch in enumerate(batches):
             try:
-                response = self.llm_client.generate(prompt=mem_obj["text"], system_instruction=system_prompt)
+                # Build numbered prompt with all memories in this batch
+                prompt_lines = [f"Extract beliefs from these {len(batch)} memories:\n"]
+                for j, mem_obj in enumerate(batch):
+                    # Truncate very long memories to avoid context overflow
+                    text = mem_obj["text"][:1500]
+                    prompt_lines.append(f"--- Memory {j} ---")
+                    prompt_lines.append(text)
+                prompt_lines.append(f"\n--- End of {len(batch)} memories ---")
+
+                prompt = "\n".join(prompt_lines)
+                response = self.llm_client.generate(prompt=prompt, system_instruction=system_prompt)
                 raw_text = self._strip_code_fences(response.text)
                 parsed = json.loads(raw_text)
-                
+
                 # Attach metadata to each extracted belief
                 for p in parsed:
                     if not isinstance(p, dict):
                         continue
-                    p["memory_refs"] = [mem_obj["memory_id"]] if mem_obj["memory_id"] != -1 else []
-                    p["encoding_lagrangian"] = mem_obj.get("lagrangian_snapshot", {})
-                    p["injected_belief_ids"] = mem_obj.get("belief_ids", [])
-                    
+                    # Map src index back to the original memory in this batch
+                    src_idx = p.pop("src", 0)
+                    if 0 <= src_idx < len(batch):
+                        source_mem = batch[src_idx]
+                    else:
+                        source_mem = batch[0]
+
+                    p["memory_refs"] = [source_mem["memory_id"]] if source_mem["memory_id"] != -1 else []
+                    p["encoding_lagrangian"] = source_mem.get("lagrangian_snapshot", {})
+                    p["injected_belief_ids"] = source_mem.get("belief_ids", [])
+
                 extracted.extend([p for p in parsed if isinstance(p, dict)])
+                logger.info(f"Phase 2: batch {batch_idx + 1}/{len(batches)} → {len(parsed)} beliefs")
+
+            except json.JSONDecodeError as e:
+                logger.warning(f"Phase 2: batch {batch_idx + 1} JSON parse failed: {e}")
             except Exception as e:
-                logger.error(f"Extraction failed for memory: {e}")
-                
+                logger.error(f"Phase 2: batch {batch_idx + 1} extraction failed: {e}")
+
+        logger.info(f"Phase 2: total {len(extracted)} beliefs extracted from {len(memories)} memories")
         return extracted
 
     def _synthesize_from_clusters(self) -> List[Dict[str, Any]]:

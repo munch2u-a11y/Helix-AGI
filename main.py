@@ -43,14 +43,6 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-# ── Crash Reporter Setup ─────────────────────────────────────────────
-from core.crash_reporter import check_unclean_shutdown, setup_crash_reporter, clear_session_marker
-try:
-    check_unclean_shutdown()
-    setup_crash_reporter()
-except Exception as cre:
-    logging.getLogger("helix.main").warning(f"Failed to initialize crash reporter: {cre}")
-
 
 def _load_credentials():
     """Load API keys from ~/.config/helix/credentials.env into os.environ.
@@ -107,9 +99,10 @@ from core.physics_engine import PhysicsEngine
 from core.preconscious import Preconscious
 from core.scratchpad import Scratchpad
 from core.pulse_loop import PulseLoop
+from core.dual_pulse_loop import DualPulseLoop
 from llm.orchestrator import LLMOrchestrator
 from llm.background_daemon import BackgroundDaemon
-from llm.providers.base import detect_available_provider
+from llm.providers.base import detect_available_provider, ProviderConfig
 from tools.tool_executor import ToolExecutor
 from tools.channel_router import ChannelRouter
 from comms.telegram_bot import HelixTelegramBot
@@ -134,6 +127,27 @@ def setup_helix(data_dir: str = "data"):
     """Initialize the complete Helix cognitive architecture."""
     print("Initializing Helix Architecture...")
 
+    # Load configuration
+    import json as _json
+    global _cfg
+    _cfg = {}
+    try:
+        with open("config/config.json", "r") as _f:
+            _cfg = _json.load(_f)
+    except Exception:
+        pass
+
+    # Set vision provider environment variables before SensoryCortex is instantiated
+    pulse_mode = _cfg.get("pulse_mode", "standard")
+    local_type = _cfg.get("local_provider", "ollama").lower()
+    vision_provider = _cfg.get("vision_provider", "local").lower()
+    if pulse_mode == "dual" and local_type == "ollama":
+        vision_provider = "gemini"
+    vision_model = _cfg.get("vision_model", "gemini-2.5-flash").strip()
+
+    os.environ["HELIX_VISION_PROVIDER"] = vision_provider
+    os.environ["HELIX_VISION_MODEL"] = vision_model
+
     # ── 1. Memory Systems ────────────────────────────────────────────
 
     memory_manager = MemoryManager(os.path.join(data_dir, "memory"))
@@ -150,7 +164,6 @@ def setup_helix(data_dir: str = "data"):
     spatial_dir = os.path.join(data_dir, "spatial")
     physics = PhysicsEngine(data_dir=spatial_dir)
     memory_manager.set_physics(physics)
-    belief_store.set_runtime(physics_engine=physics, memory_manager=memory_manager)
     print(f"  Spatial: pulse={physics._pulse_count}, γ={physics._gamma:.2f}")
     print(f"  SemanticIndex: {physics.semantic_index.count} vectors ({physics.semantic_index.get_stats()['search_strategy']})")
 
@@ -182,6 +195,20 @@ def setup_helix(data_dir: str = "data"):
     tool_executor = ToolExecutor(channel_router=channel_router)
     tool_executor.memory_manager = memory_manager
     tool_executor.scratchpad = scratchpad
+
+    # Tool learning: failure capture + lesson verification loop, and
+    # learned notes compiled into tool descriptions by the nightly Curator
+    from core.tool_lesson_tracker import set_dependencies as set_lesson_deps
+    set_lesson_deps(belief_store, physics_engine=physics)
+    try:
+        from tools.tool_registry import registry as _registry
+        n_notes = _registry.load_learned_notes(
+            os.path.join(data_dir, "tool_learned_notes.json")
+        )
+        if n_notes:
+            print(f"  Tool notes: {n_notes} tools carry learned notes")
+    except Exception as e:
+        print(f"  Tool notes: load failed ({e})")
     
     # Sensory Cortex (Passive Background Vision/Audio)
     sensory_cortex = SensoryCortex(camera_device=0)
@@ -209,6 +236,9 @@ def setup_helix(data_dir: str = "data"):
     )
 
     # ── 5. LLM Provider Detection ────────────────────────────────
+    # _cfg is already loaded at the start of setup_helix()
+    pulse_mode = _cfg.get("pulse_mode", "standard")
+
     provider_config = detect_available_provider()
     if provider_config:
         print(f"  Provider: {provider_config.provider_type} ({provider_config.model})")
@@ -217,21 +247,131 @@ def setup_helix(data_dir: str = "data"):
 
     # ── 6. Pulse Loop ────────────────────────────────────────────
     journal_dir = "journals"
-    pulse_loop = PulseLoop(
-        memory_manager=memory_manager,
-        belief_store=belief_store,
-        physics_engine=physics,
-        preconscious=preconscious,
-        scratchpad=scratchpad,
-        tool_executor=tool_executor,
-        channel_router=channel_router,
-        provider_config=provider_config,
-        journal_dir=journal_dir,
-        thought_callback=on_thought,
-        delivery_callback=on_delivery,
-        sentinel=sentinel,
-        sensory_cortex=sensory_cortex,
-    )
+
+    if pulse_mode == "dual":
+        # ── Dual-Consciousness Mode ─────────────────────────────
+        # Detect local provider (Ollama or llama_cpp) for the reasoner
+        # and API provider (Gemini or Anthropic) for the actuator.
+        local_provider = None
+        api_provider = None
+
+        # Local provider: prefer explicit HELIX_LOCAL_MODEL env var
+        local_model = os.environ.get("HELIX_LOCAL_MODEL", _cfg.get("local_model", "")).strip()
+        local_type = os.environ.get("HELIX_LOCAL_PROVIDER", _cfg.get("local_provider", "ollama")).lower()
+        local_ctx = int(_cfg.get("local_context_window", 8192))
+
+        if local_type == "ollama":
+            local_model = local_model or "granite4.1:3b"
+            local_provider = ProviderConfig(
+                provider_type="ollama",
+                model=local_model,
+                context_window=local_ctx,
+                temperature=0.8,
+                max_output_tokens=2048,
+                options={"num_ctx": local_ctx},
+            )
+        elif local_type == "llama_cpp":
+            if not local_model:
+                from pathlib import Path as _Path
+                _ggufs = list(_Path("models").glob("*.gguf")) if _Path("models").exists() else []
+                local_model = str(_ggufs[0]) if _ggufs else ""
+            if local_model:
+                local_provider = ProviderConfig(
+                    provider_type="llama_cpp",
+                    model=local_model,
+                    context_window=local_ctx,
+                    temperature=0.8,
+                    max_output_tokens=2048,
+                    options={"n_gpu_layers": -1},
+                )
+
+        # API provider: auto-detect (Gemini key or Anthropic key)
+        gemini_key = os.environ.get("GEMINI_API_KEY", "")
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        api_model = os.environ.get("HELIX_API_MODEL", _cfg.get("api_model", "")).strip()
+
+        if gemini_key:
+            api_provider = ProviderConfig(
+                provider_type="gemini",
+                model=api_model or "gemini-2.5-flash",
+                context_window=1_000_000,
+                temperature=0.8,
+                max_output_tokens=8192,
+            )
+        elif anthropic_key:
+            api_provider = ProviderConfig(
+                provider_type="anthropic",
+                model=api_model or "claude-fable-5",
+                context_window=1_000_000,
+                temperature=0.8,
+                max_output_tokens=16384,
+            )
+
+        if local_provider and api_provider:
+            # Guard vision conflict: if local reasoner uses Ollama,
+            # force vision to use Gemini API instead to avoid contention.
+            if local_provider.provider_type == "ollama":
+                os.environ.setdefault("HELIX_VISION_PROVIDER", "gemini")
+                print(f"  Vision: routed to Gemini API (local reasoner uses Ollama)")
+
+            print(f"  Pulse mode: DUAL")
+            print(f"    Local Reasoner: {local_provider.provider_type} ({local_provider.model}, ctx={local_provider.context_window})")
+            print(f"    API Actuator:   {api_provider.provider_type} ({api_provider.model})")
+
+            pulse_loop = DualPulseLoop(
+                memory_manager=memory_manager,
+                belief_store=belief_store,
+                physics_engine=physics,
+                preconscious=preconscious,
+                scratchpad=scratchpad,
+                tool_executor=tool_executor,
+                channel_router=channel_router,
+                local_provider_config=local_provider,
+                api_provider_config=api_provider,
+                journal_dir=journal_dir,
+                thought_callback=on_thought,
+                delivery_callback=on_delivery,
+                sentinel=sentinel,
+                sensory_cortex=sensory_cortex,
+            )
+        else:
+            print(f"  ⚠ Dual mode requested but missing providers:")
+            print(f"    Local: {'✓' if local_provider else '✗ (set HELIX_LOCAL_MODEL or local_model in config)'}")
+            print(f"    API:   {'✓' if api_provider else '✗ (set GEMINI_API_KEY or ANTHROPIC_API_KEY)'}")
+            print(f"  Falling back to standard pulse mode.")
+            pulse_loop = PulseLoop(
+                memory_manager=memory_manager,
+                belief_store=belief_store,
+                physics_engine=physics,
+                preconscious=preconscious,
+                scratchpad=scratchpad,
+                tool_executor=tool_executor,
+                channel_router=channel_router,
+                provider_config=provider_config,
+                journal_dir=journal_dir,
+                thought_callback=on_thought,
+                delivery_callback=on_delivery,
+                sentinel=sentinel,
+                sensory_cortex=sensory_cortex,
+            )
+    else:
+        # ── Standard Pulse Mode ─────────────────────────────────
+        print(f"  Pulse mode: standard")
+        pulse_loop = PulseLoop(
+            memory_manager=memory_manager,
+            belief_store=belief_store,
+            physics_engine=physics,
+            preconscious=preconscious,
+            scratchpad=scratchpad,
+            tool_executor=tool_executor,
+            channel_router=channel_router,
+            provider_config=provider_config,
+            journal_dir=journal_dir,
+            thought_callback=on_thought,
+            delivery_callback=on_delivery,
+            sentinel=sentinel,
+            sensory_cortex=sensory_cortex,
+        )
 
     # Wire telegram to pulse loop for inbound messages
     telegram_bot.set_pulse_loop(pulse_loop)
@@ -282,14 +422,19 @@ def setup_helix(data_dir: str = "data"):
                 config = _types.GenerateContentConfig(
                     system_instruction=system_instruction or None,
                     temperature=0.3,
-                    max_output_tokens=2048,
+                    max_output_tokens=8192,
                 )
                 resp = _curator_client.models.generate_content(
                     model=self._model,
                     contents=[_types.Content(role="user", parts=[_types.Part(text=prompt)])],
                     config=config,
                 )
-                return resp.candidates[0].content.parts[0]
+                # Return the full response: .text concatenates ALL text
+                # parts. Returning parts[0] handed the Curator only the
+                # first part of a multi-part (thinking-model) response,
+                # so every Phase 2 batch failed JSON parsing on
+                # truncated output.
+                return resp
 
         curator_llm = _CuratorLLM()
         print("  Curator LLM: ready (gemini-2.5-flash)")
@@ -311,17 +456,8 @@ def setup_helix(data_dir: str = "data"):
 
     # ── 7b. GGUF Manager (Micro-Models) ──────────────────────────────
     from core.gguf_manager import GGUFManager
-    models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
-    gguf_manager = GGUFManager(models_dir=models_dir)
-    micro_model = "granite-4.1-3b-Q4_K_M.gguf"
-    if os.path.exists(os.path.join(models_dir, micro_model)):
-        gguf_manager.load_model("fast_classifier", micro_model, n_ctx=2048)
-    else:
-        import logging
-        logging.getLogger("helix.main").info(
-            f"Micro-model {micro_model} not found in models/ directory. "
-            f"Will use auxiliary LLM fallback for fast classification."
-        )
+    gguf_manager = GGUFManager(models_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "models"))
+    gguf_manager.load_model("fast_classifier", "granite-4.1-3b-Q4_K_M.gguf", n_ctx=8192)
 
     # ── 8. Post-Pulse Hooks (Subconscious Background Tasks) ──────────
     from core.post_pulse_hooks import register_hook
@@ -444,13 +580,19 @@ def main_loop():
                     print(f"[Beliefs] {beliefs.get_stats()}")
                     continue
                 elif user_input.lower() == "core":
-                    core_mems = memory.get_core_memories(limit=10)
+                    # High-importance memories from the journal (the
+                    # refactored MemoryManager has no get_core_memories)
+                    recent = memory.get_recent(limit=200)
+                    core_mems = [
+                        m for m in recent
+                        if (m.get("importance") or 0) >= 0.7
+                    ][:10]
                     if core_mems:
                         print("[Core Memories]")
                         for m in core_mems:
-                            print(f"  [{m['created_at']}] (x{m['access_count']}) {m['content'][:100]}")
+                            print(f"  [{m['created_at']}] (imp={m.get('importance', 0):.2f}) {m['content'][:100]}")
                     else:
-                        print("[Core] None yet — promotes after 2+ accesses or importance >= 0.7")
+                        print("[Core] None yet — stored with importance >= 0.7")
                     continue
                 elif user_input.lower() == "recent":
                     recent = memory.get_recent(limit=8)
@@ -507,7 +649,6 @@ def main_loop():
                 break
 
     pulse_loop.stop()
-    clear_session_marker()
     print("\nHelix offline.")
 
 

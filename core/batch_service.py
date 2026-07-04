@@ -26,6 +26,7 @@ Zero-blocking. CPU-minimal. Runs overnight.
 import json
 import os
 import logging
+import re
 import uuid
 import time
 from pathlib import Path
@@ -67,6 +68,14 @@ _FORMAT_SPEC = (
     "- First-person voice — beliefs are held BY the system\n"
     "- Must be DURABLE — true tomorrow, not a description of what happened once\n"
     "- No meta-references — no 'Stated directly:', no 'From the memory:', etc.\n"
+    "- MUST STAND ALONE — the belief will be recalled months from now with "
+    "zero surrounding context. Name the specific person, tool, project, or "
+    "event involved. Never 'this', 'that issue', 'the recent problem', "
+    "'the fix' — a reader who wasn't there must understand it fully.\n"
+    "- PRESERVE THE ORIGINAL WORDING wherever possible — you are "
+    "reformatting the system's own realization, not reinterpreting it. "
+    "Keep its phrasing, metaphors, and word choices intact when they fit "
+    "the format.\n"
     "- IMPLIED FOUNDATIONS — state the REALIZATION, not the premises. Do not "
     "restate things like 'I am an AI' or 'As a cognitive system' — those are "
     "already known. State the novel insight directly.\n\n"
@@ -163,10 +172,47 @@ def _extract_beliefs_from_thought(thought_text: str) -> List[str]:
     return beliefs
 
 
+# ── Tool Binding Inference ───────────────────────────────────────────
+# Conservative, high-precision: explicit tool function names, or a
+# toolset word appearing in clear tool context. Bound beliefs become
+# reachable through the preconscious tool express lane.
+
+_TOOL_NAMES = [
+    "run_command", "read_file", "write_file", "append_file", "read_url",
+    "web_search", "email_send", "email_get", "email_read", "email_reply",
+    "moltbook_post", "moltbook_comment", "moltbook_notifications",
+    "moltbook_read_feed", "memory_recall", "send_message", "verbalize",
+    "enable_toolset", "disable_toolset",
+]
+_TOOLSET_WORDS = ["terminal", "email", "moltbook", "browser", "github", "calendar"]
+_TOOL_CONTEXT_RE = re.compile(
+    r"\b(tool|command|flag|api|call|returns?|fails?|error|output)\b", re.I,
+)
+
+
+def _infer_tool_bindings(text: str) -> list:
+    """Infer tool_bindings from belief text (max 2, precision first)."""
+    bindings = [t for t in _TOOL_NAMES
+                if re.search(r"\b" + re.escape(t) + r"\b", text)]
+    if not bindings and _TOOL_CONTEXT_RE.search(text):
+        bindings = [w for w in _TOOLSET_WORDS
+                    if re.search(r"\b" + w + r"\b", text, re.I)]
+    return bindings[:2]
+
+
 # ── FAISS Duplicate Detection ───────────────────────────────────────
 
 FAISS_VERIFICATION_THRESHOLD = 0.90  # Above → verification (bump existing)
 FAISS_DUPLICATE_THRESHOLD = 0.85     # Above → too similar, skip
+
+# Genericity: mean cosine to the nearest 10 existing beliefs. A belief
+# close to EVERYTHING ("I am learning and growing") is retrieval
+# wallpaper — it surfaces constantly and informs nothing. It still gets
+# written; it just starts with less confidence and must earn mass
+# through verification like everything else.
+GENERICITY_K = 10
+GENERICITY_THRESHOLD = 0.62
+GENERICITY_CONFIDENCE = 0.4   # instead of the default 0.5
 
 
 def _faiss_dedup(
@@ -243,9 +289,13 @@ def _faiss_dedup(
             emb = emb / np.linalg.norm(emb)
             emb = emb.reshape(1, -1).astype(np.float32)
 
-            scores, indices = index.search(emb, 1)
+            k = min(GENERICITY_K, index.ntotal)
+            scores, indices = index.search(emb, k)
             best_score = float(scores[0][0])
             best_idx = int(indices[0][0])
+            # Mean similarity to the nearest K — high means "close to
+            # everything", i.e. a generic statement (see GENERICITY_*).
+            candidate["_genericity"] = float(scores[0].mean())
 
             if best_score > FAISS_VERIFICATION_THRESHOLD:
                 matched_id = existing_ids[best_idx]
@@ -494,100 +544,6 @@ def _validate_belief(text: str, category: str) -> Tuple[bool, str]:
     return True, "ok"
 
 
-# ── Dynamic Initial Confidence ──────────────────────────────────────
-
-def _compute_dynamic_initial_confidence(
-    candidate: dict,
-    belief_store,
-    physics_engine=None,
-    memories_by_id: dict = None,
-) -> float:
-    """Compute a granular initial confidence from source trust + epistemic support.
-
-    Two components, weighted 40/60:
-
-      T_source (40%) — How trustworthy is the source context?
-        - Base: memory importance from the originating memory entry
-        - Bonus: +0.1 for thought-source (internal monologue, higher signal)
-
-      C_support (60%) — How much existing knowledge supports this belief?
-        - Ancestor beliefs: confidence of beliefs that were active when
-          this belief was detected (via injected_belief_ids provenance chain)
-        - Semantic support: similarity to existing propositions/premises
-          (via PhysicsEngine.semantic_search, threshold 0.70)
-
-    Falls back to 0.44 (slightly below neutral) if no supporting evidence.
-
-    Args:
-        candidate: Extracted belief candidate dict.
-        belief_store: BeliefStore instance for looking up ancestor beliefs.
-        physics_engine: PhysicsEngine for semantic similarity search.
-        memories_by_id: Dict mapping memory IDs to memory entries (for importance).
-
-    Returns:
-        Float 0.01-1.0, rounded to 3 decimal places.
-    """
-    memories_by_id = memories_by_id or {}
-
-    # ── Source Trust (T_source) ───────────────────────────────────
-    memory_refs = candidate.get("memory_refs", [])
-    source_importances = []
-    for ref in memory_refs:
-        mem = memories_by_id.get(ref) or memories_by_id.get(str(ref))
-        if mem:
-            source_importances.append(float(mem.get("importance", 0.5)))
-
-    if source_importances:
-        T_source = sum(source_importances) / len(source_importances)
-    else:
-        T_source = 0.5  # Neutral default
-
-    # Bonus for thought-sourced beliefs (internal monologue = higher signal)
-    source_type = candidate.get("source", candidate.get("_source_tag_id", ""))
-    if "thought" in str(source_type).lower():
-        T_source = min(1.0, T_source + 0.1)
-
-    # ── Epistemic Support (C_support) ────────────────────────────
-    support_confidences = []
-    support_weights = []
-
-    # 1. Ancestor belief support (provenance chain)
-    injected_ids = candidate.get("injected_belief_ids", [])
-    for bid in injected_ids:
-        ancestor = belief_store.get_belief(bid)
-        if ancestor:
-            ancestor_conf = float(ancestor.get("confidence", 0.5))
-            support_confidences.append(ancestor_conf)
-            support_weights.append(0.8)  # Strong support signal
-
-    # 2. Semantic similarity to existing propositions/premises
-    content_text = candidate.get("content", "")
-    if physics_engine and content_text:
-        try:
-            results = physics_engine.semantic_search(
-                query_text=content_text,
-                k=5,
-                filter_fn=lambda vid, meta: any(vid.startswith(prefix) for prefix in ("premises", "propositions", "preferences"))
-            )
-            for r in results:
-                similarity = float(r.get("similarity", 0.0))
-                if similarity >= 0.70:
-                    b = belief_store.get_belief(r["id"])
-                    if b:
-                        support_confidences.append(float(b.get("confidence", 0.5)))
-                        support_weights.append(similarity ** 2)
-        except Exception as e:
-            logger.debug(f"Epistemic semantic support lookup failed: {e}")
-
-    if support_confidences and sum(support_weights) > 0:
-        C_support = sum(c * w for c, w in zip(support_confidences, support_weights)) / sum(support_weights)
-    else:
-        C_support = 0.40
-
-    C_initial = 0.6 * C_support + 0.4 * T_source
-    return max(0.01, min(1.0, round(C_initial, 3)))
-
-
 # ── Main Processing Pipeline ────────────────────────────────────────
 
 def process_pending_beliefs(
@@ -621,24 +577,6 @@ def process_pending_beliefs(
         return {"status": "empty", "processed": 0}
 
     logger.info(f"Processing {len(candidates)} pending belief candidates")
-
-    # Load memories from journal to resolve references for confidence computation
-    memories_by_id = {}
-    for path_str in ["data/memory/cognitive_journal.jsonl", "data/cognitive_journal.jsonl"]:
-        journal_path = Path(path_str)
-        if journal_path.exists():
-            try:
-                with open(journal_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        try:
-                            entry = json.loads(line)
-                            if entry.get("type") == "memory":
-                                memories_by_id[entry["id"]] = entry
-                        except Exception:
-                            pass
-                break
-            except Exception as e:
-                logger.warning(f"Failed to read journal at {path_str}: {e}")
 
     stats = {
         "started_at": datetime.now().isoformat(),
@@ -688,7 +626,7 @@ def process_pending_beliefs(
                         "encoding_delta": c.get("encoding_delta", {}),
                         "encoding_lagrangian": c.get("encoding_lagrangian", {}),
                         "stability_index": c.get("stability_index", None),
-                        "injected_belief_ids": c.get("injected_belief_ids", []),
+                        "tool_bindings": c.get("tool_bindings", []),
                     })
                 stats["extracted"] += len(beliefs)
                 c["status"] = "extracted"
@@ -724,9 +662,19 @@ def process_pending_beliefs(
             belief = belief_store.get_belief(matched_id)
             if belief:
                 current_v = belief.get("verifications", 1.0)
-                belief_store.update_belief(
-                    matched_id, verifications=current_v + 1.0,
-                )
+                updates = {"verifications": current_v + 1.0}
+                # A repeated tool failure matching an existing lesson
+                # transfers its bindings — the lesson becomes reachable
+                # through the tool express lane even if the original
+                # belief predates binding capture.
+                cand_bindings = v.get("candidate", {}).get("tool_bindings", [])
+                if cand_bindings:
+                    merged = list(belief.get("tool_bindings", []) or [])
+                    for tb in cand_bindings:
+                        if tb and tb not in merged:
+                            merged.append(tb)
+                    updates["tool_bindings"] = merged
+                belief_store.update_belief(matched_id, **updates)
             stats["faiss_verifications"] += 1
         except Exception as e:
             logger.debug("Verification bump failed for %s: %s", matched_id, e)
@@ -845,21 +793,39 @@ def process_pending_beliefs(
                     if stability_index is None:
                         stability_index = omega_val
 
-                    confidence = _compute_dynamic_initial_confidence(
-                        original, belief_store, physics_engine, memories_by_id,
-                    )
+                    add_kwargs = {}
+                    if original.get("tool_bindings"):
+                        add_kwargs["tool_bindings"] = original["tool_bindings"]
+                    else:
+                        inferred = _infer_tool_bindings(belief_text)
+                        if inferred:
+                            add_kwargs["tool_bindings"] = inferred
+                    if original.get("source_type") == "tool_failure":
+                        add_kwargs["formation_type"] = "tool_failure_lesson"
+
+                    # Generic statements start with less confidence and
+                    # must earn mass through verification (see GENERICITY_*)
+                    initial_confidence = 0.5
+                    genericity = original.get("_genericity", 0.0)
+                    if genericity > GENERICITY_THRESHOLD:
+                        initial_confidence = GENERICITY_CONFIDENCE
+                        logger.info(
+                            "Generic belief demoted (g=%.2f): %s",
+                            genericity, belief_text[:60],
+                        )
 
                     stored = belief_store.add_belief(
                         category=cat,
                         belief_id=belief_id,
                         content=belief_text,
                         mass=1.0,
-                        confidence=confidence,
+                        confidence=initial_confidence,
                         source="belief_detector_"
                                + datetime.now().strftime("%Y-%m-%d"),
                         stability_index=stability_index,
                         encoding_lagrangian=encoding_lag,
                         memory_refs=original.get("memory_refs", []),
+                        **add_kwargs,
                     )
 
                     if stored:
@@ -875,6 +841,47 @@ def process_pending_beliefs(
                                 )
                             except Exception:
                                 pass
+
+                        # Give the belief a position and register it in
+                        # the live 8D manifold + 384D semantic index.
+                        # Previously new beliefs existed only in the
+                        # JSON store: no position_8d, invisible to the
+                        # spatial mind, and (because bootstrap skipped
+                        # populated spaces) they never entered the
+                        # manifold on later boots either.
+                        if physics_engine:
+                            try:
+                                emb = physics_engine.embed_text(belief_text)
+                                pos = physics_engine.embed_and_project(belief_text)
+                                belief_store.update_belief(
+                                    belief_id,
+                                    position_8d=[round(float(x), 6) for x in pos],
+                                )
+                                physics_engine._register_point(
+                                    point_id=belief_id,
+                                    emb=emb,
+                                    point_type="belief",
+                                    spatial_kwargs={
+                                        "confidence": initial_confidence,
+                                        "importance": 1.0,
+                                        "content": belief_text,
+                                        "encoding_omega": encoding_lag.get("omega", 0.5),
+                                        "encoding_s_total": encoding_lag.get("s_total", 0.15),
+                                        "stability_index": stability_index,
+                                    },
+                                    semantic_metadata={
+                                        "content": belief_text[:500],
+                                        "type": "belief",
+                                        "confidence": initial_confidence,
+                                        "importance": 1.0,
+                                        "category": cat,
+                                    },
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    "Manifold registration failed for %s: %s",
+                                    belief_id, e,
+                                )
 
                         stats["beliefs_written"] += 1
                         logger.info(f"✨ [{cat}] {belief_text}")

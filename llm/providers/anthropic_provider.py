@@ -260,6 +260,12 @@ class AnthropicSession(ChatSession):
                     f"{result_str[:500] if result_str else '(empty)'}"
                 )
 
+                # Cap oversized results — same guard as the Gemini
+                # provider (a single giant file read must not inject
+                # hundreds of thousands of tokens into history).
+                from llm.providers.gemini_provider import _cap_tool_result
+                result_str = _cap_tool_result(result_str)
+
                 # Queue tool_result for the next user message
                 self._pending_tool_result_blocks.append({
                     "type": "tool_result",

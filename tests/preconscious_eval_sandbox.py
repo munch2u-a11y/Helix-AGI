@@ -248,7 +248,7 @@ def run_evaluation(state_bench_path, num_tasks_per_domain, save_path=None):
                 physics_engine=physics,
                 scratchpad=scratchpad,
                 channel_router=MockChannelRouter(),
-                active_toolsets={"core"}
+                active_toolsets={"operational"}
             )
             
             # Identify other tasks to seed as historical memory
@@ -334,11 +334,14 @@ def run_evaluation(state_bench_path, num_tasks_per_domain, save_path=None):
                 
                 # ── Mode A: Conceptual Gravity ──
                 t0 = time.perf_counter()
-                grav_context, surfaced_ids, cluster_centroid = preconscious.inject(
+                annotations, ambient, surfaced_ids, cluster_centroid = preconscious.inject(
                     previous_thought=prev_thought,
                     incoming_events=events,
                     trigger_type=trigger_type
                 )
+                grav_context = "\n".join(annotations)
+                if ambient:
+                    grav_context += f"\n{ambient}"
                 grav_latency = (time.perf_counter() - t0) * 1000.0
                 
                 # Advance spatial physics
@@ -360,6 +363,13 @@ def run_evaluation(state_bench_path, num_tasks_per_domain, save_path=None):
                 for sid in surfaced_ids:
                     matching_other = next((t for t in all_other_tasks if f"mem_{t['task_id']}" == sid), None)
                     if matching_other:
+                        surfaced_task_types.append(matching_other["task_type"])
+                
+                # Also include memory points retrieved in the spatial neighborhood query
+                for n in getattr(preconscious, "_last_neighbors", []):
+                    pid = n.get("point_id")
+                    matching_other = next((t for t in all_other_tasks if f"mem_{t['task_id']}" == pid), None)
+                    if matching_other and matching_other["task_type"] not in surfaced_task_types:
                         surfaced_task_types.append(matching_other["task_type"])
                 
                 # Calculate metrics for turn
@@ -447,7 +457,7 @@ def main():
     parser.add_argument(
         "--state-bench-path",
         type=str,
-        default="/home/nemo/state_bench",
+        default="state_bench",
         help="Path to cloned STATE-Bench repo"
     )
     parser.add_argument(

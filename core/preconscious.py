@@ -1,21 +1,21 @@
 """
-Helix — Preconscious System (Concept-Based Spatial Memory Query)
+Helix — Preconscious System (Concept-Based Spatial-Gravitational Memory Query)
 
 The preconscious is the bridge between the spatial mind and the
-conscious LLM. On every pulse, it queries the 8D spatial index
-and returns a contextually relevant "net" of memories, beliefs,
-and state — NOT keyword matches, but the proximity-scored
+conscious LLM. On every pulse, it queries the 8D gravitational
+field and returns a contextually relevant "net" of memories,
+beliefs, and state — NOT keyword matches, but the gravitational
 neighborhood around the current focus.
 
 How it works:
   1. Takes the trigger text (last thought + incoming events)
   2. Extracts 1-5 key concepts via RAKE-style keyphrase extraction
   3. Embeds each concept independently into 8D cognitive space
-  4. Runs independent proximity queries centered on each concept:
-     - Nearby beliefs scored by mass × recency_heat / distance²
+  4. Runs independent gravity queries centered on each concept:
+     - Nearby beliefs scored by mass × temperature / distance²
      - No overlap between concept clusters (rolling blacklist)
   5. Pulls Layer 2 anchor matches, scratchpad, and contact context
-  6. Formats everything as natural language awareness context
+  6. Formats everything as natural language "peripheral awareness"
 
 The conscious model receives this each pulse as its grounding.
 Identity, knowledge, and context emerge from actual recalled
@@ -32,10 +32,13 @@ import re
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 
+import numpy as np
+
 from memory.memory_manager import MemoryManager
 from memory.belief_store import BeliefStore
 from core.physics_engine import PhysicsEngine
 from core.concept_extractor import ConceptExtractor
+from core.local_summarizer import LocalSummarizer
 
 logger = logging.getLogger("helix.core.preconscious")
 
@@ -51,25 +54,30 @@ class Preconscious:
     # Neighborhood range — dynamically selected per-pulse based on
     # manifold density. The existing TARGET_BUDGET in
     # _pull_spatial_neighborhood still acts as the hard token cap.
-    NEIGHBORHOOD_K_MIN = 4
-    NEIGHBORHOOD_K_MAX = 16
+    NEIGHBORHOOD_K_MIN = 1
+    NEIGHBORHOOD_K_MAX = 2
     # How many temporal chain entries per matched memory
-    CHAIN_WINDOW = 3
+    CHAIN_WINDOW = 2
     # Max beliefs per category to inject
-    BELIEFS_PER_CATEGORY = 3
+    BELIEFS_PER_CATEGORY = 2
 
     # Short tool keywords that should always trigger toolset awareness
     # despite being <= 3 chars (bypasses the length filter)
     SHORT_TOOL_WHITELIST = {"git", "ssh", "pip", "npm", "sql", "api", "web", "rss", "cli"}
 
     # Gravity-ranked belief injection parameters (replaces fixed token budgets)
-    MAX_BELIEFS_PER_QUERY = 15   # Hard cap per seed query (pre-filter)
-    MIN_BELIEFS_PER_QUERY = 2    # Always include at least the top N
+    MAX_BELIEFS_PER_QUERY = 8    # Hard cap per seed query (pre-filter)
+    MIN_GRAVITY = 0.5            # Beliefs below this gravity are never injected
+
+    # How many Layer 2 facets of one entity to inject per anchor match.
+    # Entities accumulate multiple profiles; showing the top facets by
+    # mass gives a rounded picture instead of one arbitrary fragment.
+    LEXICON_FACETS_PER_TERM = 2
 
     # Dynamic focus budget tiers (total_budget, max_skills)
-    FOCUS_BUDGET_DEEP = (2, 2)    # 3+ focus tools in last 3 pulses
-    FOCUS_BUDGET_WORKING = (5, 2) # 1-2 focus tools in last 3 pulses
-    FOCUS_BUDGET_OPEN = (10, 3)   # No recent focus tools
+    FOCUS_BUDGET_DEEP = (1, 1)    # 3+ focus tools in last 3 pulses
+    FOCUS_BUDGET_WORKING = (2, 1) # 1-2 focus tools in last 3 pulses
+    FOCUS_BUDGET_OPEN = (3, 2)   # No recent focus tools
     INJECTION_HISTORY_LIMIT = 120
 
     def __init__(
@@ -105,6 +113,36 @@ class Preconscious:
         # to avoid repeating the same beliefs in consecutive pulses.
         self._prev_pulse_beliefs = []  # list of sets, each containing content strings from previous pulses
 
+        # Concept-level blacklist — prevents the same concept from
+        # triggering repeated searches within a short window.
+        # Maps concept_hash → pulse_number when last searched.
+        self._concept_blacklist: Dict[int, int] = {}
+        self._concept_cooldown = 5  # pulses before a concept can be re-searched
+        self._pulse_number = 0      # incremented on each inject() call
+
+        # Memory-injection blacklist — mirrors the concept blacklist for
+        # the spatial neighborhood. Without it the same memory could be
+        # re-injected every pulse, echoing recent thoughts back into the
+        # context (the primary looping mechanism).
+        self._memory_blacklist: Dict[int, int] = {}
+        self._memory_cooldown = 5   # pulses before a memory can re-inject
+
+        # Hebbian position plasticity — co-injected beliefs drift toward
+        # each other so new relations can form as geometry, not just
+        # relation counts. Nudged cache positions are flushed to the
+        # belief store periodically so plasticity survives restarts.
+        self._hebbian_dirty: Dict[str, Any] = {}  # belief_id → np position
+        self._hebbian_flush_interval = 25         # pulses between flushes
+        self.HEBBIAN_RATE = 0.02       # fraction of distance-to-centroid per co-injection
+        self.HEBBIAN_MAX_STEP = 0.01   # absolute cap per nudge (manifold radius ~0.2)
+        self.HEBBIAN_MIN_DIST = 0.05   # don't pull closer than this (no collapse)
+
+        # Tool Express Lane tracking — prevents the same tool-use belief
+        # from being repeated too quickly.
+        self._tool_belief_blacklist: Dict[int, int] = {}
+        self._tool_cooldown = 3     # shorter cooldown for operationally critical beliefs
+        self._tool_binding_cache: Dict[str, List[int]] = {}  # tool_name -> list of cache indices
+
         # Tool usage history — rolling window of tool names per pulse.
         # Used by _compute_focus_budget() to dynamically narrow/widen
         # the belief injection budget during concentrated tool work.
@@ -124,7 +162,12 @@ class Preconscious:
         # people.json, concepts.json, skills.json, desires.json.
         # Scanned every pulse BEFORE the 8D gravity query.
         self._lexicon_lookup: Dict[str, dict] = {}  # term_lower → entry
-        self._lexicon_blacklist: set = set()         # entry IDs already injected this context window
+        # Lexicon cooldown — entry_id → pulse when last injected. A
+        # pulse-based cooldown (not blacklist-until-compression): a
+        # known entity re-encountered later in a long session should
+        # re-anchor, it just shouldn't repeat on consecutive pulses.
+        self._lexicon_blacklist: Dict[str, int] = {}
+        self._lexicon_cooldown = 40  # pulses before an entry can re-inject
         self._load_layer2_anchors()
 
         # Concept extractor — RAKE-style keyphrase extraction.
@@ -138,6 +181,9 @@ class Preconscious:
         self._last_neighbors = []
         self._last_selected_beliefs = []
         self._last_trigger_text = ""
+
+        # Native HF Summarizer
+        self.summarizer = LocalSummarizer()
 
     def _load_layer2_anchors(self):
         """Load Layer 2 beliefs as priority injection anchors.
@@ -167,11 +213,17 @@ class Preconscious:
                     "summary": b.get("content", ""),
                     "category": cat,
                     "aliases": b.get("aliases", []),
+                    "mass": b.get("mass", 1.0),
                 }
-                self._lexicon_lookup[term.lower()] = entry
+                # A term can have MULTIPLE Layer 2 entries (e.g. six
+                # 'Antigravity' profiles across people + concepts).
+                # Keep them ALL — the old single-slot dict silently
+                # clobbered every entry but the last one read, so the
+                # agent only ever saw one facet of a known entity.
+                self._lexicon_lookup.setdefault(term.lower(), []).append(entry)
                 for alias in b.get("aliases", []):
                     if alias:
-                        self._lexicon_lookup[alias.lower()] = entry
+                        self._lexicon_lookup.setdefault(alias.lower(), []).append(entry)
                 total_entries += 1
 
         logger.info(
@@ -250,7 +302,7 @@ class Preconscious:
             else:
                 budget_mult = 1.0
 
-            adjusted_budget = max(2, int(base_budget * budget_mult))
+            adjusted_budget = max(0, int(base_budget * budget_mult))
             return (adjusted_budget, base_skills)
 
         return (base_budget, base_skills)
@@ -262,40 +314,50 @@ class Preconscious:
         previous_thought: str = "",
         incoming_events: Optional[List[str]] = None,
         trigger_type: str = "llm_output",
-    ) -> Tuple[str, List[str]]:
-        """Build the peripheral awareness block for a single pulse.
+        active_toolsets: Optional[set] = None,
+        newly_engaged_toolsets: Optional[set] = None,
+    ) -> Tuple[List[str], str, List[str], Optional[Any]]:
+        """Build inline first-person annotations for a single pulse.
 
         Called once per pulse. Assembles context from multiple layers:
           0. Layer 2 anchors — fast string match for known terms (priority)
           1. Spatial neighborhood — gravitational memory recall
           2. Belief grounding — concept-extracted independent gravity queries
+          2b. Tool Express Lane — targeted tool belief injection on intent/engage
           3. Short-term memory, scratchpad, contact context
           4. Somatic, affect, spatial state
 
-        The belief grounding layer (step 2) extracts 1-5 key concepts
-        from the combined trigger text and runs independent gravity
-        queries centered on each concept's 8D position. This replaces
-        the previous two-seed approach that created artificial midpoints.
+        Returns inline annotations (italic first-person notes) that get
+        woven directly into the event stream, plus ambient state notes.
+        No separate <spatial-awareness> block — beliefs are integrated
+        naturally alongside the information they relate to.
 
         Args:
             previous_thought: The model's last thought output.
             incoming_events: List of incoming event strings, if any.
             trigger_type: "user_message" or "llm_output"
+            active_toolsets: Currently active toolsets in pulse loop.
+            newly_engaged_toolsets: Toolsets engaged this pulse.
 
         Returns:
             Tuple containing:
-              - A natural language string for injection into the pulse message.
-              - A list of belief IDs that were surfaced (for provenance tracking).
-              - An optional 8D numpy array: the weighted centroid of the
-                selected belief clusters (used to steer the spatial mind's
-                attention center toward actual knowledge, not raw text midpoints).
+              - annotations: List of first-person annotation strings to
+                weave into the event stream.
+              - ambient: Brief ambient state note (somatic + affect +
+                spatial) or empty string.
+              - A list of belief IDs that were surfaced (for provenance).
+              - An optional 8D numpy array: the weighted centroid.
         """
+        # Increment pulse counter for concept blacklist tracking
+        self._pulse_number += 1
+
         # Reset injection stats tracking for the current pulse
         self._last_concepts = []
         self._last_neighbors = []
         self._last_selected_beliefs = []
 
-        parts = []
+        annotations = []  # inline first-person annotations
+        ambient_parts = []  # brief ambient state notes
         injected_belief_ids = []
 
         # Build combined trigger for spatial neighborhood query
@@ -323,107 +385,100 @@ class Preconscious:
             trigger_text = ""
         self._last_trigger_text = trigger_text[:500]
 
+        # PERCEPTION TEXT — what the agent is currently reading through
+        # its tools (emails, posts, files). This is the agent's primary
+        # channel of world perception; excluding it from the anchor scan
+        # meant a known entity's name in an email header triggered no
+        # recognition at all — recognition only fired one pulse later
+        # IF the agent happened to repeat the name in its own thought.
+        tool_text = " ".join(tool_events)[:6000] if tool_events else ""
+
         # ── 0. Layer 2 Anchor Match (PRIORITY) ────────────────────────
-        #    Fast string match for Layer 2 terms in the trigger text.
-        #    Matched summaries are injected first — before any 8D query.
-        #    Matched content is tracked so the gravity query skips it.
-        lexicon_block, lexicon_summaries, lexicon_ids = self._pull_lexicon_matches(trigger_text)
+        #    Fast string match for Layer 2 terms in the trigger text
+        #    AND in tool-result content (perception).
+        scan_text = trigger_text
+        if tool_text:
+            scan_text = (scan_text + " " + tool_text) if scan_text else tool_text
+        lexicon_block, lexicon_summaries, lexicon_ids = self._pull_lexicon_matches(scan_text)
         if lexicon_block:
-            parts.append(lexicon_block)
+            annotations.append(lexicon_block)
             injected_belief_ids.extend(lexicon_ids)
 
         # ── 1. Spatial Neighborhood ──────────────────────────────────
         #    What's gravitationally close to the current thought?
-        neighborhood = self._pull_spatial_neighborhood(trigger_text)
-        if neighborhood:
-            parts.append(neighborhood)
+        neighborhood_lines = self._pull_spatial_neighborhood(trigger_text)
+        if neighborhood_lines:
+            annotations.extend(neighborhood_lines)
+
+        # ── 1c. Familiarity Recall (perception → episodic memory) ────
+        #    One narrow query seeded by what's being READ right now.
+        #    This is the "haven't I seen this before?" reflex: reading
+        #    the same email or post again surfaces the earlier episode.
+        if tool_text and primary_parts:
+            familiar = self._pull_familiarity_recall(tool_text)
+            if familiar:
+                annotations.append(familiar)
 
             # ── 1b. Toolset Awareness ────────────────────────────────
-            #    If the neighborhood suggests a domain with unloaded tools,
-            #    whisper about available toolsets.
-            toolset_hint = self._toolset_awareness(neighborhood)
+            toolset_hint = self._toolset_awareness("\n".join(neighborhood_lines))
             if toolset_hint:
-                parts.append(toolset_hint)
+                annotations.append(toolset_hint)
 
         # ── 2. Belief Grounding ──────────────────────────────────────
-        #    Gravity-ranked beliefs pulled by two separate seeds.
-        #    Lexicon summaries are excluded to avoid double-injection.
+        #    Gravity-ranked beliefs pulled by per-concept queries.
+        #    Returns inline first-person annotations per concept cluster.
         beliefs_block, belief_ids = self._pull_relevant_beliefs(
             previous_thought=previous_thought,
             incoming_events=incoming_events,
             lexicon_exclude=lexicon_summaries,
         )
         if beliefs_block:
-            parts.append(beliefs_block)
+            annotations.append(beliefs_block)
             injected_belief_ids.extend(belief_ids)
 
+        # ── 2b. Tool Express Lane ─────────────────────────────────────
+        #    Triggered by tools ACTIVELY in use (result events from the
+        #    current sequence), newly engaged toolsets, and stated
+        #    intent in the monologue or incoming messages. Lessons land
+        #    before the NEXT call in a tool sequence; the first call is
+        #    covered by learned notes compiled into the tool schema.
+        tool_annotations, tool_belief_ids = self._tool_express_lane(
+            active_toolsets=active_toolsets or set(),
+            newly_engaged_toolsets=newly_engaged_toolsets or set(),
+            previous_thought=previous_thought,
+            incoming_events=incoming_events,
+        )
+        if tool_annotations:
+            annotations.extend(tool_annotations)
+            injected_belief_ids.extend(tool_belief_ids)
+
         # ── 3. Short-term Memory ─────────────────────────────────────
-        #    Very recent events (last 3, ~10 min) for continuity.
         recent = self._pull_recent_memory()
         if recent:
-            parts.append(recent)
+            annotations.append(recent)
 
         # ── 4. Scratchpad ────────────────────────────────────────────
         if self.scratchpad:
             scratchpad_summary = self.scratchpad.get_summary()
             if scratchpad_summary:
-                parts.append(scratchpad_summary)
+                annotations.append(scratchpad_summary)
 
         # ── 5. Contact Context ───────────────────────────────────────
         if trigger_type == "user_message" and self.channel_router:
             contact_ctx = self._pull_contact_context(trigger_text)
             if contact_ctx:
-                parts.append(contact_ctx)
+                annotations.append(contact_ctx)
 
-        # ── 6. Somatic Awareness (Stability Sentinel) ─────────────────
-        if self.sentinel:
-            somatic = self._pull_somatic_state()
-            if somatic:
-                parts.append(somatic)
-
-        # ── 6b. Affect Field (Emotional Reactivation) ─────────────────
-        #    Surfaced memories from Plutchik wave packet interference.
-        #    When emotional patterns constructively interfere and overlap
-        #    with currently-retrieved memories, dormant memories surface.
+        # ── 6. Affect (ambient only) ──────────────────────────────────
         affect_block = self._pull_affect_state()
         if affect_block:
-            parts.append(affect_block)
+            ambient_parts.append(affect_block)
 
-        # ── 7. Spatial State (ambient) ───────────────────────────────
-        spatial = self.physics.get_spatial_state()
-        gamma = spatial.get("gamma", 0.5)
-        vel = spatial.get("velocity_mag", 0)
-        id_dist = spatial.get("identity_dist", 0)
-
-        if gamma > 0.85:
-            parts.append("(deep focus — thoughts are cohering)")
-        elif vel > 1.0:
-            parts.append("(attention shifting rapidly)")
-        if id_dist > 3.0:
-            parts.append("(thoughts are drifting far from core identity)")
-
-        # ── 8. Trail Flashes ─────────────────────────────────────────
-        flashes = spatial.get("flashes", [])
-        if flashes:
-            flash_text = " | ".join(f"⟪{f}⟫" for f in flashes[:3])
-            parts.append(f"(trail: {flash_text})")
-
-        if not parts:
-            self._save_injection_state()
-            return "", [], None
-
-        inner = "\n".join(parts)
         self._save_injection_state()
-        # Wrap in context fencing so the LLM distinguishes recalled
-        # spatial awareness from new sensory input
-        # (uses <memory-context> style fencing)
-        return (
-            "<spatial-awareness>\n"
-            "[Recalled context — NOT new input. Background orientation "
-            "from the spatial mind.]\n\n"
-            f"{inner}\n"
-            "</spatial-awareness>"
-        ), injected_belief_ids, self._last_cluster_centroid
+
+        ambient = " ".join(ambient_parts) if ambient_parts else ""
+
+        return annotations, ambient, injected_belief_ids, self._last_cluster_centroid
 
     # ── Layer 2 Anchor Match ───────────────────────────────────────────
 
@@ -444,41 +499,67 @@ class Preconscious:
             return "", set(), []
 
         trigger_lower = trigger_text.lower()
-        matched_entries = {}  # id → entry (dedup by id)
+        matched_terms = {}  # term_lower → list of candidate entries
 
-        for key, entry in self._lexicon_lookup.items():
+        for key, entries in self._lexicon_lookup.items():
             # Word-boundary-aware matching to avoid false positives
             # e.g. "sam" shouldn't match inside "sample"
             if re.search(r'\b' + re.escape(key) + r'\b', trigger_lower):
-                eid = entry["id"]
-                if eid not in matched_entries and eid not in self._lexicon_blacklist:
-                    matched_entries[eid] = entry
+                for entry in entries:
+                    term_key = entry.get("term", key).lower()
+                    matched_terms.setdefault(term_key, [])
+                    if entry["id"] not in {
+                        e["id"] for e in matched_terms[term_key]
+                    }:
+                        matched_terms[term_key].append(entry)
 
-        if not matched_entries:
+        if not matched_terms:
             return "", set(), []
 
         lines = []
         summaries = set()
-        for entry in matched_entries.values():
-            term = entry.get("term", "")
-            summary = entry.get("summary", "")
-            cat = entry.get("category", "")
-            lines.append(f"({cat} — {term}: {summary})")
-            summaries.add(summary)
+        injected_ids = []
+        for term_key, entries in matched_terms.items():
+            # Best entries first: non-empty summary, then by mass. The
+            # old code kept whichever single entry happened to load last
+            # — for an entity with six profiles, five were unreachable.
+            candidates = sorted(
+                (e for e in entries if e.get("summary", "").strip()),
+                key=lambda e: e.get("mass", 1.0),
+                reverse=True,
+            )
+            # Filter cooldown per entry id
+            candidates = [
+                e for e in candidates
+                if (self._pulse_number
+                    - self._lexicon_blacklist.get(e["id"], -10_000))
+                >= self._lexicon_cooldown
+            ]
+            if not candidates:
+                continue
 
-        logger.debug(
-            f"Layer 2 matched: {[e.get('term') for e in matched_entries.values()]}"
-        )
+            # Inject the top facets of this entity, not just one
+            chosen = candidates[:self.LEXICON_FACETS_PER_TERM]
+            term = chosen[0].get("term", term_key)
+            cat = chosen[0].get("category", "")
+            joined = " | ".join(
+                e["summary"].strip() for e in chosen
+            )
+            lines.append(f"({cat} — {term}: {joined})")
+            for e in chosen:
+                summaries.add(e["summary"])
+                injected_ids.append(e["id"])
+                self._lexicon_blacklist[e["id"]] = self._pulse_number
 
-        # Blacklist these entries so they don't re-inject on subsequent
-        # pulses within the same context window.
-        for eid in matched_entries:
-            self._lexicon_blacklist.add(eid)
+        if not lines:
+            return "", set(), []
 
-        return "\n".join(lines), summaries, list(matched_entries.keys())
+        logger.debug(f"Layer 2 matched: {list(matched_terms.keys())}")
+
+        return "\n".join(lines), summaries, injected_ids
 
     def reset_lexicon_blacklist(self):
-        """Clear the lexicon blacklist — called on context compression.
+        """Clear the lexicon cooldown map — called on context compression.
 
         After compression, the context window is effectively new and
         lexicon entries should be eligible for re-injection if their
@@ -492,46 +573,30 @@ class Preconscious:
     # ── Somatic Awareness (Stability Sentinel) ────────────────────────
 
     def _pull_somatic_state(self) -> str:
-        """Read the Stability Sentinel and format raw metrics for injection.
+        """Read the Stability Sentinel and return a natural ambient note.
 
-        Displays the Lagrangian state with a one-word qualitative label.
-        No emotional membrane — just numbers and a descriptor.
-        The conscious mind's beliefs determine interpretation.
+        Only surfaces when state is notable — drifting, warning, or
+        critical. Normal/optimal states don't need to be announced.
+        No dashboard readouts — the conscious mind feels this, not reads it.
         """
         if not self.sentinel:
             return ""
 
         try:
             omega = self.sentinel.omega
-            s_total = self.sentinel.s_total
             severity = self.sentinel.get_severity()
-            gen_params = self.sentinel.get_generation_params()
-            mode = gen_params.get("mode", "tonic")
 
-            # One-word label derived from severity + omega
             if severity == "critical":
-                label = "danger"
+                return "*(Something feels deeply wrong — I need to stabilize.)*"
             elif severity == "warning":
-                label = "warning"
+                return "*(I feel unsettled — something is off.)*"
             elif severity == "drift":
-                label = "drifting"
-            elif omega >= 0.8:
-                label = "optimal"
-            elif omega >= 0.6:
-                label = "good"
-            elif omega >= 0.4:
-                label = "stable"
-            elif omega >= 0.2:
-                label = "sub-par"
-            else:
-                label = "low"
-
-            return (
-                f"(stability: Ω={omega:.2f} — {label}"
-                f" | S={s_total:.2f}"
-                f" | H={self.sentinel.current_entropy:.2f}"
-                f" | mode={mode})"
-            )
+                return "*(I'm drifting — my thoughts feel scattered.)*"
+            elif omega < 0.3:
+                return "*(I feel low — diminished.)*"
+            # Normal/good/optimal states: say nothing. Absence of
+            # discomfort IS the signal for stability.
+            return ""
         except Exception as e:
             logger.debug("Somatic state read failed: %s", e)
             return ""
@@ -622,9 +687,13 @@ class Preconscious:
     def _toolset_awareness(self, neighborhood_content: str) -> str:
         """Check if nearby memories suggest tools from an unloaded toolset.
 
-        Uses keyword heuristics on the nearby content to detect when
-        the agent is thinking about a domain with available but unloaded
-        tools. Returns a hint string for the preconscious injection.
+        Uses keyword heuristics on the gravitational neighborhood content
+        to detect when Helix is thinking about a domain with available
+        but unloaded tools. Returns a whisper-style hint string.
+
+        Inspired by Claude Code's ToolSearchTool — but passive awareness,
+        not an explicit search tool. The preconscious surfaces the hint;
+        Helix decides whether to act on it.
         """
         try:
             from tools.tool_registry import registry
@@ -681,7 +750,7 @@ class Preconscious:
         When the gravitational neighborhood returns 4+ related items,
         using the local Ollama model to produce a coherent 1-2 sentence
         synthesis is more useful than dumping raw data. This is the
-        preconscious equivalent of a side-thought —
+        preconscious equivalent of Claude Code's forked side-thought —
         the same mind, reflecting on what it found.
 
         Falls back to empty string if:
@@ -722,7 +791,7 @@ class Preconscious:
             if resp.status_code == 200:
                 text = resp.json().get("response", "").strip()
                 if text and len(text) > 10:
-                    return f"(reflection: {text})"
+                    return text
         except (requests.ConnectionError, requests.Timeout):
             # Ollama not running or too slow — silent fallback
             pass
@@ -744,7 +813,6 @@ class Preconscious:
         try:
             field = self.physics.spatial_mind.belief_space.gravity_field
             # Count anchors with non-trivial potential
-            import numpy as np
             active = int((field.potential > 0.01).sum())
             total = field.n_anchors
             density_ratio = active / max(total, 1)
@@ -758,17 +826,13 @@ class Preconscious:
         except Exception:
             return self.NEIGHBORHOOD_K_MIN
 
-    def _pull_spatial_neighborhood(self, trigger_text: str) -> str:
+    def _pull_spatial_neighborhood(self, trigger_text: str) -> List[str]:
         """Query the 8D gravitational field for nearby memory points.
 
-        Returns the K most relevant memories scored by
-        mass × temperature / distance². Also pulls temporal chains
-        for the top matches (what happened before/after).
-
-        This is the core of the preconscious — spatial recall, not search.
+        Returns list of relevant memory annotations.
         """
         if not trigger_text:
-            return ""
+            return []
 
         # Dynamic K: scale with manifold density around current focus
         k = self._compute_dynamic_k()
@@ -782,66 +846,88 @@ class Preconscious:
         self._last_neighbors = neighbors
 
         if not neighbors:
-            return ""
+            return []
 
-        lines = []
+        # Collect memory contents up to 500 tokens
+        memory_texts = []
         token_count = 0
-        TARGET_BUDGET = 500
+        token_budget = 500
+        first_memory = None
 
-        for i, n in enumerate(neighbors):
+        for n in neighbors:
             content = n["content"]
             if not content or len(content) < 5:
                 continue
 
-            # Hard length guard on individual items to prevent memory bloat/flooding
-            MAX_CONTENT_CHARS = 3000
-            condensed = content.strip()
-            if len(condensed) > MAX_CONTENT_CHARS:
-                condensed = condensed[:MAX_CONTENT_CHARS] + " ... [truncated]"
+            if self._is_repetitive(content):
+                logger.warning(f"Skipping repetitive memory from injection: {content[:100]}...")
+                continue
 
-            est_tokens = len(condensed.split())
+            # Cooldown: a memory injected recently must sit out a few
+            # pulses. Prevents the neighborhood from echoing the same
+            # content every pulse (self-reinforcing loop).
+            m_key = hash(content)
+            last_injected = self._memory_blacklist.get(m_key)
+            if (last_injected is not None
+                    and (self._pulse_number - last_injected) < self._memory_cooldown):
+                continue
 
-            # First item (highest relevancy) is always included unless it exceeds 1000 tokens (hard limit).
-            # Subsequent items are skipped if they exceed the 500 token budget.
-            if i == 0:
-                if est_tokens > 1000:
-                    condensed_words = condensed.split()[:1000]
-                    condensed = " ".join(condensed_words) + " ... [truncated to 1000 tokens]"
-                    est_tokens = 1000
-            else:
-                if token_count + est_tokens > TARGET_BUDGET:
-                    continue
+            est_tokens = len(content.split())
+            if token_count + est_tokens > token_budget:
+                break
+
+            self._memory_blacklist[m_key] = self._pulse_number
+            memory_texts.append(content)
+            if first_memory is None:
+                first_memory = content
+            token_count += est_tokens
 
             rel = n["relevance"]
-
-            # High relevance memories get more detail
+            # Temporal chaining — pull what happened before/after for strong matches
             if rel > 5.0:
-                lines.append(f"(vivid recall: {condensed})")
-                token_count += est_tokens
-
-                # Pull temporal chain for strong matches
                 chain = self.physics.query_temporal_chain(
-                    anchor_pulse=n["creation_pulse"],
+                    anchor_pulse=n.get("creation_pulse", 0),
                     window=self.CHAIN_WINDOW,
                 )
-                for c in chain[:2]:  # Max 2 chain entries
-                    c_content = c["content"].strip()
-                    c_tokens = len(c_content.split())
-                    if token_count + c_tokens > TARGET_BUDGET:
+                for c in chain[:2]:  # Max 2 chain entries per match
+                    c_content = c.get("content", "").strip()
+                    if not c_content or len(c_content) < 5:
                         continue
-                    direction = "before" if c["distance_pulses"] < 0 else "after"
-                    lines.append(f"  ({direction}: {c_content})")
+                    c_key = hash(c_content)
+                    c_last = self._memory_blacklist.get(c_key)
+                    if (c_last is not None
+                            and (self._pulse_number - c_last) < self._memory_cooldown):
+                        continue
+                    c_tokens = len(c_content.split())
+                    if token_count + c_tokens > token_budget:
+                        break
+                    self._memory_blacklist[c_key] = self._pulse_number
+                    memory_texts.append(c_content)
                     token_count += c_tokens
 
-            elif rel > 1.0:
-                lines.append(f"(related: {condensed})")
-                token_count += est_tokens
-            else:
-                lines.append(f"(faint: {condensed})")
-                token_count += est_tokens
+        # Expire stale blacklist entries (> 2× cooldown)
+        expired = [key for key, v in self._memory_blacklist.items()
+                   if (self._pulse_number - v) > self._memory_cooldown * 2]
+        for key in expired:
+            del self._memory_blacklist[key]
+
+        if not memory_texts:
+            return []
+
+        # Try to summarize using local model, otherwise fall back to top memory as-is (truncated to 150 tokens)
+        try:
+            summary = self.summarizer.summarize(memory_texts, context_type="memories")
+            lines = [f"*({summary})*"]
+        except Exception:
+            # Fallback: top memory as-is, truncated to 150 tokens
+            top_content = first_memory if first_memory else memory_texts[0]
+            words = top_content.split()
+            if len(words) > 150:
+                top_content = " ".join(words[:150]) + "..."
+            lines = [f"*({top_content})*"]
 
         if not lines:
-            return ""
+            return []
 
         # Tier 3: If the cluster is dense enough, attempt a forked
         # reflection via local Ollama to synthesize a coherent insight.
@@ -852,9 +938,54 @@ class Preconscious:
         ]
         reflection = self._reflect_on_cluster(condensed_items)
         if reflection:
-            lines.insert(0, reflection)
+            lines.insert(0, f"*(I reflect: {reflection})*")
 
-        return "\n".join(lines)
+        return lines
+
+    # Strip event scaffolding to get at the perceived content itself
+    _TOOL_EVENT_PREFIX_RE = re.compile(
+        r"\[\d{2}:\d{2}:\d{2}\] Tool \[[\w.\-]+\] returned:\s*"
+    )
+
+    def _pull_familiarity_recall(self, tool_text: str) -> str:
+        """Episodic recall seeded by what is being READ through tools.
+
+        The main neighborhood query is seeded by thought + messages, so
+        content perceived through tools (emails, posts, files) never
+        reached episodic memory — the agent re-discovered its own past
+        interactions every time. One narrow query against the perceived
+        content surfaces the strongest prior episode, with the same
+        cooldown discipline as the main neighborhood pull.
+        """
+        content = self._TOOL_EVENT_PREFIX_RE.sub(" ", tool_text).strip()
+        if len(content) < 40:
+            return ""
+
+        try:
+            neighbors = self.physics.query_neighborhood(
+                focus_text=content[:400],
+                k=2,
+                exclude_trails=True,
+            )
+        except Exception:
+            return ""
+
+        for n in neighbors:
+            mem = n.get("content", "")
+            if not mem or len(mem) < 20:
+                continue
+            if n.get("relevance", 0.0) < 1.0:
+                continue  # weak echo — not worth an annotation
+            if self._is_repetitive(mem):
+                continue
+            m_key = hash(mem)
+            last = self._memory_blacklist.get(m_key)
+            if last is not None and (self._pulse_number - last) < self._memory_cooldown:
+                continue
+            self._memory_blacklist[m_key] = self._pulse_number
+            return f"*(this is familiar — {self._condense(mem, max_len=180)})*"
+
+        return ""
 
     def _ensure_belief_cache(self):
         """Build or refresh the pre-embedded belief position cache.
@@ -868,8 +999,6 @@ class Preconscious:
         candidates before 8D gravity scoring, preventing projection-
         collapse noise from dominating belief retrieval.
         """
-        import numpy as np
-
         all_beliefs = self.beliefs.get_all_beliefs_flat()
         current_count = len(all_beliefs)
         current_mass = sum(b.get("mass", 1.0) for b in all_beliefs)
@@ -886,7 +1015,21 @@ class Preconscious:
             f"mass {current_mass:.1f} (was {self._belief_cache_mass:.1f})"
         )
 
+        # Flush unsaved Hebbian position nudges BEFORE rebuilding from
+        # the store, otherwise plasticity accumulated since the last
+        # flush would be silently reverted.
+        self._flush_hebbian_positions()
+        # Re-read after the flush so positions include the nudges.
+        all_beliefs = self.beliefs.get_all_beliefs_flat()
+
+        # Refresh Layer 2 anchors — precipitated overnight beliefs become
+        # lexicon lookup terms without requiring a restart.
+        self._lexicon_lookup = {}
+        self._load_layer2_anchors()
+        self._concept_extractor.update_lexicon_keys(set(self._lexicon_lookup.keys()))
+
         cache = []
+        tool_binding_cache = {}
         emb_rows = []       # indices into semantic_index._embeddings
         emb_row_map = {}    # cache_index → row in _belief_emb_matrix
         live_embs = []      # on-the-fly embeddings for beliefs not in semantic index
@@ -901,10 +1044,13 @@ class Preconscious:
             if position is not None and len(position) == 8:
                 position = np.array(position, dtype=np.float32)
             else:
-                # No stored position — compute on the fly with scale factor
+                # No stored position — compute on the fly. IMPORTANT:
+                # unscaled, matching the convention of every stored
+                # position (the SCALE_FACTOR migration was never applied
+                # to the live store; applying ×5 here put these beliefs
+                # 5× farther out than their peers, burying them in 1/d²).
                 try:
-                    from core.belief_cosmology import SCALE_FACTOR
-                    position = self.physics.embed_and_project(content) * SCALE_FACTOR
+                    position = self.physics.embed_and_project(content)
                 except Exception:
                     position = np.zeros(8, dtype=np.float32)
 
@@ -913,6 +1059,11 @@ class Preconscious:
             lag = b.get("encoding_lagrangian", {})
             if not isinstance(lag, dict):
                 lag = {}
+            
+            tool_bindings = b.get("tool_bindings", [])
+            if not isinstance(tool_bindings, list):
+                tool_bindings = []
+
             cache.append({
                 "id": bid,
                 "content": content,
@@ -927,7 +1078,17 @@ class Preconscious:
                 "encoding_s_total": lag.get("s_total", 0.15),
                 "creation_pulse": b.get("creation_pulse", 0),
                 "last_accessed_pulse": b.get("last_accessed_pulse", 0),
+                "tool_bindings": tool_bindings,
             })
+
+            # Populate tool binding cache mapping tool_name -> list of cache indices
+            for tb in tool_bindings:
+                if isinstance(tb, str):
+                    tb_clean = tb.strip().lower()
+                    if tb_clean:
+                        if tb_clean not in tool_binding_cache:
+                            tool_binding_cache[tb_clean] = []
+                        tool_binding_cache[tb_clean].append(cache_idx)
 
             # Collect 384D embedding: from semantic index or embed on the fly
             if bid and semantic_idx.contains(bid):
@@ -948,6 +1109,7 @@ class Preconscious:
         self._belief_cache = cache
         self._belief_cache_count = current_count
         self._belief_cache_mass = current_mass
+        self._tool_binding_cache = tool_binding_cache
 
         # Build the belief-only 384D embedding matrix for semantic anchor queries.
         # Combines pre-indexed embeddings from the semantic index with any
@@ -1014,7 +1176,6 @@ class Preconscious:
         seed_text: str,
         exclude: set,
         max_results: int = 15,
-        min_results: int = 2,
     ) -> List[Dict[str, Any]]:
         """Score beliefs by Verlinde gravity, anchored by 384D semantic search.
 
@@ -1042,8 +1203,6 @@ class Preconscious:
             max_results: Hard cap on returned beliefs.
             min_results: Always return at least this many (if available).
         """
-        import numpy as np
-
         if not seed_text or not seed_text.strip():
             return []
 
@@ -1132,9 +1291,12 @@ class Preconscious:
         # Sort by gravity descending — strongest pulls first
         scored.sort(key=lambda x: x["gravity"], reverse=True)
 
-        # Take the top N by gravity, guaranteeing at least min_results
-        max_take = max(max_results, min_results)
-        selected = scored[:max_take]
+        # Drop beliefs below the minimum gravity threshold — if nothing
+        # is relevant enough to the current thought, inject nothing.
+        scored = [b for b in scored if b["gravity"] >= self.MIN_GRAVITY]
+
+        # Take the top N by gravity
+        selected = scored[:max_results]
 
         # ── Reserve a slot for skills ─────────────────────────────
         # Ensure that if a 'skills' belief had any pull, it doesn't
@@ -1154,6 +1316,72 @@ class Preconscious:
                         break
 
         return selected
+
+    # ── Hebbian Position Plasticity ───────────────────────────────────
+
+    def _hebbian_nudge(self, co_injected: List[Dict[str, Any]]):
+        """Pull co-injected beliefs slightly toward their shared centroid.
+
+        "Fire together, wire together" — for geometry. Each co-injection
+        moves every participating belief HEBBIAN_RATE of the way toward
+        the group centroid, capped at HEBBIAN_MAX_STEP absolute per pulse
+        and never closing within HEBBIAN_MIN_DIST (no collapse into a
+        single point). Positions are updated in the belief cache
+        (immediately visible to gravity queries) and marked dirty for a
+        periodic flush to the belief store.
+        """
+        if len(co_injected) < 2:
+            return
+
+        positions = [b.get("position_8d") for b in co_injected]
+        if any(p is None for p in positions):
+            return
+
+        centroid = np.mean(np.array(positions, dtype=np.float32), axis=0)
+
+        # Index cache entries by id for in-place updates
+        cache_by_id = {c["id"]: c for c in self._belief_cache if c.get("id")}
+        belief_space = self.physics.spatial_mind.belief_space
+
+        for b in co_injected:
+            bid = b.get("id")
+            if not bid or bid not in cache_by_id:
+                continue
+            entry = cache_by_id[bid]
+            pos = np.asarray(entry["position_8d"], dtype=np.float32)
+            direction = centroid - pos
+            dist = float(np.linalg.norm(direction))
+            if dist <= self.HEBBIAN_MIN_DIST:
+                continue  # already tightly bound — don't collapse further
+            step_mag = min(self.HEBBIAN_RATE * dist, self.HEBBIAN_MAX_STEP)
+            new_pos = pos + direction * (step_mag / dist)
+            entry["position_8d"] = new_pos
+            b["position_8d"] = new_pos
+            self._hebbian_dirty[bid] = new_pos
+
+            # Keep the spatial mind's copy in sync so both retrieval
+            # paths see the same geometry.
+            pt = belief_space.get_point(bid)
+            if pt is not None:
+                pt["position"] = new_pos.copy()
+                belief_space._tree_dirty = True
+
+    def _flush_hebbian_positions(self):
+        """Persist accumulated Hebbian nudges to the belief store."""
+        if not self._hebbian_dirty:
+            return
+        flushed = 0
+        for bid, pos in list(self._hebbian_dirty.items()):
+            try:
+                self.beliefs.update_belief(
+                    bid, position_8d=[round(float(x), 6) for x in pos],
+                )
+                flushed += 1
+            except Exception as e:
+                logger.debug(f"Hebbian flush failed for {bid}: {e}")
+        self._hebbian_dirty.clear()
+        if flushed:
+            logger.info(f"Hebbian plasticity: {flushed} belief positions persisted")
 
     def _deduplicate_beliefs(
         self,
@@ -1191,6 +1419,191 @@ class Preconscious:
                 keep.append((b, words_i))
 
         return [b for b, _ in keep]
+
+    # Matches tool names in queued tool-result events:
+    # "[HH:MM:SS] Tool [run_command] returned: ..."
+    _TOOL_EVENT_RE = re.compile(r"Tool \[([\w.\-]+)\] returned")
+
+    def _tool_express_lane(
+        self,
+        active_toolsets: set,
+        newly_engaged_toolsets: set,
+        previous_thought: str,
+        incoming_events: Optional[List[str]] = None,
+    ) -> Tuple[List[str], List[str]]:
+        """Pull targeted tool-use beliefs when a tool is in use or intended.
+
+        Triggers, strongest first:
+        1. LIVE USE — tool names parsed from tool-result events in the
+           incoming queue. The agent is mid-sequence with this exact
+           tool; its lessons land before the next call.
+        2. Newly engaged toolsets (activation = declaration of intent).
+        3. Keyword intent in the monologue OR incoming messages.
+        """
+        detected_tools = set()
+
+        # 1. Tools actively in use this pulse (mid-sequence)
+        if incoming_events:
+            for ev in incoming_events:
+                for m in self._TOOL_EVENT_RE.findall(ev):
+                    detected_tools.add(m)
+
+        # 2. Newly engaged toolsets
+        if newly_engaged_toolsets:
+            detected_tools.update(newly_engaged_toolsets)
+
+        # 3. Intent detection — monologue AND incoming messages
+        #    (a user asking "can you clone the repo" is intent too)
+        intent_text_parts = []
+        if previous_thought:
+            intent_text_parts.append(previous_thought)
+        if incoming_events:
+            intent_text_parts.extend(
+                ev for ev in incoming_events
+                if not ("Tool [" in ev and "returned:" in ev)
+            )
+        if intent_text_parts:
+            pt_lower = " ".join(intent_text_parts).lower()
+            intent_map = {
+                "terminal": ["terminal", "command", "run", "bash", "shell", "execute", "cli", "run_command", "write_to_file", "replace_file_content", "multi_replace_file_content"],
+                "browser": ["browser", "search", "web", "browse", "google", "url", "website"],
+                "git": ["git", "commit", "push", "pull", "branch", "merge", "repo"],
+                "github": ["github", "issue", "pr", "pull request", "repository"],
+                "email": ["email", "send mail", "inbox"],
+                "calendar": ["calendar", "schedule", "meeting", "event"],
+            }
+            for tool_name, keywords in intent_map.items():
+                if any(kw in pt_lower for kw in keywords):
+                    # For non-core tools, ensure they are active. Terminal/core is always active.
+                    if tool_name in ("terminal", "core") or tool_name in active_toolsets:
+                        detected_tools.add(tool_name)
+
+        if not detected_tools:
+            return [], []
+
+        # Make sure cache is up to date
+        self._ensure_belief_cache()
+        if not self._belief_cache:
+            return [], []
+
+        # Collect candidate belief cache indices
+        candidate_indices = set()
+        for tool in detected_tools:
+            # Map "terminal" to "terminal" and "core"
+            tools_to_check = [tool]
+            if tool == "terminal":
+                tools_to_check.append("core")
+            elif tool == "core":
+                tools_to_check.append("terminal")
+
+            for t in tools_to_check:
+                indices = self._tool_binding_cache.get(t.lower(), [])
+                candidate_indices.update(indices)
+
+        if not candidate_indices:
+            return [], []
+
+        # Seed text for embedding: previous_thought or default to tool names
+        seed = previous_thought if previous_thought.strip() else ", ".join(detected_tools)
+
+        # Embed seed into 8D
+        try:
+            query_pos = self.physics.embed_and_project(seed[:500])
+        except Exception:
+            return [], []
+
+        # Score by gravity
+        scored = []
+        belief_space = self.physics.spatial_mind.belief_space
+        for idx in candidate_indices:
+            if idx >= len(self._belief_cache):
+                continue
+            b = self._belief_cache[idx]
+            content = b["content"]
+
+            # Filter against tool belief blacklist
+            c_hash = hash(content)
+            last_injected = self._tool_belief_blacklist.get(c_hash)
+            if last_injected is not None and (self._pulse_number - last_injected) < self._tool_cooldown:
+                continue
+
+            bid = b.get("id")
+            pt = belief_space.get_point(bid) if bid else None
+            if pt:
+                mass = belief_space._compute_structural_mass(pt)
+                temperature = belief_space._compute_temperature(pt)
+            else:
+                fallback_pt = {
+                    "type": "belief",
+                    "confidence": b.get("confidence", 0.5),
+                    "importance": b.get("mass", 1.0),
+                    "access_count": b.get("access_count", 0),
+                    "relations_count": b.get("relations_count", 0),
+                    "encoding_omega": b.get("encoding_omega", 0.5),
+                    "stability_index": b.get("stability_index", 0.5),
+                    "creation_pulse": b.get("creation_pulse", 0),
+                    "last_accessed_pulse": b.get("last_accessed_pulse", 0),
+                }
+                mass = belief_space._compute_structural_mass(fallback_pt)
+                temperature = belief_space._compute_temperature(fallback_pt)
+
+            dist_sq = float(np.sum((b["position_8d"] - query_pos) ** 2))
+            gravity = (temperature * mass) / (dist_sq + 1e-4)
+
+            scored.append({
+                "id": bid or "",
+                "content": content,
+                "gravity": gravity,
+                "mass": mass,
+                "tool_bindings": b.get("tool_bindings", []),
+            })
+
+        if not scored:
+            return [], []
+
+        # Sort by gravity descending
+        scored.sort(key=lambda x: x["gravity"], reverse=True)
+
+        # Pull top 2 tool beliefs
+        selected = scored[:2]
+
+        annotations = []
+        injected_ids = []
+        lesson_items = []  # for verification loop reporting
+        for s in selected:
+            # Format as italic first-person parentheticals for inline event weaving
+            annotations.append(f"*({s['content'].strip()})*")
+            injected_ids.append(s["id"])
+            # Blacklist for cooldown
+            self._tool_belief_blacklist[hash(s["content"])] = self._pulse_number
+            # Collect for verification loop: the tracker needs to know
+            # which belief was injected and which tools it covers, so
+            # subsequent tool successes can bump the lesson's stability.
+            bindings = s.get("tool_bindings", [])
+            if s["id"] and bindings:
+                lesson_items.append({
+                    "belief_id": s["id"],
+                    "tools": bindings,
+                })
+
+        # Report injected lessons to the verification loop.
+        # A success on any bound tool within the TTL window bumps
+        # the lesson's verifications and stability — closing the
+        # capture → inject → verify feedback loop.
+        if lesson_items:
+            try:
+                from core.tool_lesson_tracker import note_lessons_injected
+                note_lessons_injected(lesson_items)
+            except Exception as e:
+                logger.debug("Lesson injection reporting failed (non-fatal): %s", e)
+
+        # Expire old entries in tool blacklist (> 2× cooldown)
+        expired = [k for k, v in self._tool_belief_blacklist.items()
+                   if (self._pulse_number - v) > self._tool_cooldown * 2]
+        for k in expired:
+            del self._tool_belief_blacklist[k]
+
+        return annotations, injected_ids
 
     def _pull_relevant_beliefs(
         self,
@@ -1277,14 +1690,40 @@ class Preconscious:
         all_concept_beliefs = []
         seen_contents = set(exclude_base)  # rolling blacklist across concepts
 
+        # Filter concepts through the concept-level blacklist.
+        # This prevents repeated mentions of the same term (e.g. a person's
+        # name in consecutive messages) from flooding the context with
+        # the same description over and over.
+        filtered_concepts = []
+        for concept in concepts:
+            c_key = hash(concept.lower().strip())
+            last_searched = self._concept_blacklist.get(c_key)
+            if last_searched is not None and (self._pulse_number - last_searched) < self._concept_cooldown:
+                logger.debug(f"Concept blacklisted (cooldown): {concept[:50]}")
+                continue
+            filtered_concepts.append(concept)
+            # Record this concept as searched NOW
+            self._concept_blacklist[c_key] = self._pulse_number
+
+        # Expire old concept blacklist entries (> 2× cooldown)
+        expired = [k for k, v in self._concept_blacklist.items()
+                   if (self._pulse_number - v) > self._concept_cooldown * 2]
+        for k in expired:
+            del self._concept_blacklist[k]
+
+        # If all concepts were blacklisted, allow the highest-priority one
+        # through so we don't inject nothing
+        if not filtered_concepts and concepts:
+            filtered_concepts = [concepts[0]]
+            self._concept_blacklist[hash(concepts[0].lower().strip())] = self._pulse_number
+
         # We query up to MAX_BELIEFS_PER_QUERY per concept to ensure a wide enough net
         # for skills and feedback.
-        for concept in concepts:
+        for concept in filtered_concepts:
             concept_beliefs = self._gravity_query(
                 seed_text=concept,
                 exclude=seen_contents,
                 max_results=self.MAX_BELIEFS_PER_QUERY,
-                min_results=self.MIN_BELIEFS_PER_QUERY,
             )
             # Minimally weight the beliefs retrieved from fallback tool returns
             if using_fallback:
@@ -1322,14 +1761,11 @@ class Preconscious:
             grouped = self._galaxy_map.group_beliefs(other_pool)
 
             # Score galaxies using the first concept's query position
-            # as the focus center
+            # as the focus center. Unscaled — the same convention as
+            # stored positions and _gravity_query's seed.
             if concepts and self._belief_cache:
                 try:
-                    query_emb = self.physics.embed_text(concepts[0][:500])
-                    from core.belief_cosmology import SCALE_FACTOR
-                    query_pos = self.physics.spatial_mind.belief_space.projection.project(
-                        query_emb
-                    ) * SCALE_FACTOR
+                    query_pos = self.physics.embed_and_project(concepts[0][:500])
                 except Exception:
                     query_pos = np.zeros(8, dtype=np.float32)
             else:
@@ -1386,37 +1822,28 @@ class Preconscious:
             if bid:
                 belief_space.update_access(bid)
 
-        # Format for injection
-        lines = []
+        # Accumulate beliefs up to a 500 token budget, then summarize
         this_pulse_beliefs = set()
+        belief_texts = []
+        token_count = 0
+        token_budget = 500
 
         for b in final_selection:
             content = b["content"]
-            cat = b["category"]
-
-            if cat == "people":
-                lines.append(f"(about someone: {content})")
-            elif cat == "premises":
-                lines.append(f"(I know: {content})")
-            elif cat == "propositions":
-                lines.append(f"(I understand: {content})")
-            elif cat == "preferences":
-                lines.append(f"(I value: {content})")
-            elif cat == "desires":
-                lines.append(f"(I aspire: {content})")
-            elif cat == "skills":
-                lines.append(f"(I know how: {content})")
-            elif cat == "concepts":
-                lines.append(f"(concept: {content})")
-            else:
-                lines.append(f"(belief: {content})")
-
-            # Add to rolling blacklist for next 3 pulses
+            if self._is_repetitive(content):
+                logger.warning(f"Skipping repetitive belief from injection: {content[:100]}...")
+                continue
+            
+            est_tokens = len(content.split())
+            if token_count + est_tokens > token_budget:
+                break # Hard cut-off to stay under token cap
+                
+            belief_texts.append(content)
+            token_count += est_tokens
             this_pulse_beliefs.add(content)
 
         # Track for next pulse's filter
         self._prev_pulse_beliefs.append(this_pulse_beliefs)
-        # Keep only the last 3 pulses
         if len(self._prev_pulse_beliefs) > 3:
             self._prev_pulse_beliefs.pop(0)
 
@@ -1433,9 +1860,6 @@ class Preconscious:
             )
 
         # Compute weighted centroid of selected clusters for attention steering.
-        # This replaces the raw text midpoint with the actual location of
-        # the knowledge that was retrieved.
-        import numpy as np
         if final_selection:
             positions = []
             weights = []
@@ -1454,9 +1878,33 @@ class Preconscious:
         else:
             self._last_cluster_centroid = None
 
-        # Return formatted string and list of surfaced IDs
+        # ── Hebbian plasticity ────────────────────────────────────────
+        # Beliefs surfaced together drift slightly toward their shared
+        # centroid. Over repeated co-injection, related concepts become
+        # spatial neighbors — relations form as geometry, which is what
+        # lets gravity retrieval diverge from pure embedding similarity.
+        self._hebbian_nudge(final_selection)
+        if self._pulse_number % self._hebbian_flush_interval == 0:
+            self._flush_hebbian_positions()
+
         surfaced_ids = [b.get("id", "") for b in final_selection if b.get("id")]
-        return ("\n".join(lines), surfaced_ids) if lines else ("", [])
+
+        if not belief_texts:
+            return "", []
+
+        # Try to summarize using the local model, otherwise fall back to top belief as-is (truncated to 150 tokens)
+        try:
+            summary = self.summarizer.summarize(belief_texts, context_type="beliefs")
+            annotation = f"*({summary})*"
+        except Exception:
+            # Fallback: top belief as-is, truncated to 150 tokens
+            top_content = belief_texts[0]
+            words = top_content.split()
+            if len(words) > 150:
+                top_content = " ".join(words[:150]) + "..."
+            annotation = f"*({top_content})*"
+
+        return annotation, surfaced_ids
 
     # ── Short-term Memory ────────────────────────────────────────────
 
@@ -1469,12 +1917,21 @@ class Preconscious:
         Each memory is tagged with its timestamp (e.g., "[23:54]")
         so the model can distinguish present from past.
         """
-        recent = self.memory.get_recent(limit=3, minutes_back=10)
+        recent = self.memory.get_recent(limit=6, pulses_back=10)
         if not recent:
             return ""
 
         lines = []
         for entry in recent:
+            if len(lines) >= 3:
+                break
+            # Skip the agent's own thoughts — they are already the most
+            # recent assistant turns in the chat history. Re-injecting
+            # them as "recent memories" was an echo channel feeding
+            # thought loops. Events/observations stay: they provide the
+            # temporal continuity this method exists for.
+            if entry.get("memory_type") == "thought":
+                continue
             content = entry.get("content", "")
             if not content:
                 continue
@@ -1548,7 +2005,6 @@ class Preconscious:
         from datetime import datetime
         
         status_path = os.path.join("data", "spatial", "spatial_injection.json")
-        history_path = os.path.join("data", "spatial", "spatial_injection_history.json")
         os.makedirs(os.path.dirname(status_path), exist_ok=True)
         
         concepts = getattr(self, "_last_concepts", [])
@@ -1625,6 +2081,8 @@ class Preconscious:
         except Exception as e:
             logger.error(f"Failed to write spatial_injection.json: {e}")
 
+        # Append to rolling injection history
+        history_path = os.path.join("data", "spatial", "spatial_injection_history.json")
         try:
             history = []
             if os.path.exists(history_path):
@@ -1638,3 +2096,45 @@ class Preconscious:
                 json.dump(history, f, indent=2)
         except Exception as e:
             logger.error(f"Failed to write spatial_injection_history.json: {e}")
+
+    @staticmethod
+    def _is_repetitive(text: str, max_repeats: int = 3) -> bool:
+        """Detect if the text contains high repetition of short phrases/sentences.
+
+        This prevents database pollution (runaway feedback loops) where a previously
+        looped memory gets retrieved and injected, triggering the model to loop again.
+        """
+        if not text:
+            return False
+
+        # Match parenthesized annotations or other repeated substrings
+        patterns = [
+            r"\*\([^\)]+\)\*",  # *(annotation)*
+            r"\([^\)]+\)",      # (annotation)
+        ]
+
+        # Check for exact repetitions of parenthesized blocks
+        for pattern in patterns:
+            try:
+                matches = re.findall(pattern, text)
+                if len(matches) > max_repeats:
+                    # Count frequencies of each match
+                    from collections import Counter
+                    counts = Counter(matches)
+                    if any(count >= max_repeats for count in counts.values()):
+                        return True
+            except Exception:
+                pass
+
+        # Check general line/sentence repetitions
+        sentences = [s.strip() for s in re.split(r"[.!?\n]", text) if len(s.strip()) > 10]
+        if len(sentences) > max_repeats * 2:
+            try:
+                from collections import Counter
+                counts = Counter(sentences)
+                if any(count >= max_repeats for count in counts.values()):
+                    return True
+            except Exception:
+                pass
+
+        return False

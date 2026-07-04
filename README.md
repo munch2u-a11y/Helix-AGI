@@ -43,13 +43,19 @@ graph TD
 | [Overview & Architecture Map](documents/audits/audit_overview.md) | Full system diagram and module index |
 | [Pulse Loop](documents/audits/audit_pulse_loop.md) | State machine, event injection, pulse cycle |
 | [Preconscious](documents/audits/audit_preconscious.md) | Concept-based injection, gravity queries, lexicon |
-| [Cognitive Space](documents/audits/audit_cognitive_space.md) | 8D projection, cognitive gravity, KD-Tree |
+| [Physics Engine](documents/audits/audit_physics_engine.md) | Dual-space coordination, text embeddings, neighborhood/temporal queries |
 | [Spatial Mind](documents/audits/audit_spatial_mind.md) | Dual-space manifold, Euler-Lagrange dynamics |
+| [Cognitive Space](documents/audits/audit_cognitive_space.md) | 8D projection, cognitive gravity, KD-Tree |
 | [Affect Field](documents/audits/audit_affect_field.md) | Plutchik emotional wave packets, anisotropic diffusion |
-| [Memory Manager](documents/audits/audit_memory_manager.md) | Unified JSONL journal and 384D FAISS index |
+| [Affect Hook](documents/audits/audit_affect_hook.md) | Post-pulse hook integration, Lagrangian snapshot read, and sentinel Ω nudges |
 | [Belief Detector](documents/audits/audit_belief_detector.md) | Real-time belief extraction via Lagrangian deltas |
 | [Cognitive Journal](documents/audits/audit_cognitive_journal.md) | Append-only JSONL event sourcing |
+| [Belief Store](documents/audits/audit_belief_store.md) | Database layer, normalized schemas, category I/O, and stability-based confidence adjustments |
+| [Memory Manager](documents/audits/audit_memory_manager.md) | Unified JSONL journal and 384D FAISS index |
+| [Semantic Index](documents/audits/audit_semantic_index.md) | Normalized 384D vector storage, numpy search, FAISS upgrade path |
 | [Scratchpad](documents/audits/audit_scratchpad.md) | Markdown-based working memory |
+| [Tool Learning](documents/audits/audit_tool_learning.md) | Failure capture, lesson verification, and Curator notes compilation |
+
 
 **Deep Dives:**
 
@@ -123,36 +129,74 @@ Most AI applications retrieve context by embedding a user's query and running a 
 ```text
 helix_agi/
 ├── main.py                    # Entry point — orchestrates the full architecture
-├── setup.py                   # Interactive first-run setup wizard
+├── setup.py                   # Interactive first-run setup (CLI)
+├── install.sh                 # Graphical PyQt6 setup wizard launcher
 ├── SYSTEM_MANUAL.md           # Internal operating guide (injected as system prompt)
+│
+├── bootstrap/                 # Bootstrap seed generation
+│   ├── __init__.py
+│   └── seed_builder.py        #   Profile-aware belief seed builder (basic/standard/predeveloped/import)
+│
+├── wizard/                    # PyQt6 graphical setup wizard
+│   ├── __main__.py            #   Wizard entry point
+│   ├── app.py                 #   Main wizard application window
+│   ├── ai_helper.py           #   AI-assisted configuration helpers
+│   ├── model_detector.py      #   Automatic LLM model detection
+│   ├── models_tab.py          #   Model selection UI
+│   ├── settings_tab.py        #   Settings configuration UI
+│   ├── orb_animation.py       #   Animated orb widget
+│   ├── assets/                #   Logo and icons
+│   └── pages/                 #   Wizard step pages
+│       ├── welcome.py         #     Welcome screen
+│       ├── agent_info.py      #     Name, bootstrap profile, voice seed
+│       ├── credentials.py     #     API key entry
+│       ├── tool_selection.py  #     Tool enablement
+│       ├── schedule.py        #     Pulse schedule configuration
+│       ├── safety.py          #     Safety and rate-limit settings
+│       └── summary.py         #     Final review and commit
 │
 ├── core/                      # Core cognitive modules
 │   ├── pulse_loop.py          #   Three-state consciousness loop
+│   ├── dual_pulse_loop.py     #   Dual-model pulse orchestration
 │   ├── preconscious.py        #   Concept-based context injection pipeline
 │   ├── concept_extractor.py   #   RAKE-style keyphrase extraction
+│   ├── concept_reranker.py    #   Concept salience reranking
 │   ├── physics_engine.py      #   8D manifold orchestrator
 │   ├── spatial_mind.py        #   Dual-space (beliefs + memories) gravity dynamics
 │   ├── cognitive_space.py     #   8D projection, KD-Tree, cognitive gravity
 │   ├── affect_field.py        #   Plutchik emotional wave packets
+│   ├── affect_hook.py         #   Emotional wave packet post-pulse hook
 │   ├── context_compressor.py  #   Rolling first-person summarization
+│   ├── local_summarizer.py    #   Local content summarization (no API calls)
 │   ├── scratchpad.py          #   Markdown-based working memory
 │   ├── curator.py             #   Nightly belief crystallization pipeline
 │   ├── belief_detector.py     #   Real-time belief extraction
 │   ├── belief_consolidator.py #   Deduplication and lexicon management
+│   ├── belief_cosmology.py    #   Belief-space cosmological dynamics
 │   ├── batch_service.py       #   Belief formatting and validation
 │   ├── co_occurrence_hook.py  #   Hebbian wiring and cluster tracking
 │   ├── engagement_hook.py     #   Thought stagnation + Ω modulation
 │   ├── workflow_detector.py   #   Repeated tool-pattern crystallization
+│   ├── tool_lesson_tracker.py #   Dynamic tool failure learning and success verification
+│   ├── tool_dispatcher.py     #   Tool call dispatch and routing
+│   ├── interaction_ledger.py  #   Duplicate action prevention ledger
+│   ├── reliance_evaluator.py  #   Belief reliance scoring
+│   ├── crash_reporter.py      #   Automated crash reporting
+│   ├── auxiliary_llm.py       #   Lightweight auxiliary LLM helpers
+│   ├── gguf_manager.py        #   Local GGUF model management
 │   └── post_pulse_hooks.py    #   Hook registration framework
 │
 ├── brain/                     # Brain stem
 │   ├── stability_sentinel.py  #   Lagrangian stability monitoring
-│   ├── vision_cortex.py       #   Screen perception (screenshot → description)
+│   ├── sensory_cortex.py      #   Screen perception (screenshot → description)
+│   ├── vision_cortex.py       #   Visual processing pipeline
 │   └── friction_damper.py     #   Cognitive momentum regulation
 │
 ├── memory/                    # Memory systems
 │   ├── belief_store.py        #   Categorized belief graph (7 JSON files)
 │   ├── memory_manager.py      #   Unified semantic memory and recall hook
+│   ├── cognitive_journal.py   #   Append-only JSONL cognitive journal
+│   └── semantic_index.py      #   Normalized 384D FAISS vector index
 │
 ├── llm/                       # LLM abstraction layer
 │   ├── orchestrator.py        #   Thin wrapper for external message injection
@@ -176,30 +220,37 @@ helix_agi/
 │   └── desktop_control.py     #   Local desktop interaction
 │
 ├── comms/                     # Communication channels
-│   └── telegram_bot.py        #   Telegram bot (inbound/outbound messaging)
+│   ├── telegram_bot.py        #   Telegram bot (inbound/outbound messaging)
+│   └── discord_bot.py         #   Discord bot (inbound/outbound messaging)
 │
 ├── documents/                 # Architecture documentation
-│   ├── audits/                #   Line-by-line subsystem audits (10 files)
+│   ├── audits/                #   Line-by-line subsystem audits (15 files)
 │   └── *.md                   #   Deep-dive analyses and workflow breakdowns
 │
 ├── dashboard/                 # Real-time cognitive monitoring
 │   ├── dashboard.py           #   Flask backend (read-only observer)
+│   ├── dashboard_comms.py     #   WebSocket communication layer
 │   └── dashboard_ui.html      #   Three.js 3D frontend
 │
 ├── scripts/                   # Agent utility scripts
+│   ├── import_agent_soul.py   #   External agent identity importer
+│   ├── benchmark_*.py         #   Benchmark runners and adapters
+│   ├── build_bootstrap_seed.py#   CLI seed builder
+│   └── ...                    #   Migration, FAISS setup, OAuth helpers
+│
+├── benchmark_results/         # Timestamped benchmark outputs
 │
 ├── tests/                     # Test framework, benchmarks, and sandboxes
 │
 ├── data/                      # Runtime data (gitignored, created by setup.py)
 │   ├── beliefs/               #   7 category JSON files
-│   ├── memory/                #   JSONL Journal and FAISS index
+│   ├── memory/                #   JSONL journal and FAISS index
 │   ├── spatial/               #   Manifold state snapshots
 │   └── scratchpad/            #   Working memory file
 │
 ├── journals/                  # Daily journal entries (gitignored)
 ├── logs/                      # Runtime logs (gitignored)
-├── models/                    # Local model files (gitignored)
-└── previous_versions/         # Archived file versions
+└── models/                    # Local model files (gitignored)
 ```
 
 Credentials are stored in `~/.config/helix/credentials.env` (outside the repository, created by `setup.py`).
@@ -235,10 +286,19 @@ python setup.py
 python main.py
 ```
 
-The setup wizard will prompt for your name, agent name, and API keys. It creates:
+The setup wizard will prompt for your name, agent name, bootstrap profile, and API keys. It creates:
 - `~/.config/helix/credentials.env` — API keys and tokens (outside the repo)
 - `data/beliefs/` — Seed beliefs across 7 categories (premises, propositions, preferences, people, skills, desires, concepts)
 - `data/memory/`, `data/spatial/` — Runtime directories for the Cognitive Journal and manifold state
+
+**Bootstrap Profiles:** During setup, choose how richly to seed the agent's initial belief graph:
+
+| Profile | Description |
+|---------|-------------|
+| **Basic** | Minimal axioms — the agent learns nearly everything from scratch |
+| **Standard** | Balanced seed with autonomy, self-awareness, and continuity beliefs (recommended) |
+| **Pre-developed** | Dense seed including conceptual priors and preconscious discipline |
+| **Import** | Import an existing agent's identity files (beliefs, journals, manifold state) as the bootstrap seed — useful for migrating or forking a running Helix instance |
 
 ### Model Configuration
 

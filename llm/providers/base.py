@@ -115,14 +115,15 @@ def create_session(
         )
 
     elif config.provider_type == "llama_cpp":
-        from llm.providers.llama_cpp_provider import LlamaCppSession
-        return LlamaCppSession(
+        from llm.providers.local_conscious import ConsciousSpeakerSession
+        return ConsciousSpeakerSession(
             model_path=config.model,
             system_instruction=system_instruction,
             n_ctx=config.context_window,
             temperature=config.temperature,
             max_output_tokens=config.max_output_tokens,
             n_gpu_layers=config.options.get("n_gpu_layers", -1),
+            tool_executor=tool_executor,
         )
 
     else:
@@ -212,7 +213,10 @@ def detect_available_provider() -> Optional[ProviderConfig]:
                 if repo_ggufs:
                     model = str(repo_ggufs[0])
                 else:
-                    model = "/home/nemo/.ollama/models/blobs/sha256-afb54ad43a39f947407f5cabc59856348d70e072baa5c62d436332157c151bcd"
+                    # Search for GGUF blobs in user's Ollama cache
+                    _ollama_blobs = Path.home() / ".ollama" / "models" / "blobs"
+                    _blob_candidates = sorted(_ollama_blobs.glob("sha256-*"), key=lambda p: p.stat().st_size, reverse=True) if _ollama_blobs.exists() else []
+                    model = str(_blob_candidates[0]) if _blob_candidates else ""
         logger.info(f"Using explicitly configured llama_cpp provider with model: {model}")
         return ProviderConfig(
             provider_type="llama_cpp",
@@ -270,10 +274,9 @@ def detect_available_provider() -> Optional[ProviderConfig]:
     # 2c. llama-cpp-python
     try:
         import llama_cpp
-        model_path = (
-            "/home/nemo/.ollama/models/blobs/"
-            "sha256-afb54ad43a39f947407f5cabc59856348d70e072baa5c62d436332157c151bcd"
-        )
+        _ollama_blobs = Path.home() / ".ollama" / "models" / "blobs"
+        _blob_candidates = sorted(_ollama_blobs.glob("sha256-*"), key=lambda p: p.stat().st_size, reverse=True) if _ollama_blobs.exists() else []
+        model_path = str(_blob_candidates[0]) if _blob_candidates else ""
         if os.path.exists(model_path):
             gpu = "Vulkan" if llama_cpp.llama_supports_gpu_offload() else "CPU"
             logger.info(f"Auto-detected llama.cpp ({gpu})")

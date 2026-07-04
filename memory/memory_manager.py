@@ -9,7 +9,7 @@ is preserved via the migration script (to be added later).
 import json
 import logging
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -19,23 +19,8 @@ logger = logging.getLogger("helix.memory.manager")
 
 
 def _now_iso() -> str:
-    """Return the current UTC time as an ISO‑8601 string with seconds precision."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _parse_iso(raw: str) -> Optional[datetime]:
-    """Parse common ISO timestamp variants used by the journal."""
-    if not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw)
-    except ValueError:
-        if len(raw) >= 5 and raw[-5] in "+-" and raw[-3] != ":":
-            try:
-                return datetime.fromisoformat(f"{raw[:-2]}:{raw[-2:]}")
-            except ValueError:
-                return None
-        return None
+    """Return the local wall-clock timestamp with seconds precision."""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 class MemoryManager:
@@ -45,6 +30,16 @@ class MemoryManager:
     (pre‑conscious, tools, etc.) can continue to call ``store`` and
     ``get_recent`` without modification.
     """
+
+    REINFORCEMENT_MEMORY_TYPES = {
+        "event",
+        "incoming_message",
+        "tool_intake",
+        "tool_failure",
+        "reminder",
+    }
+    REINFORCEMENT_SIMILARITY = 0.94
+    POSITION_ECHO_BLEND = 0.70
 
     def __init__(self, data_dir: str):
         """Initialize the manager.
@@ -93,10 +88,88 @@ class MemoryManager:
         """Wire the physics engine for 384D semantic search.
 
         Called during setup_helix() after both MemoryManager and PhysicsEngine
-        are constructed. Enables search_semantic() and recall_with_somatic_echo().
+        are constructed. Enables semantic anchoring, contextual recall,
+        and somatic-echo retrieval.
         """
         self._physics = physics_engine
         logger.info("MemoryManager: physics engine wired for 384D semantic search")
+
+    def _find_reinforcement_target(
+        self,
+        content: str,
+        memory_type: str,
+        source: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Find a prior intake memory to reinforce before storing a new episode."""
+        if (
+            self._physics is None
+            or source != "pulse_input"
+            or memory_type not in self.REINFORCEMENT_MEMORY_TYPES
+            or not content.strip()
+        ):
+            return None
+
+        def _filter(_vid: str, meta: Dict[str, Any]) -> bool:
+            return (
+                meta.get("type") == "memory"
+                and meta.get("source") == source
+                and meta.get("memory_type") in self.REINFORCEMENT_MEMORY_TYPES
+            )
+
+        try:
+            candidates = self._physics.semantic_search(
+                content,
+                k=3,
+                filter_fn=_filter,
+            )
+            memory_space = getattr(
+                getattr(self._physics, "spatial_mind", None),
+                "memory_space",
+                None,
+            )
+            if memory_space is None:
+                return None
+
+            for candidate in candidates:
+                similarity = float(candidate.get("similarity", 0.0))
+                if similarity < self.REINFORCEMENT_SIMILARITY:
+                    continue
+                point_id = candidate.get("id", "")
+                point = memory_space.get_point(point_id) if point_id else None
+                if not point:
+                    continue
+                return {
+                    "point_id": point_id,
+                    "journal_id": str(candidate.get("metadata", {}).get("journal_id") or self.journal_id(point_id)),
+                    "position": point.get("position"),
+                    "similarity": similarity,
+                }
+        except Exception as e:
+            logger.debug("Reinforcement lookup failed: %s", e)
+        return None
+
+    def _blend_echo_position(
+        self,
+        current_position: Optional[List[float]],
+        prior_position: Any,
+    ) -> List[float]:
+        """Blend a repeated intake episode toward the prior attractor."""
+        if prior_position is None:
+            return list(current_position or [])
+
+        prior = [float(x) for x in prior_position]
+        current = list(current_position or [])
+        if not current:
+            return prior
+        if len(current) != len(prior):
+            return current
+
+        prior_weight = self.POSITION_ECHO_BLEND
+        current_weight = 1.0 - prior_weight
+        return [
+            (prior_weight * float(old)) + (current_weight * float(new))
+            for old, new in zip(prior, current)
+        ]
 
     def _format_memory_entry(self, entry: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize a journal memory entry for callers."""
@@ -112,6 +185,7 @@ class MemoryManager:
             "importance": meta.get("importance", 0.5),
             "tags": meta.get("tags", []),
             "belief_ids": meta.get("belief_ids", []),
+            "echo_of": meta.get("echo_of"),
             "created_at": created_at,
             "timestamp": entry.get("timestamp"),
             "pulse_id": entry.get("pulse_id", 0),
@@ -144,7 +218,7 @@ class MemoryManager:
         SemanticIndex rebuilds and also registered in the 384D index for
         immediate searchability.
         """
-        tags = tags or []
+        tags = list(dict.fromkeys(tags or []))
         belief_ids = belief_ids or []
         lagrangian_snapshot = lagrangian_snapshot or {}
         now = _now_iso()
@@ -156,7 +230,25 @@ class MemoryManager:
         if actual_pulse_id is None:
             actual_pulse_id = 0
 
-        canonical_position = list(position_8d or [])
+        reinforcement_target = self._find_reinforcement_target(
+            content=content,
+            memory_type=memory_type,
+            source=source,
+        )
+        if reinforcement_target and self._physics is not None:
+            memory_space = getattr(
+                getattr(self._physics, "spatial_mind", None),
+                "memory_space",
+                None,
+            )
+            if memory_space is not None:
+                memory_space.update_access(reinforcement_target["point_id"])
+            tags = list(dict.fromkeys(tags + ["repeat_echo"]))
+
+        canonical_position = self._blend_echo_position(
+            position_8d,
+            reinforcement_target.get("position") if reinforcement_target else None,
+        )
         canonical_embedding = list(embedding_384d) if embedding_384d is not None else None
 
         if self._physics is not None:
@@ -170,7 +262,7 @@ class MemoryManager:
                 lagrangian_snapshot=lagrangian_snapshot,
                 pulse_id=actual_pulse_id,
                 embedding_384d=embedding_384d,
-                position_8d=position_8d,
+                position_8d=canonical_position,
                 tags=tags,
                 belief_ids=belief_ids,
             )
@@ -187,6 +279,7 @@ class MemoryManager:
                 "importance": importance,
                 "tags": tags,
                 "belief_ids": belief_ids,
+                "echo_of": reinforcement_target.get("journal_id") if reinforcement_target else None,
                 "created_at": now,
                 "attention_position_8d": position_8d or [],
                 "point_id": self.point_id(st_id),
@@ -200,23 +293,32 @@ class MemoryManager:
         return st_id
 
     # ── Retrieval ────────────────────────────────────────────────────
-    def get_recent(self, limit: int = 20, minutes_back: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_recent(self, limit: int = 20, pulses_back: Optional[int] = None) -> List[Dict[str, Any]]:
         """Return the most recent memory entries from the journal.
 
         * ``limit`` – maximum number of entries to return.
-        * ``minutes_back`` – if provided, filter out entries older than this
-          many minutes.
+        * ``pulses_back`` – if provided, filter out entries older than this
+          many pulses. This keeps internal recency tied to Helix's own
+          cognitive time rather than wall-clock minutes.
         """
         entries = self.journal.load_all()
         mem_entries = [e for e in entries if e.get("type") == "memory"]
-        if minutes_back is not None:
-            cutoff_dt = datetime.now(timezone.utc) - timedelta(minutes=minutes_back)
-            filtered = []
-            for entry in mem_entries:
-                ts = _parse_iso(entry.get("timestamp", ""))
-                if ts is not None and ts >= cutoff_dt:
-                    filtered.append(entry)
-            mem_entries = filtered
+        if pulses_back is not None:
+            reference_pulse = 0
+            if self._physics is not None:
+                reference_pulse = int(getattr(self._physics, "_pulse_count", 0) or 0)
+            if reference_pulse <= 0:
+                reference_pulse = max(
+                    (int(entry.get("pulse_id", 0) or 0) for entry in mem_entries),
+                    default=0,
+                )
+            if reference_pulse > 0:
+                cutoff_pulse = max(0, reference_pulse - int(pulses_back))
+                mem_entries = [
+                    entry
+                    for entry in mem_entries
+                    if int(entry.get("pulse_id", 0) or 0) >= cutoff_pulse
+                ]
         # newest first
         recent = mem_entries[-limit:][::-1] if limit else mem_entries[::-1]
         result = []
@@ -349,6 +451,7 @@ class MemoryManager:
                     "importance": meta.get("importance", 0.5),
                     "tags": meta.get("tags", []),
                     "belief_ids": meta.get("belief_ids", []),
+                    "echo_of": meta.get("echo_of"),
                     "created_at": meta.get("created_at", ""),
                     "timestamp": meta.get("created_at", ""),
                     "pulse_id": meta.get("pulse_id", 0),
@@ -368,6 +471,84 @@ class MemoryManager:
         except Exception as e:
             logger.warning(f"search_semantic failed: {e}")
             return []
+
+    def search_contextual(
+        self,
+        query: str,
+        limit: int = 10,
+        filter_fn=None,
+        return_embeddings: bool = False,
+        refresh_access: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Search memories via semantic anchors, then rerank by manifold gravity.
+
+        This keeps conscious recall precise while letting the current
+        attention trajectory shape which matching memories feel most alive.
+        """
+        semantic_limit = max(limit * 4, 20)
+        candidates = self.search_semantic(
+            query,
+            limit=semantic_limit,
+            filter_fn=filter_fn,
+            return_embeddings=return_embeddings,
+        )
+        if not candidates or not self._physics:
+            return candidates[:limit]
+
+        try:
+            center = self._physics.derive_query_center(
+                focus_text=query,
+                attention_relative=True,
+            )
+            memory_space = getattr(
+                getattr(self._physics, "spatial_mind", None),
+                "memory_space",
+                None,
+            )
+            if memory_space is None:
+                return candidates[:limit]
+
+            rescored = []
+            for candidate in candidates:
+                point_id = candidate.get("point_id", "")
+                point = memory_space.get_point(point_id) if point_id else None
+                gravity = 0.0
+                if point:
+                    position = point.get("position")
+                    if position is not None:
+                        dist_sq = sum(
+                            (float(a) - float(b)) ** 2
+                            for a, b in zip(position, center)
+                        )
+                        gravity = (
+                            memory_space._compute_temperature(point)
+                            * memory_space._compute_structural_mass(point)
+                        ) / (dist_sq + 1e-4)
+
+                scored = dict(candidate)
+                similarity = float(candidate.get("similarity", 0.0))
+                scored["gravity"] = round(float(gravity), 4)
+                scored["contextual_score"] = round(similarity * (1.0 + float(gravity)), 4)
+                rescored.append(scored)
+
+            rescored.sort(
+                key=lambda item: (
+                    item.get("contextual_score", 0.0),
+                    item.get("similarity", 0.0),
+                ),
+                reverse=True,
+            )
+
+            if refresh_access:
+                for item in rescored[:limit]:
+                    point_id = item.get("point_id", "")
+                    if point_id:
+                        memory_space.update_access(point_id)
+
+            return rescored[:limit]
+        except Exception as e:
+            logger.warning(f"search_contextual failed: {e}")
+            return candidates[:limit]
 
     def recall_with_somatic_echo(
         self,
@@ -392,7 +573,7 @@ class MemoryManager:
             sentinel: StabilitySentinel instance (for omega nudging)
             filter_fn: Optional predicate (id, metadata) → bool
         """
-        results = self.search_semantic(search, limit=limit, filter_fn=filter_fn)
+        results = self.search_contextual(search, limit=limit, filter_fn=filter_fn)
 
         if sentinel and results:
             for r in results:

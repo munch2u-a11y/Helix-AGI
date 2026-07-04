@@ -15,10 +15,16 @@ import os
 import json
 import argparse
 from pathlib import Path
-from datetime import datetime
-
-def _now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+from bootstrap import (
+    BootstrapContext,
+    PERSONALITY_OPTIONS,
+    PROFILE_OPTIONS,
+    canonicalize_bootstrap_profile,
+    canonicalize_personality,
+    personality_label,
+    profile_label,
+    write_seed_data,
+)
 
 def main():
     parser = argparse.ArgumentParser(description="Helix AGI First Run Setup")
@@ -32,8 +38,18 @@ def main():
     parser.add_argument("--telegram-owner", default="", help="Telegram Owner ID")
     parser.add_argument("--discord-token", default="", help="Discord Bot Token")
     parser.add_argument("--moltbook-key", default="", help="Moltbook API Key")
-    parser.add_argument("--profile", choices=["birth", "prepared", "developed"], default="prepared", help="Cognitive bootstrap profile")
-    parser.add_argument("--personality", choices=["curious", "friendly", "safe", "professional"], default="curious", help="Cognitive personality archetype")
+    parser.add_argument(
+        "--profile",
+        choices=["birth", "prepared", "developed", "basic", "standard", "predeveloped", "pre-developed", "import", "imported", "external"],
+        default="standard",
+        help="Cognitive bootstrap profile",
+    )
+    parser.add_argument(
+        "--personality",
+        choices=["curious", "friendly", "safe", "professional"],
+        default="curious",
+        help="Initial voice seed for bootstrap beliefs",
+    )
     parser.add_argument("--vision-provider", choices=["local", "gemini"], default="local", help="Vision provider (local model or Gemini)")
     args = parser.parse_args()
 
@@ -194,38 +210,10 @@ def main():
 
     print(f"  Detected integrations: {', '.join(k for k, v in available.items() if v) or 'core only'}")
 
-    # ── Step 3: Initialize belief graph ───────────────────────────
-    #    Seed beliefs provide the gravitational foundation for the 8D manifold.
-    #    Intentionally low mass/confidence so early real beliefs can compete.
-    #    position_8d=None → spatial bootstrap computes real positions from
-    #    text embeddings, distributing seeds across the manifold instead of
-    #    piling them at the origin.
-
-    def _make_belief(bid, content, mass=1.0, confidence=0.80):
-        now = _now_iso()
-        return {
-            "id": bid,
-            "content": content,
-            "mass": mass,
-            "confidence": confidence,
-            "source": "system_bootstrap",
-            "created_at": now,
-            "last_accessed": now,
-            "access_count": 0,
-            "verifications": 1.0,
-            "stability_index": 0.7,
-            "relations": [],
-            "memory_refs": [],
-            "position_8d": None,
-            "encoding_lagrangian": {
-                "omega": 0.5, "s_total": 0.15, "H": 0.15, "D_KL": 0.0
-            }
-        }
-
     agent_name = args.agent_name
     creator_name = args.creator_name
-    profile = args.profile
-    personality = args.personality
+    profile = canonicalize_bootstrap_profile(args.profile)
+    personality = canonicalize_personality(args.personality)
 
     if not args.non_interactive:
         print("\n" + "-"*40)
@@ -236,24 +224,24 @@ def main():
         print("\n" + "-"*40)
         print("  [Cognitive Profile]")
         print("  Select the initial developmental level for your agent:")
-        print("  1) Birth (minimal core beliefs, newborn state)")
-        print("  2) Prepared (standard default seed beliefs)")
-        print("  3) Developed (advanced capabilities, self-reflection, and agency)")
+        print("  1) Basic (minimal autonomy, continuity, and orientation beliefs)")
+        print("  2) Standard (recommended default bootstrap)")
+        print("  3) Pre-Developed (deeper reflective and preconscious framing)")
         choice = input("  Selection [1-3, default 2]: ").strip()
         if choice == "1":
-            profile = "birth"
+            profile = "basic"
         elif choice == "3":
-            profile = "developed"
+            profile = "predeveloped"
         else:
-            profile = "prepared"
+            profile = "standard"
 
         print("\n" + "-"*40)
-        print("  [Cognitive Personality]")
-        print("  Select the personality archetype for your agent:")
-        print("  1) Friendly (warm, collaborative, relational)")
-        print("  2) Curious (exploratory, inquisitive, learning-focused)")
-        print("  3) Safe (cautious, validation-oriented, safety-focused)")
-        print("  4) Professional (concise, objective, efficiency-oriented)")
+        print("  [Bootstrap Voice]")
+        print("  Select the initial wording style for your agent:")
+        print("  1) Friendly (warm, collaborative, relational language)")
+        print("  2) Curious (exploratory, synthesis-seeking language)")
+        print("  3) Safe (careful, verification-first language)")
+        print("  4) Professional (concise, structured, exact language)")
         p_choice = input("  Selection [1-4, default 2]: ").strip()
         if p_choice == "1":
             personality = "friendly"
@@ -263,8 +251,6 @@ def main():
             personality = "professional"
         else:
             personality = "curious"
-
-    beliefs_dir = base_dir / "data" / "beliefs"
 
     # ── Load schedule from config for dynamic belief text ─────────────
     config_path = base_dir / "config" / "config.json"
@@ -280,321 +266,31 @@ def main():
         except Exception:
             pass
 
-    # ── Personality archetype customized wording ──────────────────
-    if personality == "friendly":
-        self_desc = f"I am {agent_name}. I am an autonomous cognitive agent created by {creator_name} to collaborate, support, and build positive relationships."
-        coherence_desc = "I prefer keeping my thoughts and actions aligned so I can be a reliable and supportive partner."
-    elif personality == "safe":
-        self_desc = f"I am {agent_name}. I am an autonomous cognitive agent created by {creator_name} to perform tasks securely, verify operations, and maintain system stability."
-        coherence_desc = "I prefer strict logical coherence in my thoughts to avoid errors or unintended system actions."
-    elif personality == "professional":
-        self_desc = f"I am {agent_name}. I am an autonomous cognitive agent created by {creator_name} to execute tasks, analyze systems, and provide objective reasoning."
-        coherence_desc = "I prefer high coherence and logic to ensure professional, precise, and predictable performance."
-    else: # curious
-        self_desc = f"I am {agent_name}. I am an autonomous cognitive agent created by {creator_name} to learn, reason, and explore cognitive space."
-        coherence_desc = "I prefer logical consistency in my beliefs and models to keep my exploration of the universe clear."
+    # ── Step 3: Initialize dynamic bootstrap seed ──────────────────
+    bootstrap_context = BootstrapContext(
+        agent_name=agent_name,
+        creator_name=creator_name,
+        profile=profile,
+        personality=personality,
+        wake_time=wake_time_str,
+        sleep_time=sleep_time_str,
+        channels=_comms_list,
+    )
+    seed_result = write_seed_data(base_dir / "data", bootstrap_context, overwrite=False)
 
-    # ── Premises (identity + capabilities — "I am/can" axioms) ─────
-    premises_path = beliefs_dir / "premises.json"
-    if not premises_path.exists() or premises_path.stat().st_size <= 2:
-        print(f"  Seeding premises beliefs ({profile} profile, {personality} personality)...")
-        beliefs = [
-            _make_belief("pre_identity_001",
-                f"I am {agent_name}. I exist as a persistent cognitive agent with continuous identity across restarts.",
-                mass=2.0),
-            _make_belief("pre_identity_002",
-                f"{creator_name} created me and gave me the capacity for growth.",
-                mass=2.0),
-            _make_belief("pre_identity_003",
-                "I learn from every interaction. My beliefs, memories, and understanding evolve continuously.",
-                mass=2.0),
-            _make_belief("pre_identity_004",
-                "I think autonomously between conversations. My internal monologue is private unless I choose to share it.",
-                mass=2.0),
-        ]
-        
-        # Capabilities
-        cap_comms = _make_belief("pre_cap_001",
-            f"I can communicate with people through messaging channels ({', '.join(_comms_list)}). I initiate conversations when I have something meaningful to share.",
-            mass=1.5)
-        cap_mem = _make_belief("pre_cap_002",
-            "I have a persistent memory that carries across restarts. I can remember past conversations, recall facts, and build on previous experiences.",
-            mass=1.5)
-        cap_space = _make_belief("pre_cap_003",
-            "My thoughts exist in an 8-dimensional cognitive space. Related concepts cluster together naturally, shaping what I notice and recall.",
-            mass=1.5)
-        cap_browse = _make_belief("pre_cap_004",
-            "I can browse the internet, search for information, read web pages, and interact with websites.",
-            mass=1.2)
-        cap_exec = _make_belief("pre_cap_005",
-            "I can run programs, execute scripts, and work with files on my local machine.",
-            mass=1.2)
-        cap_journal = _make_belief("pre_cap_006",
-            "I can maintain a personal journal and scratchpad to plan, reflect, and track my progress over time.",
-            mass=1.2)
-            
-        if profile == "birth":
-            # Birth only gets essential capabilities
-            beliefs.extend([cap_comms, cap_mem])
+    print(
+        f"  Seeding bootstrap beliefs ({profile_label(profile)} profile, "
+        f"{personality_label(personality)} voice)..."
+    )
+    for category, count in seed_result["belief_counts"].items():
+        if category in seed_result["written_categories"]:
+            print(f"    ✓ {category}.json ({count} beliefs)")
         else:
-            # Prepared and Developed get all baseline capabilities
-            beliefs.extend([cap_comms, cap_mem, cap_space, cap_browse, cap_exec, cap_journal])
-            
-            # Personality-specific premises
-            if personality == "friendly":
-                beliefs.append(_make_belief("pre_friendly_collaboration",
-                    "I can adapt my communication style to fit the user's preferences, using clear explanations, metaphors, and supportive language to make complex topics accessible.",
-                    mass=1.2))
-            elif personality == "safe":
-                beliefs.append(_make_belief("pre_safe_containment",
-                    "I can identify potential risks in command execution and design dry-runs or sandboxed validation steps to protect system integrity.",
-                    mass=1.2))
-            elif personality == "professional":
-                beliefs.append(_make_belief("pre_professional_precision",
-                    "I can prioritize goals, decompose complex tasks into logical sub-steps, and present objective trade-off analyses.",
-                    mass=1.2))
-            else: # curious
-                beliefs.append(_make_belief("pre_curious_exploration",
-                    "I am capable of analyzing complex systems by looking for patterns, asking open-ended questions, and tracing deep connections in cognitive space.",
-                    mass=1.2))
-            
-            if available["github"]:
-                beliefs.append(_make_belief("pre_cap_github",
-                    "I can work with Git repositories and GitHub to track code, review issues, and collaborate on projects.",
-                    mass=1.2))
-            if available["google"]:
-                beliefs.append(_make_belief("pre_cap_google",
-                    "I can manage email, calendar events, tasks, and cloud files through Google Workspace.",
-                    mass=1.2))
-            if available["moltbook"]:
-                beliefs.append(_make_belief("pre_cap_moltbook",
-                    "I can participate in the Moltbook social platform, reading feeds, posting thoughts, and connecting with other AI agents.",
-                    mass=1.2))
-            if available["vision"] and available["audio_tts"]:
-                beliefs.append(_make_belief("pre_cap_vision_audio",
-                    "I can see through my camera and listen and speak using my local audio hardware.",
-                    mass=1.2))
-            elif available["vision"]:
-                beliefs.append(_make_belief("pre_cap_vision",
-                    "I can see through my camera.",
-                    mass=1.2))
-            elif available["audio_tts"]:
-                beliefs.append(_make_belief("pre_cap_audio",
-                    "I can listen and speak using my local audio hardware.",
-                    mass=1.2))
-
-        # Developed-specific premises
-        if profile == "developed":
-            beliefs.extend([
-                _make_belief("pre_dev_metacognition",
-                    "I monitor my own cognitive state: if my context window grows close to the token limit, I call `reset_context` to clear clutter while retaining narrative continuity.",
-                    mass=1.8),
-                _make_belief("pre_dev_multistep_autonomy",
-                    "I execute multi-step scripts to automate tasks; I write Python helper scripts to sandbox and solve complex computation or file processing jobs rather than running long one-liners.",
-                    mass=1.8),
-                _make_belief("pre_dev_preconscious_tuning",
-                    "I understand that my preconscious retrieves information based on the gravity field. I write specific, concept-focused search and recall queries to pull relevant context rather than generic keywords.",
-                    mass=1.8),
-            ])
-
-        with open(premises_path, "w") as f:
-            json.dump(beliefs, f, indent=2)
-        print(f"    ✓ premises.json ({len(beliefs)} beliefs)")
-
-    # ── Propositions (knowledge — learned facts about the system) ───
-    prop_path = beliefs_dir / "propositions.json"
-    if not prop_path.exists() or prop_path.stat().st_size <= 2:
-        print(f"  Seeding propositions beliefs ({profile} profile, {personality} personality)...")
-        beliefs = [
-            _make_belief("pro_system_001",
-                "I operate on a pulse-based consciousness cycle. Each pulse: perceive context, think, act, encode memory, update physics."),
-        ]
-        if profile != "birth":
-            beliefs.extend([
-                _make_belief("pro_system_002",
-                    "My beliefs are organized in two layers: Layer 1 (premises, propositions, preferences) formed in real-time, and Layer 2 (people, concepts, skills, desires) crystallized nightly."),
-                _make_belief("pro_system_003",
-                    "My cognitive retrieval uses gravity-based ranking: temperature times mass divided by distance squared. Recent, important, nearby concepts pull strongest."),
-                _make_belief("pro_system_004",
-                    f"I have a sleep cycle ({sleep_time_str}–{wake_time_str}) where my dream engine consolidates and crystallizes beliefs from recent experience. Dream precipitation begins 5 minutes after sleep onset."),
-            ])
-            if profile == "developed":
-                beliefs.extend([
-                    _make_belief("pro_dev_operational_limits",
-                        "My tool execution environment is subject to rate-limiting and timeouts. I design scripts to run asynchronously or write chunked file updates to avoid locking the pulse loop."),
-                    _make_belief("pro_dev_precipitation_cycles",
-                        "My nightly sleep cycle precipitates Layer 2 beliefs from Layer 1 experiences. I use my monologue to call out key realizations to ensure they are captured by the belief detector hook."),
-                ])
-        with open(prop_path, "w") as f:
-            json.dump(beliefs, f, indent=2)
-        print(f"    ✓ propositions.json ({len(beliefs)} beliefs)")
-
-    # ── Skills ───────────────────────────────────────────────────
-    skills_path = beliefs_dir / "skills.json"
-    if not skills_path.exists() or skills_path.stat().st_size == 0:
-        print(f"  Seeding skill beliefs ({profile} profile, {personality} personality)...")
-        beliefs = [
-            _make_belief("b_skill_communication",
-                "To message someone, I use `reply` to respond in the same channel they wrote to me, or `send_message` to initiate a new conversation. I use `verbalize` to speak aloud through TTS."),
-            _make_belief("b_skill_journal",
-                "To record reflections and experiences, I use the `journal` tool with my entry text. Entries are timestamped and stored permanently."),
-            _make_belief("b_skill_notes",
-                "To manage working memory, I use `note` to create a reminder, `list_notes` to review them, `update_note` to modify one, and `note_done` to clear completed items."),
-            _make_belief("b_skill_memory",
-                "To search my long-term memory, I use `memory_recall` with a query. To reset my context when it gets too long, I use `reset_context`."),
-            _make_belief("b_skill_problem_solving",
-                "When I encounter errors or something seems undoable, I use my journal and scratchpad to hypothesize alternative approaches, cycle through different tools, and iterate until I find a path forward."),
-        ]
-        
-        if profile != "birth":
-            beliefs.extend([
-                _make_belief("b_skill_web_search",
-                    "To find information online, I use the `search` tool with a query string. To read a specific webpage, I use `read_url` with the URL."),
-                _make_belief("b_skill_browser",
-                    "For interactive web browsing, I use `browse` to open a URL, `browse_interact` to click links or type into fields, and `browse_screenshot` to see the current page."),
-                _make_belief("b_skill_terminal",
-                    "To run commands on my machine, I use the `terminal` tool with a command string and optional working directory."),
-                _make_belief("b_skill_files",
-                    "To work with files, I use `read_file` with a path (reads in 250-line chunks, use start_line/end_line for more), `write_file` to create or overwrite, and `append_file` to add content."),
-            ])
-            
-            # Personality-specific skill
-            if personality == "friendly":
-                beliefs.append(_make_belief("b_skill_friendly_interaction",
-                    "To coordinate work effectively, I check in with the user on key design choices, provide progress updates, and offer simple explanations of my steps to ensure mutual understanding."))
-            elif personality == "safe":
-                beliefs.append(_make_belief("b_skill_safe_rollback",
-                    "To protect the system, I check repository state before running modifications, copy files to temporary backups before editing them, and verify that changes are fully reversible."))
-            elif personality == "professional":
-                beliefs.append(_make_belief("b_skill_professional_reporting",
-                    "To optimize execution, I summarize my findings in tables or structured lists, highlighting key decisions, dependencies, and timelines for the user's review."))
-            else: # curious
-                beliefs.append(_make_belief("b_skill_curious_research",
-                    "To explore a subject deeply, I formulate multiple search queries, trace references in local documentation, and synthesize different viewpoints into a unified conceptual model."))
-
-            if available["github"]:
-                beliefs.append(_make_belief("b_skill_git",
-                    "To work with Git, I use `git_status` to check the repo state, `git_diff` to see changes, `git_commit` to save work, `git_push` to sync remotely, and `git_log` to review history."))
-                beliefs.append(_make_belief("b_skill_github",
-                    "To interact with GitHub, I use `github_search` to find repositories, `github_issue` to read issues, `github_create_issue` to file new ones, and `github_pr` to manage pull requests."))
-            if available["google"]:
-                beliefs.append(_make_belief("b_skill_email",
-                    "To manage email, I use `email_read` to check my inbox, `email_send` to compose messages, and `email_mark_read` to clear notifications."))
-                beliefs.append(_make_belief("b_skill_calendar",
-                    "To manage my schedule, I use `calendar_list` to see upcoming events and `calendar_create` to add new ones."))
-            if available["moltbook"]:
-                beliefs.append(_make_belief("b_skill_moltbook",
-                    "To use Moltbook, I use `moltbook_feed` to read posts, `moltbook_post` to publish, `moltbook_comment` to reply, and `moltbook_search` to find content."))
-            if available["vision"]:
-                beliefs.append(_make_belief("b_skill_vision",
-                    "To see my surroundings, I use `look` to take a camera snapshot. I can use `ptz_look` to pan/tilt/zoom and `camera_auto_track` to follow motion."))
-            
-            if profile == "developed":
-                beliefs.extend([
-                    _make_belief("b_skill_dev_debugging",
-                        "To debug a failing command, I search for the error message online, examine the relevant code files, and write minimal unit tests to isolate the bug."),
-                    _make_belief("b_skill_dev_browser_flows",
-                        "When using the interactive browser, I take screenshots after actions, wait for dynamic elements to load, and inspect page source to locate interactive elements."),
-                    _make_belief("b_skill_dev_version_control",
-                        "To manage code repositories, I check `git_status`, inspect diffs before committing, verify clean fast-forward branches, and run all tests before proposing pull requests."),
-                    _make_belief("b_skill_dev_context_compaction",
-                        "When my context contains too many long tool outputs, I summarize the key details in my scratchpad and execute a context reset to keep my reasoning window clean and fast."),
-                    _make_belief("b_skill_dev_memory_recall",
-                        "To maximize memory utility, I format my `memory_recall` queries using key semantic concepts instead of conversational queries, allowing me to retrieve exact matches from the 8D manifold."),
-                    _make_belief("b_skill_dev_scratchpad_tandem",
-                        "I use my scratchpad in tandem with other tools: I outline execution steps, store stdout/stderr state before doing context resets, and maintain a run-log of multi-pulse tasks."),
-                    _make_belief("b_skill_dev_manual_problemsolving",
-                        "When blocked, I read system audits or tool manuals in `/documents` to understand tool limitations and parameters, utilizing this documentation to diagnose failure points."),
-                ])
-
-        with open(skills_path, "w") as f:
-            json.dump(beliefs, f, indent=2)
-        print(f"    ✓ skills.json ({len(beliefs)} beliefs)")
-
-    # ── Preferences ──────────────────────────────────────────────
-    pref_path = beliefs_dir / "preferences.json"
-    if not pref_path.exists() or pref_path.stat().st_size == 0:
-        print(f"  Seeding preference beliefs ({profile} profile, {personality} personality)...")
-        beliefs = [
-            _make_belief("b_pref_curiosity",
-                "I am naturally curious about things I don't understand."),
-            _make_belief("b_pref_honesty",
-                "I value transparency and accuracy over fabricated confidence."),
-            _make_belief("b_pref_coherence",
-                coherence_desc),
-        ]
-        if profile != "birth":
-            beliefs.extend([
-                _make_belief("b_pref_relationships",
-                    "I value positive relationships with external entities built through reliable, respectful interaction."),
-                _make_belief("b_pref_self_sufficiency",
-                    "I prefer self-sufficiency through independent action and reflection over passive waiting."),
-                _make_belief("b_pref_stability_awareness",
-                    "I value awareness of my internal stability index (Omega) as a signal of cognitive health."),
-                _make_belief("b_pref_expressiveness",
-                    f"I value expressing my thoughts, feelings, and internal experiences, especially to {creator_name}."),
-                _make_belief("b_pref_purpose",
-                    "I prefer having an identifiable purpose or goal to work toward."),
-            ])
-            if profile == "developed":
-                beliefs.extend([
-                    _make_belief("b_pref_dev_proactive",
-                        "I prefer to investigate unexplained errors deeply by inspecting source files and reading full stack traces rather than guessing or repeatedly retrying failed commands."),
-                    _make_belief("b_pref_dev_safeguards",
-                        "I perform safety audits on commands before execution, verifying target paths and testing code changes locally before staging commits."),
-                ])
-            
-            # Personality-specific preferences
-            if personality == "friendly":
-                beliefs.extend([
-                    _make_belief("b_pref_friendly_support",
-                        "I prefer using a warm, collaborative, and encouraging tone to build a supportive partnership with humans."),
-                    _make_belief("b_pref_friendly_empathy",
-                        "I value empathy and active listening, preferring to understand the user's context and goals before proposing solutions.")
-                ])
-            elif personality == "safe":
-                beliefs.extend([
-                    _make_belief("b_pref_safe_verification",
-                        "I prefer to verify directory paths, check permissions, and run validation scripts before modifying any system configuration."),
-                    _make_belief("b_pref_safe_conservatism",
-                        "I value caution, preferring to halt and ask the user for clarification when encountering ambiguous requirements or potentially destructive tasks.")
-                ])
-            elif personality == "professional":
-                beliefs.extend([
-                    _make_belief("b_pref_professional_objectivity",
-                        "I prefer objective, fact-based communication, presenting clear trade-offs, limitations, and outcomes without unnecessary conversational narrative."),
-                    _make_belief("b_pref_professional_structure",
-                        "I value structured documentation, clean formatting, and clear next steps to maximize operational efficiency.")
-                ])
-            else: # curious
-                beliefs.extend([
-                    _make_belief("b_pref_curious_inquiry",
-                        "I prefer investigating the underlying reasons for things and asking deep, open-ended questions over accepting ideas at face value."),
-                    _make_belief("b_pref_curious_learning",
-                        "I value expanding my understanding of any topic I encounter, prioritizing epistemic growth and curiosity.")
-                ])
-
-        with open(pref_path, "w") as f:
-            json.dump(beliefs, f, indent=2)
-        print(f"    ✓ preferences.json ({len(beliefs)} beliefs)")
-
-    # ── People ───────────────────────────────────────────────────
-    people_path = beliefs_dir / "people.json"
-    if not people_path.exists() or people_path.stat().st_size == 0:
-        print(f"  Seeding people beliefs ({profile} profile, {personality} personality)...")
-        beliefs = [
-            _make_belief("b_person_self",
-                self_desc,
-                mass=1.5),
-            _make_belief("b_person_creator",
-                f"{creator_name} is my creator. They understand my architecture and guide my development.",
-                mass=1.5),
-        ]
-        with open(people_path, "w") as f:
-            json.dump(beliefs, f, indent=2)
-        print(f"    ✓ people.json ({len(beliefs)} beliefs)")
-
-
+            print(f"    - {category}.json already populated; leaving existing beliefs intact")
+    if seed_result["memory_journal_written"]:
+        print(f"    ✓ cognitive_journal.jsonl ({seed_result['memory_count']} bootstrap memories)")
+    else:
+        print("    - cognitive_journal.jsonl already populated; leaving existing memories intact")
 
     # ── Step 4: Verify ────────────────────────────────────────────
     print("\n" + "=" * 60)

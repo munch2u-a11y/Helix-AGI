@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QSpacerItem, QSizePolicy, QFrame, QCheckBox,
 )
 from PyQt6.QtCore import Qt
+from bootstrap import personality_label, profile_label
 from wizard.ai_helper import AiHelperBanner
 
 
@@ -101,6 +102,13 @@ class SummaryPage(QWidget):
 
         cfg = self.wizard.config
         agent_name = cfg.get("agent_name", "Helix")
+        try:
+            from tools.tool_declarations import normalize_active_toolsets
+            enabled_toolsets = sorted(
+                normalize_active_toolsets(set(cfg.get("tool_set", [])))
+            )
+        except Exception:
+            enabled_toolsets = sorted(set(cfg.get("tool_set", [])) | {"operational"})
 
         # Update launch button text
         self.launch_btn.setText(f"🚀  Create {agent_name}")
@@ -110,12 +118,12 @@ class SummaryPage(QWidget):
             ("🤖  Identity", [
                 ("Agent Name", agent_name),
                 ("Creator", cfg.get("creator_name", "")),
-                ("Profile", cfg.get("bootstrap_profile", "prepared").title()),
-                ("Personality", cfg.get("personality", "curious").title()),
+                ("Profile", profile_label(cfg.get("bootstrap_profile", "standard"))),
+                ("Voice", personality_label(cfg.get("personality", "curious"))),
             ]),
             ("🔑  Credentials", self._build_credential_rows(cfg)),
             ("🔧  Tools", [
-                ("Enabled Toolsets", ", ".join(cfg.get("tool_set", ["core"]))),
+                ("Enabled Toolsets", ", ".join(enabled_toolsets)),
             ]),
             ("🔒  Safety", [
                 ("Safety Mode", "Enabled ✅" if cfg.get("safety_mode", True) else "Disabled ⚠️"),
