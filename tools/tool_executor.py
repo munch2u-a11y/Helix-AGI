@@ -2056,7 +2056,7 @@ class ToolExecutor:
                 return f"I listened for {duration} seconds but heard only silence."
 
             from faster_whisper import WhisperModel
-            model = WhisperModel("base.en", device="cpu", compute_type="int8")
+            model = WhisperModel("small.en", device="cpu", compute_type="int8")
             segments, _ = model.transcribe(audio_float, beam_size=1, language="en")
             transcript = " ".join(seg.text for seg in segments).strip()
             return f"I heard ({duration}s): {transcript}" if transcript else f"Silence for {duration}s."

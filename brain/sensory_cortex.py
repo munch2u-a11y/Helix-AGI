@@ -794,7 +794,7 @@ class SensoryCortex:
 
                 try:
                     if not self._whisper_model:
-                        self._whisper_model = WhisperModel("base.en", device="cpu", compute_type="int8")
+                        self._whisper_model = WhisperModel("small.en", device="cpu", compute_type="int8")
                     segments, _ = self._whisper_model.transcribe(
                         audio_float, 
                         beam_size=1, 
