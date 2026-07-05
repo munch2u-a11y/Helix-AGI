@@ -2063,7 +2063,15 @@ class ToolExecutor:
 
             from faster_whisper import WhisperModel
             model = WhisperModel("small.en", device="cpu", compute_type="int8")
-            segments, _ = model.transcribe(audio_float, beam_size=1, language="en")
+            segments, _ = model.transcribe(
+                audio_float, 
+                beam_size=1, 
+                language="en",
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=400),
+                condition_on_previous_text=False,
+                initial_prompt="If you hear only silence or ambient noise, please output [Silence]. Do not invent speech."
+            )
             transcript = " ".join(seg.text for seg in segments).strip()
             return f"I heard ({duration}s): {transcript}" if transcript else f"Silence for {duration}s."
         except Exception as e:

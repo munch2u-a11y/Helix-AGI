@@ -817,7 +817,9 @@ class SensoryCortex:
                         beam_size=1, 
                         language="en",
                         vad_filter=True,
-                        condition_on_previous_text=False
+                        vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=400),
+                        condition_on_previous_text=False,
+                        initial_prompt="If you hear only silence or ambient noise, please output [Silence]. Do not invent speech."
                     )
                     transcribed = " ".join(seg.text for seg in segments).strip()
                     if transcribed:
