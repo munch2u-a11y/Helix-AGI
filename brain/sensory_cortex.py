@@ -808,6 +808,25 @@ class SensoryCortex:
             audio_float = audio_data.flatten().astype(np.float32) / 32768.0
             rms = np.sqrt(np.mean(audio_float ** 2))
             if rms >= 0.01:
+                # ── Clipping detection + normalization ────────────────
+                peak = np.max(np.abs(audio_float))
+                clip_count = int(np.sum(np.abs(audio_data.flatten()) >= 32700))
+                clip_pct = 100 * clip_count / len(audio_float)
+
+                if clip_pct > 1.0:
+                    logger.warning(
+                        f"Mic audio clipping detected: {clip_pct:.1f}% of "
+                        f"samples clipped (RMS={rms:.3f}, peak={peak:.3f}). "
+                        f"Reduce mic gain in OS mixer to prevent VAD failures."
+                    )
+
+                # Normalize to target peak of ~0.7 so Whisper's VAD can
+                # reliably distinguish speech from noise
+                if peak > 0.01:
+                    target_peak = 0.7
+                    gain = target_peak / peak
+                    audio_float = audio_float * gain
+
                 try:
                     if not self._whisper_model:
                         self._whisper_model = WhisperModel("base.en", device="cpu", compute_type="int8")
