@@ -182,6 +182,14 @@ class Preconscious:
         self._last_selected_beliefs = []
         self._last_trigger_text = ""
 
+        # Injection gravity decay — every time a belief is injected within
+        # a context window, its effective gravity halves for subsequent
+        # queries.  A belief at g=110 would score g=55 on its second
+        # encounter, g=27.5 on its third, etc.  This naturally caps even
+        # the heaviest beliefs to ~1-2 injections per window without hard
+        # blacklisting, and resets on context compression / reset.
+        self._injection_gravity_decay: Dict[str, int] = {}
+
         # Native HF Summarizer
         self.summarizer = LocalSummarizer()
 
@@ -559,16 +567,23 @@ class Preconscious:
         return "\n".join(lines), summaries, injected_ids
 
     def reset_lexicon_blacklist(self):
-        """Clear the lexicon cooldown map — called on context compression.
+        """Clear the lexicon cooldown map and injection gravity decay —
+        called on context compression / reset.
 
         After compression, the context window is effectively new and
         lexicon entries should be eligible for re-injection if their
-        terms appear again.
+        terms appear again.  Gravity decay is also cleared so beliefs
+        start fresh at full gravitational pull.
         """
         count = len(self._lexicon_blacklist)
         self._lexicon_blacklist.clear()
         if count:
             logger.debug(f"Lexicon blacklist reset ({count} entries cleared)")
+
+        decay_count = len(self._injection_gravity_decay)
+        self._injection_gravity_decay.clear()
+        if decay_count:
+            logger.debug(f"Injection gravity decay reset ({decay_count} beliefs cleared)")
 
     # ── Somatic Awareness (Stability Sentinel) ────────────────────────
 
@@ -1279,6 +1294,13 @@ class Preconscious:
             dist_sq = float(np.sum((b["position_8d"] - query_pos) ** 2))
             gravity = (temperature * mass) / (dist_sq + 1e-4)
 
+            # Apply injection decay — halve gravity for each prior
+            # injection of this belief within the current context window.
+            if bid:
+                decay_count = self._injection_gravity_decay.get(bid, 0)
+                if decay_count > 0:
+                    gravity *= 0.5 ** decay_count
+
             scored.append({
                 "id": bid or "",
                 "content": content,
@@ -1888,6 +1910,13 @@ class Preconscious:
             self._flush_hebbian_positions()
 
         surfaced_ids = [b.get("id", "") for b in final_selection if b.get("id")]
+
+        # Record injection counts for gravity decay — each injection
+        # halves the effective gravity for subsequent queries.
+        for b in final_selection:
+            bid = b.get("id")
+            if bid:
+                self._injection_gravity_decay[bid] = self._injection_gravity_decay.get(bid, 0) + 1
 
         if not belief_texts:
             return "", []
