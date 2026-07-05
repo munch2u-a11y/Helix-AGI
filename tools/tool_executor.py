@@ -2076,11 +2076,10 @@ class ToolExecutor:
         return self._vision_cortex
 
     def _exec_look(self, tag: ActionTag) -> str:
-        """Camera capture + vision analysis via VisionCortex.
+        """Asynchronously focus the camera or next passive vision cortex input.
 
-        Routes through the Gemma3 4B vision model via Ollama.
-        The cortex handles multi-frame capture, visual memory context,
-        and scene reconciliation.
+        Queues the focus target to the background sensory cortex loop.
+        The visual description will arrive on the next conscious heartbeat/pulse tick.
         """
         focus = (tag.content or tag.param or "").strip()
 

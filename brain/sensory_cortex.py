@@ -87,6 +87,7 @@ class SensoryCortex:
         self._audio_lock = threading.Lock()
         # Ensure model for background audio
         self._whisper_model = None
+        self._pending_focus: Optional[str] = None
 
         # Provider settings: default to 'local' for cost efficiency
         self._provider = os.environ.get("HELIX_VISION_PROVIDER", "local").lower()
@@ -173,52 +174,16 @@ class SensoryCortex:
     def look(self, focus: str = "") -> str:
         """Process a visual observation request from consciousness.
 
-        Captures 2 frames (300ms apart) for consistency verification.
-        Feeds previous scene context so the model can flag changes.
-
-        Args:
-            focus: Optional focus description ("the desk", "the monitor", etc.)
-
-        Returns:
-            Natural language scene description.
+        Sets the focus target for the next passive sensory tick, avoiding
+        blocking image capture and inference.
         """
-        # Capture 2 frames
-        frames = self._capture_frames(count=2, interval_ms=300)
-        if not frames:
-            return "Camera not available — couldn't capture any images."
-
-        # Build context from visual memory
-        context = self._build_visual_context()
-
-        # Analyze with Moondream
-        try:
-            self._ensure_model()
-        except Exception as e:
-            return f"Vision system unavailable: {e}"
-
-        # Use the most recent frame for analysis (second frame, after auto-exposure)
-        image_bytes = frames[-1]
-
-        # Build the prompt
-        prompt = "Describe what you see in this image. Be factual and precise."
-        if focus:
-            prompt += f" Focus on: {focus}"
-        if context:
-            prompt += f"\n\nPrevious scene context: {context}"
-            prompt += "\nNote any changes from the previous observation."
-
-        try:
-            description = self._analyze_image(image_bytes, prompt)
-        except Exception as e:
-            return f"Vision analysis failed: {e}"
-
-        # Store to visual memory
-        self._store_observation(description, focus)
-
-        # Update journal with environmental info
-        self._update_journal_from_observation(description)
-
-        return description
+        self._pending_focus = (focus or "").strip()
+        if self._pending_focus:
+            logger.info(f"Conscious focus set to: {self._pending_focus}")
+            return f"Camera focus target set to: '{self._pending_focus}'. Details will arrive in the next sensory reality pulse."
+        else:
+            logger.info("Conscious focus set to general observation")
+            return "General scene observation queued. Details will arrive in the next sensory reality pulse."
 
     # ══════════════════════════════════════════════════════════════════
     # CONSCIOUS-FACING: RECORD VIDEO
@@ -850,8 +815,17 @@ class SensoryCortex:
             try:
                 # Use the local Ollama vision model
                 self._ensure_model()
+                
+                # Check for pending focus
+                focus = self._pending_focus
+                self._pending_focus = None  # Consume focus target immediately
+                
                 prompt = "Describe exactly what you see right now in 1 sentence. Be factual and direct. Ignore the timestamp."
+                if focus:
+                    prompt += f" Focus on: {focus}"
+                    
                 visual_desc = self._analyze_image(frame, prompt)
+                self._store_observation(visual_desc, focus or "")
             except Exception as e:
                 logger.error(f"Background vision parsing failed: {e}")
                 
