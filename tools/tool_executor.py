@@ -2018,6 +2018,12 @@ class ToolExecutor:
             duration = 5
 
         try:
+            # Waking the cortex allows the system to capture visual context while actively listening
+            if hasattr(self, '_get_vision_cortex'):
+                cortex = self._get_vision_cortex()
+                if hasattr(cortex, 'wake_cortex'):
+                    cortex.wake_cortex(5)
+
             import sounddevice as sd
             import numpy as np
 

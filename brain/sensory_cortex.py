@@ -88,6 +88,7 @@ class SensoryCortex:
         # Ensure model for background audio
         self._whisper_model = None
         self._pending_focus: Optional[str] = None
+        self._attention_ttl = 0  # Sensory Gating: pulses remaining before sleep
 
         # Provider settings: default to 'local' for cost efficiency
         self._provider = os.environ.get("HELIX_VISION_PROVIDER", "local").lower()
@@ -177,6 +178,7 @@ class SensoryCortex:
         Sets the focus target for the next passive sensory tick, avoiding
         blocking image capture and inference.
         """
+        self.wake_cortex(5)
         self._pending_focus = (focus or "").strip()
         if self._pending_focus:
             logger.info(f"Conscious focus set to: {self._pending_focus}")
@@ -753,6 +755,10 @@ class SensoryCortex:
             
         cap.release()
 
+    def wake_cortex(self, pulses: int = 5):
+        """Sensory Gating: Keep the sensory cortex active for the next N pulses."""
+        self._attention_ttl = max(self._attention_ttl, pulses)
+
     def pulse_tick(self) -> Optional[dict]:
         """Called each consciousness heartbeat to fetch sensory reality.
         Runs fully locally to avoid API costs and latency.
@@ -760,6 +766,17 @@ class SensoryCortex:
         if not self._passive_active:
             return None
             
+        if self._attention_ttl <= 0:
+            # Spotlight is off. Do not poll sensors.
+            # Clear pending buffers to avoid a backlog when we wake up.
+            with self._audio_lock:
+                self._audio_buffer.clear()
+            self._pending_focus = None
+            return None
+            
+        # Spotlight is on, decrement TTL
+        self._attention_ttl -= 1
+
         # 1. Pop audio
         audio_text = "Silence."
         with self._audio_lock:
