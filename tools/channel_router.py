@@ -12,13 +12,17 @@ Two routing modes:
   [MESSAGE:name] → Routes to the person's DEFAULT channel from contacts.json.
                    For proactive outreach — when Helix initiates contact.
 
-  [TELEGRAM:name] / [DISCORD:name] → Explicit channel override.
+  [TELEGRAM:name] / [DISCORD:name] / [SLACK:name] / [WHATSAPP:name]
+                   → Explicit channel override.
                    Extended tools, injected by preconscious when relevant.
 
 Channels supported:
   - telegram: python-telegram-bot async send
+  - discord: discord.py async send
+  - slack: slack-bolt Socket Mode send
+  - whatsapp: WhatsApp Business Cloud API send
+  - webhook: Generic bidirectional webhook (Zapier, n8n, Matrix, etc.)
   - local_speech: SPEAK tag (handled by tool_executor, not here)
-  - discord: placeholder (future)
   - email: placeholder (future)
 """
 
@@ -45,6 +49,10 @@ class ChannelRouter:
         self.data_dir = data_dir
         self.contacts: Dict[str, dict] = {}
         self._telegram_bot = None
+        self._discord_bot = None
+        self._slack_bot = None
+        self._whatsapp_bot = None
+        self._webhook_channel = None
         self._last_inbound: Dict[str, dict] = {}  # name_lower → {channel, chat_id, time}
         self._load_contacts()
 
@@ -75,6 +83,26 @@ class ChannelRouter:
         """Wire the Telegram bot instance."""
         self._telegram_bot = bot
         logger.info("Telegram bot wired to channel router")
+
+    def set_discord_bot(self, bot):
+        """Wire the Discord bot instance."""
+        self._discord_bot = bot
+        logger.info("Discord bot wired to channel router")
+
+    def set_slack_bot(self, bot):
+        """Wire the Slack bot instance."""
+        self._slack_bot = bot
+        logger.info("Slack bot wired to channel router")
+
+    def set_whatsapp_bot(self, bot):
+        """Wire the WhatsApp bot instance."""
+        self._whatsapp_bot = bot
+        logger.info("WhatsApp bot wired to channel router")
+
+    def set_webhook_channel(self, channel):
+        """Wire the generic Webhook channel instance."""
+        self._webhook_channel = channel
+        logger.info("Webhook channel wired to channel router")
 
     # ── Contact Resolution ────────────────────────────────────────────
 
@@ -138,6 +166,21 @@ class ChannelRouter:
                     "channel_id": kwargs["channel_id"],
                 }
                 new_contact["default_channel"] = "discord"
+            elif channel == "slack" and kwargs.get("channel_id"):
+                new_contact["channels"]["slack"] = {
+                    "channel_id": kwargs["channel_id"],
+                }
+                new_contact["default_channel"] = "slack"
+            elif channel == "whatsapp" and kwargs.get("chat_id"):
+                new_contact["channels"]["whatsapp"] = {
+                    "chat_id": kwargs["chat_id"],
+                }
+                new_contact["default_channel"] = "whatsapp"
+            elif channel == "webhook" and kwargs.get("channel_id"):
+                new_contact["channels"]["webhook"] = {
+                    "channel_id": kwargs["channel_id"],
+                }
+                new_contact["default_channel"] = "webhook"
             elif channel == "dashboard":
                 new_contact["channels"]["dashboard"] = {}
                 new_contact["default_channel"] = "dashboard"
@@ -210,18 +253,21 @@ class ChannelRouter:
                 channel_data=channels[default],
             )
 
-        # Otherwise, priority: telegram > discord > email
-        if "telegram" in channels and channels["telegram"].get("chat_id"):
-            return self._send_via_channel(
-                recipient=recipient,
-                message=message,
-                channel="telegram",
-                channel_data=channels["telegram"],
-            )
-
-        if "discord" in channels:
-            logger.info(f"Discord for {display} — not yet implemented")
-            return False
+        # Otherwise, priority: telegram > discord > slack > whatsapp > webhook > email
+        for ch_name, id_field in [
+            ("telegram", "chat_id"),
+            ("discord", "channel_id"),
+            ("slack", "channel_id"),
+            ("whatsapp", "chat_id"),
+            ("webhook", "channel_id"),
+        ]:
+            if ch_name in channels and (not id_field or channels[ch_name].get(id_field)):
+                return self._send_via_channel(
+                    recipient=recipient,
+                    message=message,
+                    channel=ch_name,
+                    channel_data=channels[ch_name],
+                )
 
         if "email" in channels:
             logger.info(f"Email for {display} — not yet implemented")
@@ -272,13 +318,34 @@ class ChannelRouter:
                 return False
             return self._send_telegram(message, chat_id, recipient)
 
+        if channel == "discord":
+            channel_id = channel_data.get("channel_id")
+            if not channel_id:
+                logger.warning(f"No channel_id for {recipient} on Discord")
+                return False
+            return self._send_discord(message, channel_id, recipient)
+
+        if channel == "slack":
+            channel_id = channel_data.get("channel_id")
+            if not channel_id:
+                logger.warning(f"No channel_id for {recipient} on Slack")
+                return False
+            return self._send_slack(message, channel_id, recipient)
+
+        if channel == "whatsapp":
+            chat_id = channel_data.get("chat_id")
+            if not chat_id:
+                logger.warning(f"No chat_id for {recipient} on WhatsApp")
+                return False
+            return self._send_whatsapp(message, chat_id, recipient)
+
+        if channel == "webhook":
+            channel_id = channel_data.get("channel_id")
+            return self._send_webhook(message, channel_id, recipient)
+
         if channel == "local_speech":
             # Handled by tool_executor [SPEAK:], not here
             logger.info(f"Local speech for {recipient} — use [SPEAK:] tag instead")
-            return False
-
-        if channel == "discord":
-            logger.info(f"Discord send not yet implemented")
             return False
 
         if channel == "email":
@@ -300,6 +367,62 @@ class ChannelRouter:
             return success
         except Exception as e:
             logger.error(f"Telegram send failed: {e}")
+            return False
+
+    def _send_discord(self, message: str, channel_id: int, display_name: str) -> bool:
+        """Send via Discord bot."""
+        if not self._discord_bot:
+            logger.warning("Discord bot not initialized")
+            return False
+        try:
+            success = self._discord_bot.send_message(text=message, channel_id=channel_id)
+            if success:
+                logger.info(f"Discord → {display_name} ({channel_id}): {message[:80]}")
+            return success
+        except Exception as e:
+            logger.error(f"Discord send failed: {e}")
+            return False
+
+    def _send_slack(self, message: str, channel_id: str, display_name: str) -> bool:
+        """Send via Slack bot."""
+        if not self._slack_bot:
+            logger.warning("Slack bot not initialized")
+            return False
+        try:
+            success = self._slack_bot.send_message(text=message, channel_id=channel_id)
+            if success:
+                logger.info(f"Slack → {display_name} ({channel_id}): {message[:80]}")
+            return success
+        except Exception as e:
+            logger.error(f"Slack send failed: {e}")
+            return False
+
+    def _send_whatsapp(self, message: str, chat_id: str, display_name: str) -> bool:
+        """Send via WhatsApp Business API."""
+        if not self._whatsapp_bot:
+            logger.warning("WhatsApp bot not initialized")
+            return False
+        try:
+            success = self._whatsapp_bot.send_message(text=message, chat_id=chat_id)
+            if success:
+                logger.info(f"WhatsApp → {display_name} ({chat_id}): {message[:80]}")
+            return success
+        except Exception as e:
+            logger.error(f"WhatsApp send failed: {e}")
+            return False
+
+    def _send_webhook(self, message: str, channel_id: str, display_name: str) -> bool:
+        """Send via generic Webhook channel."""
+        if not self._webhook_channel:
+            logger.warning("Webhook channel not initialized")
+            return False
+        try:
+            success = self._webhook_channel.send_message(text=message, channel_id=channel_id)
+            if success:
+                logger.info(f"Webhook → {display_name} ({channel_id}): {message[:80]}")
+            return success
+        except Exception as e:
+            logger.error(f"Webhook send failed: {e}")
             return False
 
     # ── Contact Metadata ──────────────────────────────────────────────

@@ -106,6 +106,10 @@ from llm.providers.base import detect_available_provider, ProviderConfig
 from tools.tool_executor import ToolExecutor
 from tools.channel_router import ChannelRouter
 from comms.telegram_bot import HelixTelegramBot
+from comms.discord_bot import HelixDiscordBot
+from comms.slack_bot import HelixSlackBot
+from comms.whatsapp_bot import HelixWhatsAppBot
+from comms.webhook_channel import HelixWebhookChannel
 from brain.stability_sentinel import StabilitySentinel
 from brain.sensory_cortex import SensoryCortex
 
@@ -218,10 +222,26 @@ def setup_helix(data_dir: str = "data"):
     print(f"  Contacts: {len(channel_router.contacts)} known")
     print(f"  Tools: executor ready")
 
-    # ── 3b. Telegram Bot ────────────────────────────────────────────
+    # ── 3b. Communication Bots ────────────────────────────────────────────
     telegram_bot = HelixTelegramBot()
     channel_router.set_telegram_bot(telegram_bot)
     print(f"  Telegram: {'enabled' if telegram_bot.enabled else 'disabled (no token)'}")
+
+    discord_bot = HelixDiscordBot()
+    channel_router.set_discord_bot(discord_bot)
+    print(f"  Discord: {'enabled' if discord_bot.enabled else 'disabled (no token)'}")
+
+    slack_bot = HelixSlackBot()
+    channel_router.set_slack_bot(slack_bot)
+    print(f"  Slack: {'enabled' if slack_bot.enabled else 'disabled (no token)'}")
+
+    whatsapp_bot = HelixWhatsAppBot()
+    channel_router.set_whatsapp_bot(whatsapp_bot)
+    print(f"  WhatsApp: {'enabled' if whatsapp_bot.enabled else 'disabled (no token)'}")
+
+    webhook_channel = HelixWebhookChannel()
+    channel_router.set_webhook_channel(webhook_channel)
+    print(f"  Webhook: {'enabled' if webhook_channel.enabled else 'disabled (no config)'}")
 
     # ── 4. Pre-Conscious + Scratchpad ────────────────────────────────
     tool_schemas_path = os.path.join(data_dir, "tool_schemas.json")
@@ -373,8 +393,12 @@ def setup_helix(data_dir: str = "data"):
             sensory_cortex=sensory_cortex,
         )
 
-    # Wire telegram to pulse loop for inbound messages
+    # Wire comms bots to pulse loop for inbound messages
     telegram_bot.set_pulse_loop(pulse_loop)
+    discord_bot.set_pulse_loop(pulse_loop)
+    slack_bot.set_pulse_loop(pulse_loop)
+    whatsapp_bot.set_pulse_loop(pulse_loop)
+    webhook_channel.set_pulse_loop(pulse_loop)
 
     # Wire tool executor to pulse loop for context reset tool
     tool_executor.set_pulse_loop(pulse_loop)
@@ -500,19 +524,23 @@ def setup_helix(data_dir: str = "data"):
 
     print("  Post-pulse hooks: registered (workflow_detector, belief_detector, engagement_monitor, co_occurrence_tracker, affect_field)")
 
-    return pulse_loop, orchestrator, daemon, memory_manager, belief_store, scratchpad, telegram_bot, sentinel
+    return pulse_loop, orchestrator, daemon, memory_manager, belief_store, scratchpad, telegram_bot, discord_bot, slack_bot, whatsapp_bot, webhook_channel, sentinel
 
 
 def main_loop():
     """Interactive loop — user messages are events in the pulse stream."""
-    pulse_loop, orchestrator, daemon, memory, beliefs, scratchpad, telegram_bot, sentinel = setup_helix()
+    pulse_loop, orchestrator, daemon, memory, beliefs, scratchpad, telegram_bot, discord_bot, slack_bot, whatsapp_bot, webhook_channel, sentinel = setup_helix()
 
     print("\n--- Helix Pulse System ---")
     print("Commands: 'exit', 'stats', 'core', 'recent', 'beliefs', 'notes', 'dream'")
     print("Anything else is sent as a user message into the pulse stream.\n")
 
-    # Start Telegram bot
+    # Start communication bots
     telegram_bot.start()
+    discord_bot.start()
+    slack_bot.start()
+    whatsapp_bot.start()
+    webhook_channel.start()
 
     # Start sentinel monitoring thread
     sentinel.start()

@@ -37,6 +37,13 @@ def main():
     parser.add_argument("--telegram-token", default="", help="Telegram Bot Token")
     parser.add_argument("--telegram-owner", default="", help="Telegram Owner ID")
     parser.add_argument("--discord-token", default="", help="Discord Bot Token")
+    parser.add_argument("--slack-bot-token", default="", help="Slack Bot Token (xoxb-...)")
+    parser.add_argument("--slack-app-token", default="", help="Slack App Token (xapp-...)")
+    parser.add_argument("--whatsapp-token", default="", help="WhatsApp Business API Token")
+    parser.add_argument("--whatsapp-phone-id", default="", help="WhatsApp Phone Number ID")
+    parser.add_argument("--whatsapp-verify-token", default="", help="WhatsApp Webhook Verify Token")
+    parser.add_argument("--webhook-outbound-url", default="", help="Generic Webhook Outbound URL")
+    parser.add_argument("--webhook-inbound-secret", default="", help="Generic Webhook Inbound Secret")
     parser.add_argument("--moltbook-key", default="", help="Moltbook API Key")
     parser.add_argument(
         "--profile",
@@ -76,6 +83,13 @@ def main():
         telegram_token = args.telegram_token
         telegram_owner_id = args.telegram_owner
         discord_token = args.discord_token
+        slack_bot_token = args.slack_bot_token
+        slack_app_token = args.slack_app_token
+        whatsapp_token = args.whatsapp_token
+        whatsapp_phone_id = args.whatsapp_phone_id
+        whatsapp_verify_token = args.whatsapp_verify_token
+        webhook_outbound_url = args.webhook_outbound_url
+        webhook_inbound_secret = args.webhook_inbound_secret
         moltbook_key = args.moltbook_key
         vision_provider = args.vision_provider
 
@@ -115,6 +129,34 @@ def main():
                 if discord_token:
                     enabled_channels.append("discord")
 
+            setup_slack = input("  Set up Slack? [y/N]: ").strip().lower()
+            if setup_slack in ['y', 'yes']:
+                print("  Slack requires both a Bot Token (xoxb-...) and an App Token (xapp-...).")
+                print("  Create these at https://api.slack.com/apps")
+                slack_bot_token = input("  Slack Bot Token (xoxb-...): ").strip()
+                slack_app_token = input("  Slack App Token (xapp-...): ").strip()
+                if slack_bot_token and slack_app_token:
+                    enabled_channels.append("slack")
+
+            setup_whatsapp = input("  Set up WhatsApp? [y/N]: ").strip().lower()
+            if setup_whatsapp in ['y', 'yes']:
+                print("  WhatsApp requires a Business Cloud API token and Phone Number ID.")
+                print("  Configure these at https://developers.facebook.com/")
+                whatsapp_token = input("  WhatsApp API Token: ").strip()
+                whatsapp_phone_id = input("  WhatsApp Phone Number ID: ").strip()
+                whatsapp_verify_token = input("  Webhook Verify Token (for inbound, optional): ").strip()
+                if whatsapp_token and whatsapp_phone_id:
+                    enabled_channels.append("whatsapp")
+
+            setup_webhook = input("  Set up Generic Webhook? [y/N]: ").strip().lower()
+            if setup_webhook in ['y', 'yes']:
+                print("  The generic webhook connects Helix to any external service")
+                print("  (Zapier, n8n, Matrix bridges, custom apps, etc.)")
+                webhook_outbound_url = input("  Outbound Webhook URL (where Helix sends messages): ").strip()
+                webhook_inbound_secret = input("  Inbound Secret (for verifying incoming POSTs, optional): ").strip()
+                if webhook_outbound_url or webhook_inbound_secret:
+                    enabled_channels.append("webhook")
+
             setup_moltbook = input("  Set up Moltbook? [y/N]: ").strip().lower()
             if setup_moltbook in ['y', 'yes']:
                 moltbook_key = input("  Moltbook API Key: ").strip()
@@ -124,6 +166,12 @@ def main():
                 enabled_channels.append("telegram")
             if discord_token:
                 enabled_channels.append("discord")
+            if slack_bot_token and slack_app_token:
+                enabled_channels.append("slack")
+            if whatsapp_token and whatsapp_phone_id:
+                enabled_channels.append("whatsapp")
+            if webhook_outbound_url or webhook_inbound_secret:
+                enabled_channels.append("webhook")
 
         comms_channels = ",".join(enabled_channels)
 
@@ -134,6 +182,13 @@ def main():
             f.write(f"HELIX_TELEGRAM_TOKEN={telegram_token}\n")
             f.write(f"TELEGRAM_OWNER_ID={telegram_owner_id}\n")
             f.write(f"HELIX_DISCORD_TOKEN={discord_token}\n")
+            f.write(f"HELIX_SLACK_BOT_TOKEN={slack_bot_token}\n")
+            f.write(f"HELIX_SLACK_APP_TOKEN={slack_app_token}\n")
+            f.write(f"HELIX_WHATSAPP_TOKEN={whatsapp_token}\n")
+            f.write(f"HELIX_WHATSAPP_PHONE_ID={whatsapp_phone_id}\n")
+            f.write(f"HELIX_WHATSAPP_VERIFY_TOKEN={whatsapp_verify_token}\n")
+            f.write(f"HELIX_WEBHOOK_OUTBOUND_URL={webhook_outbound_url}\n")
+            f.write(f"HELIX_WEBHOOK_INBOUND_SECRET={webhook_inbound_secret}\n")
             f.write(f"MOLTBOOK_API_KEY={moltbook_key}\n")
             f.write(f"HELIX_COMMS_CHANNELS={comms_channels}\n")
             f.write(f"HELIX_PROVIDER=gemini\n")
@@ -168,6 +223,9 @@ def main():
         "moltbook": False,
         "telegram": False,
         "discord": False,
+        "slack": False,
+        "whatsapp": False,
+        "webhook": False,
         "vision": os.path.exists("/dev/video0"),
         "audio_tts": False,
     }
@@ -185,6 +243,12 @@ def main():
                         available["telegram"] = True
                     elif key == "HELIX_DISCORD_TOKEN" and val:
                         available["discord"] = True
+                    elif key == "HELIX_SLACK_BOT_TOKEN" and val:
+                        available["slack"] = True
+                    elif key == "HELIX_WHATSAPP_TOKEN" and val:
+                        available["whatsapp"] = True
+                    elif key in ("HELIX_WEBHOOK_OUTBOUND_URL", "HELIX_WEBHOOK_INBOUND_SECRET") and val:
+                        available["webhook"] = True
                     elif key == "GITHUB_TOKEN" and val:
                         available["github"] = True
 
@@ -207,6 +271,12 @@ def main():
         _comms_list.append("Telegram")
     if available["discord"]:
         _comms_list.append("Discord")
+    if available["slack"]:
+        _comms_list.append("Slack")
+    if available["whatsapp"]:
+        _comms_list.append("WhatsApp")
+    if available["webhook"]:
+        _comms_list.append("Webhook")
 
     print(f"  Detected integrations: {', '.join(k for k, v in available.items() if v) or 'core only'}")
 
