@@ -1,15 +1,15 @@
 <p align="center">
   <h1 align="center">Helix AGI</h1>
-  <p align="center"><strong>A continuous, autonomous cognitive architecture driven by spatial memory and cognitive gravity</strong></p>
+  <p align="center"><strong>A continuous, autonomous agent architecture with physics-based memory retrieval and adaptive tool learning</strong></p>
 </p>
 
 ---
 
 ## What is Helix AGI?
 
-Helix AGI is a multi-model agentic system designed to mimic human learning, attention, and memory consolidation.
+Helix AGI is a multi-model agentic system that implements continuous autonomous operation, structured memory consolidation, and adaptive tool learning.
 
-Unlike traditional agents that wait for a prompt, execute a chain, and terminate, Helix runs a **continuous background pulse** — a heartbeat of consciousness that perceives, reasons, and acts without waiting for human input. For developers and researchers exploring alternatives to traditional RAG (Retrieval-Augmented Generation), Helix introduces a **Spatial Mind**: an 8-dimensional cognitive manifold where memories and beliefs possess *mass* and *gravity*, creating a physics-driven approach to context assembly that requires zero embedding API calls at inference time.
+Unlike traditional agents that wait for a prompt, execute a chain, and terminate, Helix runs a **continuous background pulse** — a four-state event-driven loop (ACTIVE / EMERGENCE / QUIET / DORMANT) that processes incoming messages, generates autonomous thought, executes tools, and consolidates learning without waiting for human input. For developers and researchers exploring alternatives to traditional RAG (Retrieval-Augmented Generation), Helix introduces a **Spatial Mind** — an 8-dimensional vector space where retrieval is governed by a physics simulation (mass, distance, recency) rather than cosine similarity, requiring zero embedding API calls at inference time. The retrieval pipeline injects an average of **~30 tokens per turn** into context, compared to ~1,900 for flat semantic RAG — a 63× reduction in context window consumption while maintaining stateful attentional continuity across topics.
 
 ---
 
@@ -72,15 +72,17 @@ graph TD
 
 ## Moving Beyond Traditional RAG: The Spatial Mind
 
-Most AI applications retrieve context by embedding a user's query and running a cosine-similarity search against a vector database. Helix replaces this with a **Spatial Mind** — two independent 8-dimensional cognitive spaces (one for beliefs, one for episodic memories) governed by cognitive gravity.
+Most AI applications retrieve context by embedding a user's query and running a cosine-similarity search against a vector database. Helix replaces this with a **Spatial Mind** — two independent 8-dimensional vector spaces (one for beliefs, one for episodic memories) governed by a physics-based gravity simulation.
 
 **Why spatial-gravitational instead of traditional RAG?**
 
 - **Zero API calls during injection** — All retrieval is CPU-bound (KD-Tree queries, NumPy operations). No embedding API round-trips during the pulse.
-- **Physics-based relevance** — Memories aren't ranked by cosine similarity alone. They're ranked by *cognitive gravity*: `F ∝ T × m / d²`, incorporating recency (temperature), structural importance (mass), and semantic proximity (distance).
+- **Physics-based relevance** — Memories aren't ranked by cosine similarity alone. They're ranked by a gravity function: `F ∝ T × m / d²`, incorporating recency (temperature `T`), structural importance (mass `m`), and semantic proximity (distance `d`).
+- **Token-efficient context assembly** — The gravity-ranked preconscious pipeline typically injects **~30 tokens per turn** into the LLM context. A flat semantic RAG baseline on the same data injects ~1,900 tokens/turn. This 63× reduction keeps the context window available for actual reasoning rather than retrieved bulk text.
 - **Concept-aware retrieval** — A RAKE-style concept extractor identifies keyphrases from the current thought. Each concept spawns an independent gravity query with a rolling blacklist, preventing topic dominance and ensuring balanced context assembly.
 - **Continuous attention dynamics** — The attention center has *inertia* (γ = 0.85). Sustained focus deepens retrieval from a conceptual region; sudden topic shifts trigger context compression and retrieval reset. Traditional RAG has no concept of attentional momentum.
-- **Somatic encoding** — Every memory is stored with its 8D position and Lagrangian snapshot (Ω, H, D_KL). When recalled, the original emotional state mildly reproduces — state-dependent episodic recall.
+- **Natural internal/external separation** — External stimuli (user messages, tool returns, sensor data) enter via the event queue; internal generation (autonomous thought, journal entries) enters as pulse output. The preconscious surfaces both but the model always knows which is which — this is structural, not prompt-engineered.
+- **Somatic encoding** — Every memory is stored with its 8D position and Lagrangian snapshot (Ω, H, D_KL). When recalled, the original affective state mildly reproduces — state-dependent episodic recall.
 
 ---
 
@@ -88,8 +90,8 @@ Most AI applications retrieve context by embedding a user's query and running a 
 
 ### Cognitive Architecture
 
-- **Continuous Consciousness** — A three-state pulse loop (ACTIVE / RESTING / DORMANT) that thinks, perceives, and acts without waiting for human prompts.
-- **Multi-Provider LLM Abstraction** — The conscious mind supports **Gemini** (primary), **Ollama**, and **llama.cpp** backends. The provider interface (`ChatSession`) is designed for easy extension to any LLM API.
+- **Continuous Pulse Loop** — A four-state event-driven loop (ACTIVE / EMERGENCE / QUIET / DORMANT) that processes events, generates thought, and executes tools without waiting for human prompts. Transitions are driven by event-queue activity and configurable time-of-day gates.
+- **Multi-Provider LLM Abstraction** — The primary model supports **Gemini** (default), **Ollama**, and **llama.cpp** backends. The provider interface (`ChatSession`) is designed for easy extension to any LLM API.
 - **Categorized Belief Store** — Seven partitioned belief categories in a two-tier epistemic topology, stored as JSON files with per-belief mass, confidence, stability index, and Lagrangian encoding metadata:
 
   **Outer tier** — formed in real-time during pulse loop:
@@ -112,15 +114,31 @@ Most AI applications retrieve context by embedding a user's query and running a 
 ### Stability & Affect
 
 - **Stability Sentinel** — A background daemon thread that computes a composite Lagrangian stability score from attention entropy H(q) and identity drift D_KL, weighted by hedonic state Ω. Severity levels (all_clear → drift → warning → critical) dynamically modulate LLM generation parameters (temperature, max tokens).
-- **Plutchik Affect Field** — An 8-dimensional emotional wave-packet system (joy, trust, fear, surprise, sadness, disgust, anger, anticipation) that evolves via anisotropic diffusion. Lagrangian signals map to emotional dimensions, and interference patterns between active wave packets generate steering forces that modulate the attention manifold.
-- **Hedonic Omega (Ω)** — A continuous emotional trajectory (baseline 0.5, bounded [0.05, 1.0]) with hedonic treadmill reversion. Incoming messages, successful tool calls, and new belief formations drive Ω up; failures and contradictions drive it down.
+- **Plutchik Affect Field** — An 8-dimensional affect-state system (joy, trust, fear, surprise, sadness, disgust, anger, anticipation) that evolves via anisotropic diffusion. Lagrangian signals map to affect dimensions, and interference patterns between active wave packets generate steering forces that modulate the attention manifold. **Entirely CPU-bound** — no LLM calls, pure NumPy.
+- **Hedonic Omega (Ω)** — A continuous affect trajectory (baseline 0.5, bounded [0.05, 1.0]) with hedonic treadmill reversion. Incoming messages, successful tool calls, and new belief formations drive Ω up; failures and contradictions drive it down.
 
-### Subconscious Systems
+### Adaptive Tool Schema Pipeline
 
-- **Dream Engine (Curator)** — Runs nightly during DORMANT state. Collects the day's memories and journals → LLM-extracts belief candidates → consolidates against existing beliefs (≥0.75 similarity = merge, not append) → UMAP/HDBSCAN clustering for compound belief synthesis → Lexicon synchronization.
+- **Dynamic Tool Registry** — Tool declarations are not static. The `tool_registry.py` loads and unloads toolsets at runtime based on TTL-cached availability checks (30s cache). Only tools whose runtime dependencies are satisfied (env vars, services) are exposed to the model.
+- **Tool Lesson Tracker** — When a tool call fails, the `ToolLessonTracker` captures the failure pattern (tool name + error signature), deduplicates with a 6-hour cooldown, and queues the failure as a pending belief. The nightly batch service distills it into a lesson belief that is **appended directly to the tool's JSON schema description** (`"Learned: ..."`) — the model sees updated tool documentation on its next use, without any human intervention.
+- **Verification Loop** — When a tool-lesson belief is injected by the preconscious and the tool subsequently succeeds within a 10-minute TTL window, the lesson's verification count and stability are bumped. Verified lessons gain mass, surface more often, and survive nightly attrition. Unverified lessons decay out naturally.
+- **Workflow Crystallization** — The `WorkflowDetector` watches tool call sequences across pulses. When a pattern repeats 3+ times within 24 hours, it crystallizes into a `skills` belief with tool bindings — template-generated, no LLM needed.
+
+### Background Processing (Post-Pulse Hooks)
+
+After every pulse, a chain of **CPU-only hooks** processes the thought without additional LLM calls (the BeliefDetector uses a local Ollama model, not the primary API):
+
+- **BeliefDetector** — Scans thoughts for belief-forming realizations using local `granite4.1:8b` via Ollama. Detections are queued for nightly extraction. Zero API cost.
+- **WorkflowDetector** — Tracks repeated tool-call sequences and crystallizes them into `skills` beliefs.
+- **EngagementMonitor** — Detects thought stagnation via dual metrics (word-overlap + cosine similarity). Stagnation depresses Ω; active tool use boosts it.
+- **CoOccurrenceTracker** — Passive Hebbian wiring: tracks which beliefs are co-injected, accumulates pairwise statistics with daily decay (0.95/day). The nightly Curator reads these clusters for compound belief synthesis.
+- **AffectField** — Deposits Plutchik wave packets, evolves the affect field, samples interference, distributes steering forces. Pure NumPy, O(P) per pulse.
+
+### Nightly Consolidation
+
+- **Dream Engine (Curator)** — Runs during DORMANT state. Collects the day's memories and journals → LLM-extracts belief candidates → consolidates against existing beliefs (≥0.75 similarity = merge, not append) → reads pre-built co-occurrence clusters for compound synthesis → Layer 2 precipitation via UMAP/HDBSCAN.
 - **Cognitive Attrition** — Nightly confidence recalculation based on time survival, reliance (inbound references), verification count, and stability index. Beliefs below the pruning threshold (0.20) are removed. Verifications decay at 0.05/night — beliefs must be actively reaffirmed to persist.
-- **Co-Occurrence Tracker** — Hebbian wiring: beliefs that are co-injected repeatedly are clustered and linked via relation edges. Includes localized Hebbian drift — related beliefs are pulled closer together in 8D space over time.
-- **Post-Pulse Hook Framework** — Extensible background processors that run after every pulse: BeliefDetector, WorkflowDetector, EngagementMonitor, CoOccurrenceTracker, AffectField.
+- The critical design principle: **the LLM does natural language only**. All routing, merging, placement, and position assignment decisions are deterministic Python.
 
 ---
 
@@ -352,13 +370,27 @@ Before booting your agent, please read carefully:
 
 ---
 
+## Key Design Decisions
+
+These are the architectural choices that make Helix distinct from a standard prompt-chain agent:
+
+1. **Internal/External Information Separation** — The event queue structurally separates external stimuli (user messages, tool returns, sensor data) from internal generation (autonomous thought, journal entries). The preconscious surfaces both to the model, but their origin is always unambiguous. This is an architectural property, not a prompt engineering convention.
+
+2. **Token-Efficient Retrieval** — The gravity-based preconscious pipeline injects only the highest-mass, most relevant beliefs and memories — typically ~30 tokens per turn. Traditional RAG dumps entire retrieved chunks (~1,900 tokens/turn on the same data). This keeps the context window available for reasoning rather than retrieved bulk text.
+
+3. **Adaptive Tool Schemas** — Tool descriptions evolve at runtime. The ToolLessonTracker captures failures → nightly batch service distills lessons → lessons are appended to tool JSON schema descriptions → the model sees improved tool documentation on next use. Successful application of lessons increases their mass and persistence. No human curation required.
+
+4. **Continuous Development Loop** — Beliefs attrit nightly (verification decay 0.05/night) and must be reaffirmed through experience to persist. New interactions create new beliefs. Failed tool calls become lessons. Repeated tool patterns crystallize into skills. The system's personality and capabilities are a trajectory through 8D space, not a static configuration — the agent never stops developing, learning, and adapting.
+
+---
+
 ## Contributing
 
 This is an early-stage research project. Contributions are welcome in:
 - **Model adapters** — Implement the `ChatSession` interface for additional LLM providers
 - **Sensory modules** — Screen readers, IoT sensors, additional communication channels
 - **Manifold geometry** — Alternative curvature metrics, higher-dimensional projections
-- **Affect models** — Alternative emotional frameworks beyond Plutchik
+- **Affect models** — Alternative affect frameworks beyond Plutchik
 
 ---
 
