@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "helix-agent-lab"
+version = "0.1.0"
+description = "Local MCP test harness for installed coding-agent CLIs"
+requires-python = ">=3.10"
+dependencies = ["mcp>=1.23,<2"]
+
+[project.scripts]
+helix-agent-lab = "helix_agent_lab.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/helix_agent_lab"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
