@@ -67,6 +67,7 @@ graph TD
 | [Phase 1: Core Memory & Beliefs](documents/helix_audit_part1.md) | Belief store, mass, attrition |
 | [Phase 2: Spatial Manifold & Physics](documents/helix_audit_part2.md) | 8D manifold, gravity mechanics |
 | [Phase 3: Subconscious Autonomy](documents/helix_audit_part3.md) | Dream engine, nightly cycles |
+| [MCP Agent Lab Integration](documents/mcp_agent_lab.md) | Run reproducible tests through installed Codex, Claude Code, or Gemini CLIs |
 
 ---
 
