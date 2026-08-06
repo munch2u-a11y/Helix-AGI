@@ -33,6 +33,14 @@ This is deliberately not an OAuth proxy. The server does not read `~/.codex/auth
 
 Account mode does not guarantee zero charges. Codex, Claude Code, and Gemini CLI have different entitlements, quotas, and automation billing rules. See [DESIGN.md](./DESIGN.md).
 
+| Provider route | Prompt-case tests | Helix native benchmark | Account behavior |
+|---|---:|---:|---|
+| Codex CLI | Yes | Yes | Uses the cached ChatGPT login and the account's Codex allowance or credits. |
+| Claude Code | Yes | Not yet | Uses the cached Claude login; `claude -p` currently draws from Claude subscription limits. |
+| Gemini CLI | Yes | Not yet | Uses cached Google authentication and the applicable Google-account quota. |
+
+The repository-level [MCP testing integration guide](../../documents/mcp_agent_lab.md) covers setup, tool behavior, artifacts, security boundaries, and current provider-policy references.
+
 ## Prompt-case format
 
 Use JSONL or a JSON list. Each case accepts `contains`, `not_contains`, and `regex` assertions:

@@ -31,21 +31,23 @@ Runs are asynchronous because realistic agent evaluations regularly exceed norma
 
 | Route | Supported design | Cost expectation |
 |---|---|---|
-| OpenAI | Launch `codex exec` with cached ChatGPT login; strip `CODEX_API_KEY` and `OPENAI_API_KEY` in account mode | Codex documents subscription access and reuse of saved CLI authentication. Subject to plan limits. |
-| Anthropic | Launch official `claude -p`; strip `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` in account mode | Since June 15, 2026, `claude -p` uses Agent SDK monthly credit rather than normal interactive subscription limits; charges can occur after applicable credit. Do not promise zero cost. |
-| Google | Launch official `gemini` in headless mode with cached Google login; strip API-key/Vertex variables in account mode | Google-account quotas apply. Do not extract or reuse Gemini OAuth credentials outside Gemini CLI. |
+| OpenAI | Launch `codex exec` with cached ChatGPT login; strip `CODEX_API_KEY` and `OPENAI_API_KEY` in account mode | Codex is available through ChatGPT plans and consumes the plan's Codex allowance or credits. Limits vary by plan. |
+| Anthropic | Launch official `claude -p`; strip `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` in account mode | Anthropic's planned June 15, 2026 Agent SDK billing change was paused. For now, `claude -p` and third-party app usage still draw from Claude subscription limits. |
+| Google | Launch official `gemini` in headless mode with cached Google login; strip API-key/Vertex variables in account mode | Google-account or Google AI subscription quotas apply. API-key and Vertex routes remain separate pay-as-you-go options. |
 
-Sources: [OpenAI Codex authentication](https://learn.chatgpt.com/docs/auth), [OpenAI non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode), [Claude Code setup](https://docs.anthropic.com/en/docs/claude-code/getting-started), [Claude Agent SDK plan credit](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan), [Gemini CLI authentication](https://geminicli.com/docs/get-started/authentication/), and [Gemini quotas](https://geminicli.com/docs/resources/quota-and-pricing/).
+Provider policies change independently of this plugin. The statements above were verified on 2026-08-06 against [OpenAI's Codex plan guide](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan), [Claude Code setup](https://docs.anthropic.com/en/docs/claude-code/getting-started), [Anthropic's paused Agent SDK change](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan), [Gemini CLI authentication](https://geminicli.com/docs/get-started/authentication/), and [Gemini quotas and pricing](https://geminicli.com/docs/resources/quota-and-pricing/).
+
+Account mode is a billing-safety control, not a no-cost guarantee. A run can consume subscription allowance, provider credits, or configured overage capacity. Users should review the usage settings in each first-party product before running a large suite.
 
 ## Why token routing is rejected
 
 - Consumer OAuth tokens are credentials, not a portable API entitlement.
 - Extracting or relaying them expands the attack surface and creates refresh/revocation complexity.
 - Google explicitly warns that third-party piggybacking on Gemini CLI OAuth is not supported.
-- Anthropic distinguishes ordinary native Claude Code use from third-party traffic routed against subscription limits.
+- Provider subscription rules can change without a corresponding plugin release.
 - OpenAI's cached auth file contains access tokens and is documented as password-equivalent.
 
-Invoking the official CLI is the narrow, supportable path. The plugin should never inspect credential files or imitate a first-party client.
+Invoking the official CLI preserves the first-party authentication boundary without turning subscription credentials into a general API. The plugin should never inspect credential files, relay OAuth tokens, or imitate a first-party client.
 
 ## Helix integration
 
