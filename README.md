@@ -397,9 +397,13 @@ This is an early-stage research project. Contributions are welcome in:
 
 ## License
 
-**Open Source:** [AGPL-3.0](LICENSE) — free to use, modify, and distribute with copyleft obligations. If you deploy a modified version as a network service, you must share your source code.
+Helix-AGI is licensed under the [Apache License 2.0](LICENSE). You may use,
+modify, distribute, and build commercial or proprietary products with it,
+subject to the license's notice and attribution requirements.
 
-**Commercial:** For proprietary use without AGPL obligations, commercial licenses are available. Contact [**helix.agi.email@gmail.com**](mailto:helix.agi.email@gmail.com) for details.
+Versions published before the Apache 2.0 transition remain available under
+their original AGPL-3.0 terms. This release and subsequent contributions are
+provided under Apache 2.0 unless explicitly stated otherwise.
 
 ---
 

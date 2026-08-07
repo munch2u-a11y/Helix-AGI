@@ -58,7 +58,10 @@ Helix already provides the hard parts of a credible benchmark:
 - Runtime capability descriptors.
 - Repeated runs, confidence intervals, efficiency measures, and trace artifacts.
 
-The plugin calls `scripts/cross_agent_benchmark.py` rather than copying Helix code. That process boundary avoids a coupled fork and keeps the standalone plugin clean-room. If code is copied from or merged into Helix, its AGPL-3.0-or-later obligations must be handled separately.
+The plugin calls `scripts/cross_agent_benchmark.py` rather than copying Helix
+code. That process boundary keeps its release lifecycle and MIT license
+explicitly separate from Apache-2.0-licensed Helix. Redistributors must
+preserve the notices required by each license.
 
 ## Full parity milestone
 

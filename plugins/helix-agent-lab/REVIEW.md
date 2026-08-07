@@ -62,4 +62,6 @@ The README reports large context-token reductions for the spatial-memory approac
 
 ## Licensing note
 
-Helix-AGI is AGPL-3.0-or-later. A plugin that merely launches its command as a separate process can remain separately licensed, but copied or modified Helix code and network deployments require careful AGPL compliance, including source availability obligations. This is an engineering observation, not legal advice.
+Helix-AGI is Apache-2.0 licensed. The Agent Lab plugin is independently
+MIT-licensed. Both may be used, modified, and redistributed under their
+respective license, notice, and attribution requirements.
