@@ -23,7 +23,7 @@ def get_nlp():
     try:
         _nlp = spacy.load("en_core_web_sm")
     except (OSError, IOError) as exc:
-        # The 384D multi-head vector lane remains fully operational. Regex
+        # The 1024D multi-head vector lane remains fully operational. Regex
         # keywords are preferable to dropping the entire mRAG pipeline back
         # to legacy gravity because an optional linguistic model is absent.
         logger.warning("spaCy English model unavailable; mRAG keyword fallback active: %s", exc)

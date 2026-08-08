@@ -6,7 +6,7 @@ Implements asynchronous background execution and offloads synthesis to a lightwe
 
 Key Architectural Upgrades:
 1. Background Execution: Runs asynchronously to avoid blocking the main pulse loop.
-2. Auxiliary Model: Uses a faster, cheaper model (e.g., Gemini Flash) for synthesis.
+2. Auxiliary Model: Uses an isolated provider-aware session for synthesis.
 3. Strict Belief Spec: Validates output against the belief_format_spec (15-250 chars, specific categories).
 4. Co-Occurrence Wiring: Real-time Hebbian wiring via post-pulse hooks replaces batch UMAP/HDBSCAN.
    Nightly Phase 3 reads pre-built relation clusters for compound synthesis.

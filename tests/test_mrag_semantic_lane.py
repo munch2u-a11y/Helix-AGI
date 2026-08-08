@@ -70,6 +70,31 @@ class _VectorStore:
 
 
 class TestMultiHeadScoring(unittest.TestCase):
+    def test_small_corpus_does_not_turn_top_k_into_full_store_injection(self):
+        class _AllResultsStore:
+            @staticmethod
+            def embed_text(_text):
+                return np.array([1.0, 0.0], dtype=np.float32)
+
+            @staticmethod
+            def query_top_k(_query_embedding, k=10):
+                return [("relevant", 0.9), ("unrelated", 0.0)]
+
+            @staticmethod
+            def cosine_similarity(a, b):
+                return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+        items = [
+            _item("relevant", "alpha memory", [1.0, 0.0]),
+            _item("unrelated", "orthogonal memory", [0.0, 1.0]),
+        ]
+        lane = SemanticLane(_Corpus(items), _AllResultsStore())
+        with patch("memory.mrag.tagger.extract_keywords_and_phrases", return_value=[]), \
+                patch("memory.mrag.tagger.get_tag_counts", return_value={}):
+            ranked = lane.retrieve("alpha")
+
+        self.assertEqual([item["id"] for item in ranked], ["relevant"])
+
     def test_derived_faiss_head_score_survives_final_ranking(self):
         raw = np.array([1.0, 0.0], dtype=np.float32)
         derived = np.array([0.0, 1.0], dtype=np.float32)
@@ -88,6 +113,23 @@ class TestMultiHeadScoring(unittest.TestCase):
         # port threw this score away and ranked the concrete memory at 0.0.
         self.assertEqual([item["id"] for item in ranked[:2]], ["concrete", "direct"])
         self.assertGreater(ranked[0]["lane_a_score"], ranked[1]["lane_a_score"])
+
+    def test_full_sentence_and_rake_heads_are_all_searched(self):
+        raw = np.array([1.0, 0.0], dtype=np.float32)
+        lane = SemanticLane(_Corpus([]), _VectorStore(raw, raw))
+        trigger = (
+            "Alice described recurring guilt about her childhood. "
+            "Her mother used stories about monkeys stealing caps."
+        )
+
+        heads = lane._generate_search_heads(trigger)
+        kinds = [record["kind"] for record in lane.last_search_heads]
+
+        self.assertEqual(heads[0], trigger)
+        self.assertIn("full", kinds)
+        self.assertIn("sentence", kinds)
+        self.assertIn("rake", kinds)
+        self.assertLessEqual(len(heads), 16)
 
 
 class TestFaissFreshness(unittest.TestCase):

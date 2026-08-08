@@ -2,9 +2,9 @@
 
 Combines three deliberately separated retrieval lanes over one tiered corpus:
 
-  Lane A — semantic (memory/mrag/semantic_lane.py). Cosine over the 384D
-           SemanticIndex, fused with rarity-weighted keyword matching and
-           conceptual-tag overlap, with Tier-2 lexicon priority.
+  Lane A — semantic (memory/mrag/semantic_lane.py). Full-trigger, sentence,
+           and RAKE heads query the native 1024D SemanticIndex, fused with
+           rarity-weighted exact terms and conceptual-tag overlap.
 
   Lane B — raw spatial. Verlinde entropic gravity T·m/d² over the 8D
            cognitive manifold, with no semantic pre-filter.
@@ -129,6 +129,23 @@ class UnifiedRetrieval:
         self.enable_mrag_adjacency = os.environ.get(
             "HELIX_MRAG_ADJACENCY", "0"
         ).strip().lower() in ("1", "true", "yes", "on")
+        profile = os.environ.get("HELIX_MRAG_PROFILE", "local").strip().lower()
+        self.profile = "frontier" if profile in ("frontier", "gpt") else "local"
+        default_context = 128_000 if self.profile == "frontier" else DEFAULT_CONTEXT_LIMIT
+        default_multiple = 30.0 if self.profile == "frontier" else BUDGET_ITEMS_MULTIPLE
+        try:
+            self.context_limit = max(
+                1024, int(os.environ.get("HELIX_MRAG_CONTEXT_LIMIT", default_context))
+            )
+        except (TypeError, ValueError):
+            self.context_limit = default_context
+        try:
+            self.budget_items_multiple = max(
+                1.0,
+                float(os.environ.get("HELIX_MRAG_BUDGET_ITEM_MULTIPLE", default_multiple)),
+            )
+        except (TypeError, ValueError):
+            self.budget_items_multiple = default_multiple
 
         # Diagnostics from the most recent retrieve(), read by the benchmark
         # harness for lane attribution.
@@ -214,6 +231,8 @@ class UnifiedRetrieval:
                 for tier in (0, 1, 2)
             },
             "lexicon_hits": sorted(self.lane_a.last_lexicon_matches),
+            "semantic_heads": list(self.lane_a.last_search_heads),
+            "retrieval_profile": self.profile,
         }
 
         logger.debug(
@@ -331,15 +350,15 @@ class UnifiedRetrieval:
     def effective_token_budget(self, context_limit: Optional[int] = None) -> int:
         """The injection's content-token ceiling.
 
-        15x the corpus's average item length, bounded by
-        BUDGET_CONTEXT_FRACTION of the context window. Replaces the fixed
-        500-token cap the gravity-only path used, which was sized for two or
-        three summarized beliefs and is far too tight once verbatim memories
-        are in the pool — the ported lane's recall depends on being able to
-        actually inject what it retrieved.
+        A profile-dependent multiple of the corpus's average item length
+        (15x local, 30x frontier), bounded by BUDGET_CONTEXT_FRACTION of the
+        context window. Replaces the fixed 500-token cap the gravity-only path
+        used, which was sized for two or three summarized beliefs and is far
+        too tight once verbatim memories are in the pool — the ported lane's
+        recall depends on being able to actually inject what it retrieved.
         """
         items = self.corpus.all_items()
-        limit = context_limit or DEFAULT_CONTEXT_LIMIT
+        limit = context_limit or self.context_limit
         cache_key = (getattr(self.corpus, "version", -1), int(limit))
         cached = self._token_budget_cache.get(cache_key)
         if cached is not None:
@@ -349,7 +368,10 @@ class UnifiedRetrieval:
             avg = total / len(items)
         else:
             avg = 30.0
-        budget = int(min(BUDGET_ITEMS_MULTIPLE * avg, limit * BUDGET_CONTEXT_FRACTION))
+        budget = int(min(
+            self.budget_items_multiple * avg,
+            limit * BUDGET_CONTEXT_FRACTION,
+        ))
         # Corpus versions are monotonic; retain only the current version's
         # context-limit variants.
         self._token_budget_cache = {

@@ -427,21 +427,21 @@ Target ~{summary_budget} tokens. Only output the recollection, no preamble."""
             )
 
         try:
-            from google import genai
-            import os
-
-            key = os.environ.get("GEMINI_API_KEY", "")
-            if not key:
-                logger.warning("No GEMINI_API_KEY — cannot generate summary")
+            from core.auxiliary_llm import get_auxiliary_client
+            client = get_auxiliary_client()
+            if client is None:
+                logger.warning("Auxiliary LLM unavailable — cannot generate summary")
                 return None
-
-            client = genai.Client(api_key=key)
-            response = client.models.generate_content(
-                model=self.auxiliary_model,
-                contents=prompt,
+            summary_text = client.generate(
+                prompt,
+                system_instruction=_preamble,
+                temperature=0.2,
+                max_output_tokens=max(512, summary_budget * 2),
             )
-
-            summary_text = response.text.strip()
+            if not summary_text:
+                logger.warning("Auxiliary LLM returned no compression summary")
+                return None
+            summary_text = summary_text.strip()
             self._previous_summary = summary_text
             return f"{SUMMARY_PREFIX}\n\n{summary_text}"
 

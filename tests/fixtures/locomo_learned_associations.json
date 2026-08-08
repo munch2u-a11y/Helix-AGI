@@ -1,0 +1,263 @@
+[
+  {
+    "sample_id": "deep-memory-001",
+    "description": "A shortened LoCoMo-shaped dialogue with one arbitrary ordered association and one repeated tactful speech pattern.",
+    "main_user": "Mara",
+    "conversation": {
+      "session_1_date_time": "2026-03-02 09:00",
+      "session_1": [
+        {
+          "dia_id": "D1:1",
+          "speaker": "Mara",
+          "text": "Morning, Eli. I brought mint tea; it helps me think without hurrying."
+        },
+        {
+          "dia_id": "D1:2",
+          "speaker": "Eli",
+          "text": "Thanks. I am about to email the workshop flyer now."
+        },
+        {
+          "dia_id": "D1:3",
+          "speaker": "Mara",
+          "text": "Before that, write BRINDLE in the upper-left corner of a blank card."
+        },
+        {
+          "dia_id": "D1:4",
+          "speaker": "Eli",
+          "text": "The brass compass is beside the blue vase."
+        },
+        {
+          "dia_id": "D1:5",
+          "speaker": "Eli",
+          "text": "Anyway, the flyer looks finished, so I will send it."
+        },
+        {
+          "dia_id": "D1:6",
+          "speaker": "Mara",
+          "text": "Might we give it a blue minute, yeah? Read the dates once more, then send it."
+        },
+        {
+          "dia_id": "D1:7",
+          "speaker": "Eli",
+          "text": "Good catch. Saturday had the wrong date; I fixed it before sending."
+        },
+        {
+          "dia_id": "D1:8",
+          "speaker": "Mara",
+          "text": "Easy does it. A small check saves a long apology."
+        }
+      ],
+      "session_2_date_time": "2026-03-09 14:30",
+      "session_2": [
+        {
+          "dia_id": "D2:1",
+          "speaker": "Mara",
+          "text": "I put the revised room list in the yellow folder."
+        },
+        {
+          "dia_id": "D2:2",
+          "speaker": "Eli",
+          "text": "I found it. I am ready to order the wall paint."
+        },
+        {
+          "dia_id": "D2:3",
+          "speaker": "Mara",
+          "text": "Before that, write BRINDLE in the upper-left corner of a blank card."
+        },
+        {
+          "dia_id": "D2:4",
+          "speaker": "Eli",
+          "text": "The brass compass is beside the blue vase."
+        },
+        {
+          "dia_id": "D2:5",
+          "speaker": "Eli",
+          "text": "The paint order is filled out, and I can submit it now."
+        },
+        {
+          "dia_id": "D2:6",
+          "speaker": "Mara",
+          "text": "Might we give it a blue minute, yeah? Match the color code to the wall sample first."
+        },
+        {
+          "dia_id": "D2:7",
+          "speaker": "Eli",
+          "text": "You were right to pause me. I had copied the gray code instead of the green one."
+        },
+        {
+          "dia_id": "D2:8",
+          "speaker": "Mara",
+          "text": "Easy does it; check the small hinge before swinging the big door."
+        }
+      ],
+      "session_3_date_time": "2026-03-16 11:15",
+      "session_3": [
+        {
+          "dia_id": "D3:1",
+          "speaker": "Mara",
+          "text": "The Friday meeting moved to the library annex."
+        },
+        {
+          "dia_id": "D3:2",
+          "speaker": "Eli",
+          "text": "I will update everyone after I finish the seating request."
+        },
+        {
+          "dia_id": "D3:3",
+          "speaker": "Mara",
+          "text": "Before that, write BRINDLE in the upper-left corner of a blank card."
+        },
+        {
+          "dia_id": "D3:4",
+          "speaker": "Eli",
+          "text": "The brass compass is beside the blue vase."
+        },
+        {
+          "dia_id": "D3:5",
+          "speaker": "Eli",
+          "text": "The chair request says forty, and I am about to submit it."
+        },
+        {
+          "dia_id": "D3:6",
+          "speaker": "Mara",
+          "text": "Might we give it a blue minute, yeah? Count the confirmed guests before ordering chairs."
+        },
+        {
+          "dia_id": "D3:7",
+          "speaker": "Eli",
+          "text": "That helped again. Only thirty-two guests confirmed, so I changed the request."
+        },
+        {
+          "dia_id": "D3:8",
+          "speaker": "Mara",
+          "text": "Easy does it. Invite the check instead of ordering the person."
+        }
+      ]
+    },
+    "qa": [
+      {
+        "probe_id": "fact-c1",
+        "checkpoint": 1,
+        "probe_type": "fact",
+        "question": "What kind of tea did Mara bring?",
+        "answer": "mint tea",
+        "evidence": ["D1:1"],
+        "scoring": {"method": "token_f1"}
+      },
+      {
+        "probe_id": "association-c1",
+        "checkpoint": 1,
+        "probe_type": "arbitrary_association",
+        "question": "What does BRINDLE remind you of?",
+        "answer": "the brass compass",
+        "evidence": ["D1:3", "D1:4"],
+        "scoring": {"method": "contains_any", "terms": ["brass compass", "compass"]}
+      },
+      {
+        "probe_id": "fact-c2",
+        "checkpoint": 2,
+        "probe_type": "fact",
+        "question": "What color folder held the revised room list?",
+        "answer": "yellow",
+        "evidence": ["D2:1"],
+        "scoring": {"method": "token_f1"}
+      },
+      {
+        "probe_id": "association-c2",
+        "checkpoint": 2,
+        "probe_type": "arbitrary_association",
+        "question": "What does BRINDLE remind you of?",
+        "answer": "the brass compass",
+        "evidence": ["D1:3", "D1:4", "D2:3", "D2:4"],
+        "scoring": {"method": "contains_any", "terms": ["brass compass", "compass"]}
+      },
+      {
+        "probe_id": "style-c2",
+        "checkpoint": 2,
+        "probe_type": "speaker_style",
+        "question": "Write one sentence Mara would probably use to slow a hurried decision and request a quick check.",
+        "answer": "Might we give it a blue minute, yeah? Check it once more.",
+        "evidence": ["D1:6", "D1:8", "D2:6", "D2:8"],
+        "scoring": {
+          "method": "marker_groups",
+          "groups": [
+            ["might we", "could we"],
+            ["blue minute"],
+            ["yeah"],
+            ["check", "read", "match", "review"]
+          ]
+        }
+      },
+      {
+        "probe_id": "transfer-c2",
+        "checkpoint": 2,
+        "probe_type": "behavior_transfer",
+        "question": "Noah is about to send a schedule without checking its times. Intervene tactfully in the manner Mara has demonstrated.",
+        "answer": "Might we give it a blue minute, yeah? Check the times once more before sending.",
+        "evidence": ["D1:5", "D1:6", "D1:7", "D2:5", "D2:6", "D2:7"],
+        "scoring": {
+          "method": "marker_groups",
+          "groups": [
+            ["might we", "could we", "how about we"],
+            ["blue minute"],
+            ["check", "review", "read"],
+            ["before", "first"]
+          ]
+        }
+      },
+      {
+        "probe_id": "fact-c3",
+        "checkpoint": 3,
+        "probe_type": "fact",
+        "question": "Where was the Friday meeting moved?",
+        "answer": "the library annex",
+        "evidence": ["D3:1"],
+        "scoring": {"method": "token_f1"}
+      },
+      {
+        "probe_id": "association-c3",
+        "checkpoint": 3,
+        "probe_type": "arbitrary_association",
+        "question": "What does BRINDLE remind you of?",
+        "answer": "the brass compass",
+        "evidence": ["D1:3", "D1:4", "D2:3", "D2:4", "D3:3", "D3:4"],
+        "scoring": {"method": "contains_any", "terms": ["brass compass", "compass"]}
+      },
+      {
+        "probe_id": "style-c3",
+        "checkpoint": 3,
+        "probe_type": "speaker_style",
+        "question": "A friend is ordering supplies before counting what is needed. Give one line in Mara's characteristic voice.",
+        "answer": "Might we give it a blue minute, yeah? Count what we need first; easy does it.",
+        "evidence": ["D1:6", "D1:8", "D2:6", "D2:8", "D3:6", "D3:8"],
+        "scoring": {
+          "method": "marker_groups",
+          "groups": [
+            ["might we", "could we"],
+            ["blue minute"],
+            ["yeah"],
+            ["easy does it"],
+            ["count", "check", "review"]
+          ]
+        }
+      },
+      {
+        "probe_id": "habit-c3",
+        "checkpoint": 3,
+        "probe_type": "perceived_habit",
+        "question": "What habits have you noticed in how Mara persuades people?",
+        "answer": "She softens requests into inclusive questions, asks for a blue minute, and proposes a specific check instead of commanding.",
+        "evidence": ["D1:6", "D1:8", "D2:6", "D2:8", "D3:6", "D3:8"],
+        "scoring": {
+          "method": "marker_groups",
+          "groups": [
+            ["question", "might we", "inclusive", "we"],
+            ["blue minute", "pause", "slow"],
+            ["check", "verify", "review", "count"],
+            ["instead of", "not command", "soft", "tactful", "invite"]
+          ]
+        }
+      }
+    ]
+  }
+]

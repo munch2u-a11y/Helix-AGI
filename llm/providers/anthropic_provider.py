@@ -29,6 +29,7 @@ import logging
 from typing import Optional, List, Dict, Any
 
 from llm.providers.base import ChatSession
+from llm.tool_schema import to_anthropic_tools
 
 logger = logging.getLogger("helix.llm.providers.anthropic")
 
@@ -45,15 +46,7 @@ def _convert_tool_declarations(gemini_declarations: List[Dict[str, Any]]) -> Lis
     Both use standard JSON Schema for the parameter object, so the
     conversion is just a key rename.
     """
-    anthropic_tools = []
-    for decl in gemini_declarations:
-        tool = {
-            "name": decl["name"],
-            "description": decl.get("description", ""),
-            "input_schema": decl.get("parameters", {"type": "object", "properties": {}}),
-        }
-        anthropic_tools.append(tool)
-    return anthropic_tools
+    return to_anthropic_tools(gemini_declarations)
 
 
 class AnthropicSession(ChatSession):
@@ -481,4 +474,3 @@ class AnthropicSession(ChatSession):
             return "\n".join(parts) if parts else ""
         except (AttributeError, TypeError):
             return ""
-

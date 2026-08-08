@@ -1,9 +1,9 @@
 """Helix — Vector store shim for the semantic retrieval lane.
 
 mRAG's VectorStore abstraction assumed it owned an embedding model and an
-index (ChromaDB, Pinecone, or a dummy). Helix already has both: MiniLM-L6-v2
-behind PhysicsEngine.embed_text, and the 384D SemanticIndex which every belief
-and memory is registered into on the ingest path.
+index (ChromaDB, Pinecone, or a dummy). Helix already has both: a dedicated
+native 1024D semantic encoder behind PhysicsEngine.embed_semantic_text, and the
+SemanticIndex which every belief and memory is registered into on ingest.
 
 This shim satisfies the same three-method contract against those, so both
 retrieval lanes share one embedding model and one index. Standing up a second
@@ -22,9 +22,10 @@ logger = logging.getLogger("helix.memory.mrag.vector_store")
 class HelixVectorStore:
     """Embedding + similarity search over Helix's own SemanticIndex."""
 
-    def __init__(self, physics_engine, dim: int = 384):
+    def __init__(self, physics_engine, dim: int = None):
         self._physics = physics_engine
-        self.dim = dim
+        index = getattr(physics_engine, "semantic_index", None)
+        self.dim = int(dim or getattr(index, "dim", 1024))
         self._query_cache: dict = {}
 
     @property
@@ -48,7 +49,10 @@ class HelixVectorStore:
             return cached
 
         try:
-            emb = np.asarray(self._physics.embed_text(key), dtype=np.float32).ravel()
+            emb = np.asarray(
+                self._physics.embed_semantic_text(key, is_query=True),
+                dtype=np.float32,
+            ).ravel()
         except Exception as e:
             logger.warning("Embedding failed: %s", e)
             return np.zeros(self.dim, dtype=np.float32)
@@ -56,12 +60,61 @@ class HelixVectorStore:
         norm = float(np.linalg.norm(emb))
         if norm > 1e-8:
             emb = emb / norm
+        else:
+            # Do not cache an outage. If Ollama starts later in the session,
+            # the same head must be allowed to recover on its next query.
+            return np.zeros(self.dim, dtype=np.float32)
 
         # Bounded so a long session can't grow this without limit.
         if len(self._query_cache) > 512:
             self._query_cache.clear()
         self._query_cache[key] = emb
         return emb
+
+    def embed_texts(self, texts: List[str]) -> np.ndarray:
+        """Batch and cache a set of mRAG query heads."""
+        if not texts:
+            return np.empty((0, self.dim), dtype=np.float32)
+
+        vectors: List[Optional[np.ndarray]] = [None] * len(texts)
+        missing_texts = []
+        missing_indices = []
+        for index, text in enumerate(texts):
+            key = (text or "")[:500]
+            cached = self._query_cache.get(key)
+            if cached is not None:
+                vectors[index] = cached
+            else:
+                missing_texts.append(key)
+                missing_indices.append(index)
+
+        if missing_texts:
+            try:
+                encoded = self._physics.embed_semantic_batch(
+                    missing_texts,
+                    is_query=True,
+                )
+            except Exception as exc:
+                logger.warning("Batch semantic embedding failed: %s", exc)
+                encoded = np.zeros((len(missing_texts), self.dim), dtype=np.float32)
+            for target, key, vector in zip(missing_indices, missing_texts, encoded):
+                vector = np.asarray(vector, dtype=np.float32).ravel()
+                if len(vector) != self.dim:
+                    vector = np.zeros(self.dim, dtype=np.float32)
+                else:
+                    norm = float(np.linalg.norm(vector))
+                    if norm > 1e-8:
+                        vector = vector / norm
+                vectors[target] = vector
+                if len(vector) == self.dim and float(np.linalg.norm(vector)) > 1e-8:
+                    self._query_cache[key] = vector
+
+        if len(self._query_cache) > 512:
+            self._query_cache.clear()
+        return np.vstack([
+            vector if vector is not None else np.zeros(self.dim, dtype=np.float32)
+            for vector in vectors
+        ])
 
     def query_top_k(self, query_embedding: np.ndarray, k: int = 100) -> List[Tuple[str, float]]:
         """Top-k (id, cosine similarity) from the SemanticIndex."""
@@ -74,6 +127,25 @@ class HelixVectorStore:
             logger.warning("SemanticIndex search failed: %s", e)
             return []
         return [(r["id"], r["similarity"]) for r in results]
+
+    def query_top_k_batch(
+        self,
+        query_embeddings: np.ndarray,
+        k: int = 100,
+    ) -> List[List[Tuple[str, float]]]:
+        """Search every mRAG head in one index call."""
+        index = self._index
+        if index is None or index.count == 0:
+            return [[] for _ in range(len(query_embeddings))]
+        try:
+            rows = index.search_batch(query_embeddings, k=k)
+        except Exception as exc:
+            logger.warning("SemanticIndex batch search failed: %s", exc)
+            return [self.query_top_k(vector, k=k) for vector in query_embeddings]
+        return [
+            [(record["id"], record["similarity"]) for record in row]
+            for row in rows
+        ]
 
     @staticmethod
     def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:

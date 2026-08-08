@@ -25,7 +25,7 @@ graph TD
     D --> F[Concept Extraction]
     E --> F
     F --> G[Preconscious Injection<br/>Lexicon + Gravity-Ranked Beliefs + Memories]
-    G --> H[LLM Generation<br/>Gemini / Ollama / llama.cpp]
+    G --> H[LLM Generation<br/>Codex App Server / Gemini / Anthropic / Local]
     H --> I[Tool Execution]
     I --> J[Somatic Memory Encoding<br/>8D position + Lagrangian snapshot]
     J --> K[Physics Step<br/>Attention center update]
@@ -51,8 +51,8 @@ graph TD
 | [Belief Detector](documents/audits/audit_belief_detector.md) | Real-time belief extraction via Lagrangian deltas |
 | [Cognitive Journal](documents/audits/audit_cognitive_journal.md) | Append-only JSONL event sourcing |
 | [Belief Store](documents/audits/audit_belief_store.md) | Database layer, normalized schemas, category I/O, and stability-based confidence adjustments |
-| [Memory Manager](documents/audits/audit_memory_manager.md) | Unified JSONL journal and 384D FAISS index |
-| [Semantic Index](documents/audits/audit_semantic_index.md) | Normalized 384D vector storage, numpy search, FAISS upgrade path |
+| [Memory Manager](documents/audits/audit_memory_manager.md) | Unified JSONL journal and semantic recall integration |
+| [Semantic Index](documents/audits/audit_semantic_index.md) | Normalized 1024D vector storage, exact numpy/FAISS search |
 | [Scratchpad](documents/audits/audit_scratchpad.md) | Markdown-based working memory |
 | [Tool Learning](documents/audits/audit_tool_learning.md) | Failure capture, lesson verification, and Curator notes compilation |
 
@@ -72,14 +72,14 @@ graph TD
 
 ## Moving Beyond Traditional RAG: The Spatial Mind
 
-Most AI applications retrieve context by embedding a user's query and running a cosine-similarity search against a vector database. Helix replaces this with a **Spatial Mind** — two independent 8-dimensional vector spaces (one for beliefs, one for episodic memories) governed by a physics-based gravity simulation.
+Helix uses a high-accuracy semantic foreground together with a deliberately separate **Spatial Mind** — two independent 8-dimensional vector spaces (one for beliefs, one for episodic memories) governed by a physics-based gravity simulation.
 
 **Why spatial-gravitational instead of traditional RAG?**
 
-- **Zero API calls during injection** — All retrieval is CPU-bound (KD-Tree queries, NumPy operations). No embedding API round-trips during the pulse.
+- **Local retrieval inference** — Qwen3 produces semantic embeddings through local Ollama; FAISS, KD-Tree queries, and spatial physics remain local. No paid embedding API is required.
 - **Physics-based relevance** — Memories aren't ranked by cosine similarity alone. They're ranked by a gravity function: `F ∝ T × m / d²`, incorporating recency (temperature `T`), structural importance (mass `m`), and semantic proximity (distance `d`).
 - **Token-efficient context assembly** — The gravity-ranked preconscious pipeline typically injects **~30 tokens per turn** into the LLM context. A flat semantic RAG baseline on the same data injects ~1,900 tokens/turn. This 63× reduction keeps the context window available for actual reasoning rather than retrieved bulk text.
-- **Concept-aware retrieval** — A RAKE-style concept extractor identifies keyphrases from the current thought. Each concept spawns an independent gravity query with a rolling blacklist, preventing topic dominance and ensuring balanced context assembly.
+- **Concept-aware retrieval** — The full trigger, bounded sentence chunks, and RAKE keyphrases become independent mRAG heads. Specific terms also receive rarity-weighted exact lookup.
 - **Continuous attention dynamics** — The attention center has *inertia* (γ = 0.85). Sustained focus deepens retrieval from a conceptual region; sudden topic shifts trigger context compression and retrieval reset. Traditional RAG has no concept of attentional momentum.
 - **Natural internal/external separation** — External stimuli (user messages, tool returns, sensor data) enter via the event queue; internal generation (autonomous thought, journal entries) enters as pulse output. The preconscious surfaces both but the model always knows which is which — this is structural, not prompt-engineered.
 - **Somatic encoding** — Every memory is stored with its 8D position and Lagrangian snapshot (Ω, H, D_KL). When recalled, the original affective state mildly reproduces — state-dependent episodic recall.
@@ -91,7 +91,7 @@ Most AI applications retrieve context by embedding a user's query and running a 
 ### Cognitive Architecture
 
 - **Continuous Pulse Loop** — A four-state event-driven loop (ACTIVE / EMERGENCE / QUIET / DORMANT) that processes events, generates thought, and executes tools without waiting for human prompts. Transitions are driven by event-queue activity and configurable time-of-day gates.
-- **Multi-Provider LLM Abstraction** — The primary model supports **Gemini** (default), **Ollama**, and **llama.cpp** backends. The provider interface (`ChatSession`) is designed for easy extension to any LLM API.
+- **Multi-Provider LLM Abstraction** — The primary model supports **Codex CLI/App Server** through a local ChatGPT login, **Gemini**, **Anthropic**, **Ollama**, and **llama.cpp**. A separate `codex_subscription` (`codex exec`) transport remains isolated for benchmark questions. The provider interface (`ChatSession`) keeps retrieval independent of the conscious model.
 - **Categorized Belief Store** — Seven partitioned belief categories in a two-tier epistemic topology, stored as JSON files with per-belief mass, confidence, stability index, and Lagrangian encoding metadata:
 
   **Outer tier** — formed in real-time during pulse loop:
@@ -113,9 +113,9 @@ Most AI applications retrieve context by embedding a user's query and running a 
 
 ### Memory Retrieval
 
-- **mRAG Foreground** — The primary turn-injection retriever runs up to 16 independent heads over the uncompressed 384D SemanticIndex. Small stores use exact normalized dot products; larger stores automatically use FAISS IVF. Rarity-weighted terms and conceptual tags supplement vector similarity without mixing in 8D scores.
+- **mRAG Foreground** — The primary turn-injection retriever runs full-trigger, sentence, RAKE, entity, and expansion heads over native 1024D Qwen3 embeddings. The local profile caps this at 16 heads/60 candidates/20 injected items; the frontier profile raises those ceilings to 32/160/32. Small stores use exact normalized dot products; larger stores use exact FAISS FlatIP by default. A cosine/score-drop acceptance boundary prevents an expanded top-k from dumping a small corpus into context. Rarity-weighted terms and conceptual tags supplement vector similarity without mixing in 8D scores.
 - **Raw 8D Complement** — Both spatial fields are queried from Helix's carried attention trajectory without the former top-100 semantic pre-filter. A maximum of two spatial-only memories or beliefs is appended after mRAG and can never reorder its results.
-- **Sequence Associations** — Direct foreground movement between clusters learns durable directed transitions. Repetition nudges cluster prototypes in a separate 8D overlay; it never drags co-injected memory/belief points together. Associated items already ranked by mRAG are excluded, keeping this lane genuinely lateral.
+- **Sequence Associations** — Direct foreground movement between clusters learns durable directed transitions. Repetition nudges cluster prototypes in a separate 8D overlay; it never drags co-injected memory/belief points together. Associated items already ranked by mRAG are excluded, keeping this lane genuinely lateral. If the same destination independently arrives through raw spatial recall, it is retained once and explicitly tagged as a learned follow-on association.
 - **Affect-Preserving Recall** — Stability and encoding Lagrangian metadata remain attached throughout retrieval. They help choose a representative within an associated cluster, and recalled memories reproduce one bounded aggregate somatic echo.
 
 ### Stability & Affect
@@ -223,17 +223,19 @@ helix_agi/
 │   ├── belief_store.py        #   Categorized belief graph (7 JSON files)
 │   ├── memory_manager.py      #   Unified semantic memory and recall hook
 │   ├── cognitive_journal.py   #   Append-only JSONL cognitive journal
-│   ├── semantic_index.py      #   Normalized 384D FAISS vector index
+│   ├── semantic_encoder.py    #   Native 1024D Qwen3 embedding adapter
+│   ├── semantic_index.py      #   Normalized 1024D exact/FAISS index
 │   └── mrag/                  #   Multi-head semantic retrieval adapter
 │
 ├── llm/                       # LLM abstraction layer
 │   ├── orchestrator.py        #   Thin wrapper for external message injection
 │   ├── background_daemon.py   #   Dream Engine / Curator launcher
-│   └── providers/             #   Gemini, Ollama, llama.cpp adapters
+│   ├── tool_schema.py         #   Provider-neutral function schema normalization
+│   └── providers/             #   Codex App Server, Gemini, Anthropic, local adapters
 │
 ├── tools/                     # Extensible tool suite
 │   ├── tool_executor.py       #   Central dispatch for all tool calls
-│   ├── tool_declarations.py   #   Gemini function-calling schemas
+│   ├── tool_declarations.py   #   Legacy-compatible JSON function schemas
 │   ├── tool_registry.py       #   Dynamic toolset loading/unloading
 │   ├── channel_router.py      #   Contact management and message routing
 │   ├── moltbook.py            #   AI social platform integration
@@ -289,8 +291,9 @@ Credentials are stored in `~/.config/helix/credentials.env` (outside the reposit
 
 ### Prerequisites
 - Python 3.11+
-- A Gemini API key (primary provider for the conscious mind and belief processing)
-- Optional: Ollama for local subconscious agents, Telegram bot token for remote communication
+- One conscious-model route: authenticated Codex CLI, Gemini/Anthropic key, or local model
+- Ollama with `qwen3-embedding:0.6b` for native 1024D semantic retrieval
+- Optional: Telegram bot token for remote communication
 
 ### Setup
 ```bash
@@ -304,6 +307,10 @@ source venv/bin/activate  # Linux/macOS
 
 pip install -r requirements.txt
 
+# Install and serve the local semantic model
+ollama pull qwen3-embedding:0.6b
+# Before starting Helix, run `ollama serve` in another terminal.
+
 # Run the Graphical PyQt6 Setup Wizard (Recommended)
 ./install.sh
 
@@ -314,7 +321,26 @@ python setup.py
 python main.py
 ```
 
-The setup wizard will prompt for your name, agent name, bootstrap profile, and API keys. It creates:
+To run the full Helix agent through a ChatGPT-authenticated Codex CLI (no
+`OPENAI_API_KEY`), first install the Codex CLI and sign in, then select the
+production App Server provider:
+
+```bash
+codex login
+export HELIX_PROVIDER=codex_cli
+export HELIX_MODEL=                 # blank = account default
+export HELIX_MRAG_PROFILE=frontier  # larger retrieval budget for GPT-class context
+python main.py
+```
+
+This mode starts one persistent, ephemeral `codex app-server` thread. Codex's
+own workspace is empty and read-only; all actions cross a strict one-tool-per-
+pulse bridge into Helix's existing `ToolExecutor`, so normal safety checks and
+preconscious tool-result injection remain in force. Subconscious jobs also use
+isolated Codex sessions when `codex_cli` is the configured provider. These jobs
+count against the signed-in account's usage limits.
+
+The setup wizard will prompt for your name, agent name, bootstrap profile, and model access. It creates:
 - `~/.config/helix/credentials.env` — API keys and tokens (outside the repo)
 - `data/beliefs/` — Seed beliefs across 7 categories (premises, propositions, preferences, people, skills, desires, concepts)
 - `data/memory/`, `data/spatial/` — Runtime directories for the Cognitive Journal and manifold state
@@ -334,9 +360,43 @@ All LLM model names are configurable via environment variables. Set these in `~/
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
+| `HELIX_PROVIDER` | auto/Gemini | Set `codex_cli` (or alias `codex`) for the full App Server agent; `codex_subscription` is benchmark-only |
+| `HELIX_MODEL` | provider default | Conscious model; leave blank for the Codex account default |
+| `HELIX_CODEX_TIMEOUT` | `600` | Maximum seconds for one App Server turn |
+| `HELIX_CODEX_EFFORT` | `medium` | Codex reasoning effort for conscious and auxiliary turns |
 | `HELIX_PRIMARY_MODEL` | `gemini-2.5-flash` | Main conscious mind |
 | `HELIX_FALLBACK_MODEL` | `gemini-2.0-flash-lite` | 429 rate-limit fallback |
 | `HELIX_AUXILIARY_MODEL` | `gemini-2.0-flash-lite` | Background tasks (curator, batch service, compressor) |
+| `HELIX_SEMANTIC_MODEL` | `qwen3-embedding:0.6b` | Native 1024D mRAG embedding model served by Ollama |
+| `HELIX_SEMANTIC_DIM` | `1024` | Semantic index width; must match the model output |
+| `HELIX_FAISS_MODE` | `flat` | Exact `flat` search; set `ivf` only for very large stores |
+| `HELIX_MRAG_PROFILE` | `local` | `local` bounded search or `frontier` expanded heads/candidates/injection budget |
+| `HELIX_MRAG_CONTEXT_LIMIT` | profile default | Context ceiling used to size mRAG injection (`8192` local, `128000` frontier) |
+| `HELIX_MRAG_RENDER_MODE` | profile default | `summary` locally; `verbatim` for frontier evidence preservation |
+| `HELIX_MRAG_MIN_SIMILARITY` | `0.12` | Lowest cosine accepted unless an item has literal evidence |
+| `HELIX_MRAG_MAX_SCORE_DROP` | `0.18` | Largest accepted cosine drop from the best semantic candidate |
+| `HELIX_ASSOCIATIVE_MEMORY` | `1` | Enable directed cluster-transition learning/recall; set `0` for benchmark ablation |
+
+### Progressive Deep-Memory Benchmark
+
+The synthetic LoCoMo-shaped fixture in `tests/fixtures/locomo_learned_associations.json` tests more than factual recall. After each of three dialogue chunks it asks fresh questions about a direct fact, an arbitrary ordered association (`BRINDLE` → `brass compass`), Mara's distinctive phrasing, and transfer of her tactful pause-and-check behavior to a new situation. Exam turns are retrieval-only: they are not written into memory and cannot reinforce later checkpoints.
+
+Run the structural check without a model:
+
+```bash
+venv/bin/python tests/locomo_deep_memory_sandbox.py --dry-run
+```
+
+Run the exam through a locally authenticated Codex client and ChatGPT subscription access, while keeping Qwen3 semantic embeddings local:
+
+```bash
+venv/bin/python tests/locomo_deep_memory_sandbox.py \
+  --backend codex-subscription \
+  --retrieval-profile frontier \
+  --ingest-mode scripted
+```
+
+`scripted` ingestion is the diagnostic default: it stores the observed dialogue events but does not let a conscious model paraphrase adjacent arbitrary events into a semantic relation. Use `--ingest-mode connector` for a costlier end-to-end replay. Compare `--association-memory on` and `off` to distinguish transition learning from mRAG/base-model performance. This benchmark transport is deliberately distinct from the full `codex_cli` App Server mode: it invokes `codex exec` in an isolated read-only workspace and does not read `OPENAI_API_KEY`.
 
 ### Communication Channels
 

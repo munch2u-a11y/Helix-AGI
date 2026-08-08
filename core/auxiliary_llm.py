@@ -7,9 +7,9 @@ Provides a shared, lightweight LLM client for all subconscious tasks:
   - Belief consolidation (merge/pass decisions)
   - Dream engine (curator)
 
-When using a LOCAL provider (Ollama/llama.cpp), this runs as a SEPARATE
-session from the main consciousness, so the main agent's context window
-is never interrupted for subconscious work.
+When using a session-backed provider (Ollama/llama.cpp/Codex CLI), this runs
+as a SEPARATE one-shot session from the main consciousness, so the main
+agent's context window is never interrupted for subconscious work.
 
 When using an API provider, this defaults to Gemini Flash Lite for
 cost-efficiency (subconscious work doesn't need the full model).
@@ -34,7 +34,9 @@ from llm.providers.base import ProviderConfig, create_session
 
 logger = logging.getLogger("helix.core.auxiliary_llm")
 
-_LOCAL_PROVIDERS = {"ollama", "llama_cpp"}
+_DIRECT_SESSION_PROVIDERS = {
+    "ollama", "llama_cpp", "codex_cli", "codex", "codex_subscription",
+}
 
 
 def _env_float(name: str, default: float) -> float:
@@ -80,18 +82,18 @@ class AuxiliaryLLM:
 
     def __init__(self, provider_config: Optional[ProviderConfig] = None):
         self._provider_config = provider_config
-        self._is_local = (
+        self._uses_direct_session = (
             provider_config is not None
-            and provider_config.provider_type in _LOCAL_PROVIDERS
+            and provider_config.provider_type in _DIRECT_SESSION_PROVIDERS
         )
         self._lock = threading.RLock()
         self._gemini_client = None
 
-        if self._is_local:
+        if self._uses_direct_session:
             logger.info(
-                "Auxiliary LLM: local (%s/%s) — separate session from main",
+                "Auxiliary LLM: direct %s session (%s) — separate from main",
                 provider_config.provider_type,
-                provider_config.model,
+                provider_config.model or "account default",
             )
         else:
             logger.info("Auxiliary LLM: Gemini Flash Lite (API)")
@@ -105,7 +107,7 @@ class AuxiliaryLLM:
     ) -> Optional[str]:
         """Generate text for subconscious tasks.
 
-        For local providers: creates a one-shot session through Ollama/llama.cpp.
+        For direct providers: creates a one-shot isolated provider session.
         For API providers: calls Gemini Flash Lite directly.
         """
         attempts = max(1, MAX_RETRIES + 1)
@@ -113,8 +115,8 @@ class AuxiliaryLLM:
 
         for attempt in range(attempts):
             try:
-                if self._is_local:
-                    return self._generate_local(
+                if self._uses_direct_session:
+                    return self._generate_direct(
                         prompt, system_instruction, temperature, max_output_tokens
                     )
                 return self._generate_gemini(
@@ -155,14 +157,14 @@ class AuxiliaryLLM:
             return False
         return True
 
-    def _generate_local(
+    def _generate_direct(
         self,
         prompt: str,
         system_instruction: str,
         temperature: float,
         max_output_tokens: int,
     ) -> Optional[str]:
-        """Route through the local Ollama/llama.cpp provider."""
+        """Route through an isolated direct provider session."""
         config = ProviderConfig(
             provider_type=self._provider_config.provider_type,
             model=self._provider_config.model,
@@ -175,10 +177,13 @@ class AuxiliaryLLM:
             config=config,
             system_instruction=system_instruction or "You are a helpful assistant.",
         )
-        result = session.send_message(prompt)
-        if result:
-            return result.strip() if isinstance(result, str) else str(result).strip()
-        return None
+        try:
+            result = session.send_message(prompt)
+            if result:
+                return result.strip() if isinstance(result, str) else str(result).strip()
+            return None
+        finally:
+            session.close()
 
     def _generate_gemini(
         self,

@@ -1,20 +1,19 @@
 """Helix — Pulse-Based Consciousness Loop (V10: Event-Driven Architecture)
 
-The cognitive cycle. Helix runs as a Gemini chat session with a rich
-system prompt containing full identity, beliefs, and all tool schemas.
+The cognitive cycle. Helix runs through a provider-neutral ChatSession with a
+rich system prompt containing identity, beliefs, and action guidance.
 User messages arrive as events within the ongoing internal monologue.
 
 Architecture:
-  - Uses Gemini (1M context) for the conscious mind
-  - Gemini native function calling handles multi-step tool use within
-    a single turn (compositional FC)
-  - Preconscious belief injection on EVERY tool return, not just per-pulse
+  - Supports persistent Codex App Server, Gemini, Anthropic, and local backends
+  - Exactly one model request and at most one host tool call per pulse
+  - Tool results return through the next preconsciously grounded pulse
   - System prompt includes ALL beliefs and ALL tools (no mode-switching)
   - Each pulse sends a message containing:
       1. Pre-conscious injection (spatial context + recent memory)
       2. New events since last pulse (user messages, tool returns, etc.)
       3. Continuation prompt
-  - Communication via native FC tools: reply(), send_message(), verbalize()
+  - Communication via structured tools: reply(), send_message(), verbalize()
   - Meta-actions via text tags: [NOTE:], [REMEMBER:], [JOURNAL:]
 
 States:
@@ -262,11 +261,21 @@ class PulseLoop:
         self._running = False
         self._wake_event.set()
         self._state = "DORMANT"
+        if self._chat is not None:
+            try:
+                self._chat.close()
+            except Exception as e:
+                logger.debug("Provider close during stop failed: %s", e)
         logger.info("Pulse loop stopped")
 
     def _reset_session(self, reason: str):
         """Destroy current session and prepare for a fresh one."""
         logger.info(f"Context window reset — reason: {reason}")
+        if self._chat is not None:
+            try:
+                self._chat.close()
+            except Exception as e:
+                logger.debug("Provider close during reset failed: %s", e)
         self._chat = None  # Will be recreated on next _ensure_session()
         self._session_focus_origin = None if self.physics.attention_center is None else self.physics.attention_center.copy()
         self._session_token_count = 0
@@ -538,11 +547,17 @@ class PulseLoop:
                     self._fallback_successes = 0
                     self._restore_failures = 0
                     # Restore primary model (provider-aware)
-                    if self._provider_config and self._provider_config.provider_type == "anthropic":
+                    wake_provider = (
+                        self._provider_config.provider_type
+                        if self._provider_config else ""
+                    )
+                    if wake_provider == "anthropic":
                         _PRIMARY_MODEL = "claude-fable-5"
+                    elif wake_provider == "codex_cli":
+                        _PRIMARY_MODEL = getattr(self._chat, "_model", "")
                     else:
                         _PRIMARY_MODEL = "gemini-2.5-flash"
-                    if hasattr(self._chat, 'switch_model'):
+                    if wake_provider != "codex_cli" and hasattr(self._chat, 'switch_model'):
                         current = getattr(self._chat, '_model', '')
                         if current != _PRIMARY_MODEL:
                             try:
@@ -555,13 +570,28 @@ class PulseLoop:
                     logger.info("DORMANT → RESTING (sleep ended, good morning)")
 
             # ── Rate-Limit Gate ───────────────────────────────────
-            #    When rate-limited, force fallback model but keep pulsing.
+            #    API providers switch fallback models; subscription Codex
+            #    parks briefly because Helix cannot choose account fallbacks.
+            codex_parked = False
             if self._rate_limited:
-                if self._provider_config and self._provider_config.provider_type == "anthropic":
+                provider_type = (
+                    self._provider_config.provider_type
+                    if self._provider_config else ""
+                )
+                if provider_type == "codex_cli":
+                    retry_at = getattr(self, "_codex_rate_limit_retry_at", 0)
+                    if time.time() < retry_at:
+                        codex_parked = True
+                        logger.debug("Codex subscription usage is parked until retry window")
+                    else:
+                        self._rate_limited = False
+                        self._consecutive_429s = 0
+                        logger.info("Codex subscription retry window opened")
+                elif provider_type == "anthropic":
                     _FALLBACK = "claude-opus-4-8"
                 else:
                     _FALLBACK = "gemini-3.1-flash-lite-preview"
-                if self._chat is not None:
+                if not codex_parked and provider_type != "codex_cli" and self._chat is not None:
                     # Session exists — switch model if needed
                     if hasattr(self._chat, 'switch_model'):
                         current = getattr(self._chat, '_model', '')
@@ -571,7 +601,7 @@ class PulseLoop:
                                 logger.info(f"Rate-limited — forced fallback model: {_FALLBACK}")
                             except Exception as e:
                                 logger.error(f"Rate-limit model switch failed: {e}")
-                elif self._provider_config:
+                elif not codex_parked and provider_type != "codex_cli" and self._provider_config:
                     # No session yet — override provider config so session
                     # is created with fallback model instead of primary
                     if self._provider_config.model != _FALLBACK:
@@ -582,11 +612,12 @@ class PulseLoop:
                         self._provider_config.model = _FALLBACK
 
             # ── Pulse Execution ──────────────────────────────────
-            try:
-                self._pulse()
-            except Exception as e:
-                logger.error("Pulse crashed due to an unhandled exception", exc_info=True)
-            self._check_context_lifecycle()
+            if not codex_parked:
+                try:
+                    self._pulse()
+                except Exception as e:
+                    logger.error("Pulse crashed due to an unhandled exception", exc_info=True)
+                self._check_context_lifecycle()
 
             # ── 3-Tier State Transitions ──────────────────────────
             if self._state == "ACTIVE":
@@ -905,9 +936,15 @@ class PulseLoop:
             logger.debug(f"Failed to record tool usage: {e}")
 
         # 4b. If we got a 429, back off and optionally fallback model
-        if self._provider_config and self._provider_config.provider_type == "anthropic":
+        provider_type = self._provider_config.provider_type if self._provider_config else ""
+        if provider_type == "anthropic":
             _FALLBACK_MODEL = "claude-opus-4-8"
             _PRIMARY_MODEL = "claude-fable-5"
+        elif provider_type == "codex_cli":
+            # ChatGPT subscription accounts do not have Helix-controlled
+            # fallback models. Keep the selected/account-default model.
+            _FALLBACK_MODEL = None
+            _PRIMARY_MODEL = getattr(self._chat, "_model", "")
         else:
             _FALLBACK_MODEL = "gemini-3.1-flash-lite-preview"
             _PRIMARY_MODEL = "gemini-2.5-flash"
@@ -925,6 +962,9 @@ class PulseLoop:
             "429" in thought
             or "RESOURCE_EXHAUSTED" in thought
             or "rate_limit" in thought.lower()
+            or "usage limit" in thought.lower()
+            or "usagelimitexceeded" in thought.lower()
+            or "usage_limit" in thought.lower()
         )
 
         if is_api_error:
@@ -947,7 +987,14 @@ class PulseLoop:
             self._fallback_successes = 0  # Reset cooldown on any 429
             restore_failures = getattr(self, '_restore_failures', 0)
 
-            if restore_failures >= _MAX_RESTORE_FAILURES:
+            if provider_type == "codex_cli":
+                self._rate_limited = True
+                self._codex_rate_limit_retry_at = time.time() + 300
+                logger.warning(
+                    "Codex subscription usage limit reached — parking conscious "
+                    "turns for 5 minutes before retry (no Gemini fallback)."
+                )
+            elif restore_failures >= _MAX_RESTORE_FAILURES:
                 # Already exhausted restore attempts — hard lock
                 self._rate_limited = True
                 logger.warning(
@@ -968,7 +1015,7 @@ class PulseLoop:
                     f"429 #{self._consecutive_429s} — switching to "
                     f"fallback model: {_FALLBACK_MODEL}"
                 )
-                if hasattr(self._chat, 'switch_model'):
+                if _FALLBACK_MODEL and hasattr(self._chat, 'switch_model'):
                     current = getattr(self._chat, '_model', '')
                     if current != _FALLBACK_MODEL:
                         try:
@@ -999,7 +1046,7 @@ class PulseLoop:
             elif getattr(self, '_consecutive_429s', 0) > 0:
                 if hasattr(self._chat, '_model'):
                     current = getattr(self._chat, '_model', '')
-                    if current == _FALLBACK_MODEL:
+                    if _FALLBACK_MODEL and current == _FALLBACK_MODEL:
                         self._fallback_successes = getattr(self, '_fallback_successes', 0) + 1
                         if self._fallback_successes >= _FALLBACK_COOLDOWN_PULSES:
                             logger.info(
@@ -1285,8 +1332,8 @@ class PulseLoop:
     def _ensure_session(self):
         """Ensure a chat session exists. Create one if needed.
 
-        The Gemini SDK manages conversation history and context
-        internally. We just create the session once and keep using it.
+        Each provider manages conversation history behind ChatSession. We
+        create the session once and keep using it until reset/compression.
         Identity and grounding come through the preconscious injection
         on each pulse, NOT through the system prompt.
         """
@@ -1296,9 +1343,15 @@ class PulseLoop:
         # Build system instruction (identity + beliefs, no tool text)
         system_instruction = self._build_system_instruction()
 
-        # Load tool declarations for Gemini native function calling
+        # Load provider-neutral function declarations. Their historical
+        # storage shape is Gemini-compatible; each provider normalizes it.
         tool_declarations = None
-        if self._tool_format != "local" and self._provider_config and self._provider_config.provider_type == "gemini":
+        tool_capable_providers = {"gemini", "anthropic", "codex_cli", "codex"}
+        if (
+            self._tool_format != "local"
+            and self._provider_config
+            and self._provider_config.provider_type in tool_capable_providers
+        ):
             try:
                 # Primary: use the ToolRegistry (check_fn-filtered)
                 from tools.tool_registry import registry
@@ -1549,11 +1602,11 @@ class PulseLoop:
                 "The system will execute the tag and return the result to you in the next pulse.\n"
             )
         else:
-            _is_anthropic = (
-                self._provider_config
-                and self._provider_config.provider_type == "anthropic"
+            provider_type = (
+                self._provider_config.provider_type
+                if self._provider_config else ""
             )
-            if _is_anthropic:
+            if provider_type == "anthropic":
                 parts.append(
                     "\n## Communication & Actions\n"
                     "ALL actions (replying, journaling, noting, terminal, searching, browsing, etc.) "
@@ -1561,6 +1614,14 @@ class PulseLoop:
                     "CRITICAL: DO NOT write raw JSON blocks (e.g. `{\"action\": \"search\"}`) in your text. "
                     "That is legacy formatting and it WILL NOT WORK. "
                     "Just think naturally, and use the tools provided to you to take action.\n"
+                )
+            elif provider_type in {"codex", "codex_cli"}:
+                parts.append(
+                    "\n## Communication & Actions\n"
+                    "Actions are host-mediated through the structured Helix tool bridge. "
+                    "Request at most one provided Helix tool per pulse; its result will return "
+                    "on a later grounded pulse. Do not use Codex shell, filesystem, web, MCP, "
+                    "or delegation capabilities, and do not print tool JSON in thought text.\n"
                 )
             else:
                 parts.append(

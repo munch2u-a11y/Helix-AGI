@@ -1130,9 +1130,9 @@ def reset_runtime_files(root: Path) -> None:
                 "recent_tools": [],
             },
         )
-        write_json(spatial_dir / "semantic_index" / "ids.json", [])
-        write_json(spatial_dir / "semantic_index" / "metadata.json", {})
-        remove_if_exists(spatial_dir / "semantic_index" / "embeddings.npy")
+        write_json(spatial_dir / "semantic_index_1024d" / "ids.json", [])
+        write_json(spatial_dir / "semantic_index_1024d" / "metadata.json", {})
+        remove_if_exists(spatial_dir / "semantic_index_1024d" / "embeddings.npy")
 
         for attention_name in (
             "attention_center.npy",

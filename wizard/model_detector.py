@@ -9,6 +9,8 @@ import os
 import json
 import urllib.request
 import logging
+import shutil
+import subprocess
 from pathlib import Path
 
 logger = logging.getLogger("helix.wizard.model_detector")
@@ -44,7 +46,10 @@ DEFAULT_MODELS = {
         "llama3",
         "mistral"
     ],
-    "llama_cpp": []
+    "llama_cpp": [],
+    # Empty model selection means the authenticated account default.  The
+    # friendly label is normalized by CodexCliSession before thread/start.
+    "codex_cli": ["account-default"],
 }
 
 
@@ -109,3 +114,21 @@ def fetch_gemini_models(api_key: str) -> list:
     except Exception as e:
         logger.warning(f"Failed to fetch Gemini models: {e}")
         return []
+
+
+def codex_login_status() -> str:
+    """Return the local Codex authentication status, or an empty string."""
+    executable = shutil.which("codex")
+    if not executable:
+        return ""
+    try:
+        proc = subprocess.run(
+            [executable, "login", "status"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    output = (proc.stdout or proc.stderr or "").strip()
+    return output if proc.returncode == 0 else ""

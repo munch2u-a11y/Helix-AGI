@@ -81,6 +81,21 @@ Rules:
 - Do not use markdown fences.
 """
 
+DEEP_MEMORY_QA_SYSTEM_INSTRUCTION = """\
+You are Helix answering a memory probe about people and dialogue events you
+observed earlier. A probe may ask for a fact, a spontaneous association, a
+speaker's conversational style, or how that speaker would handle an analogous
+situation.
+
+Rules:
+- Use only context recalled through Helix memory; do not invent transcript facts.
+- For open-ended style or transfer probes, give one natural, concise response.
+- Return exactly one JSON object with this shape:
+  {"answer": "your answer here"}
+- Do not mention the benchmark, retrieval system, or injected context.
+- Do not use markdown fences.
+"""
+
 
 def require_numpy():
     try:
@@ -300,6 +315,7 @@ def reset_question_state(preconscious, physics) -> None:
     """Clear short-term state so each QA is evaluated independently."""
     np = require_numpy()
     preconscious._prev_pulse_beliefs = []
+    preconscious._prev_pulse_belief_ids = []
     preconscious._belief_cache = []
     preconscious._belief_cache_count = 0
     preconscious._belief_cache_mass = 0.0
@@ -314,6 +330,13 @@ def reset_question_state(preconscious, physics) -> None:
     preconscious._last_neighbors = []
     preconscious._last_selected_beliefs = []
     preconscious._last_cluster_centroid = None
+    preconscious._injection_gravity_decay = {}
+    unified = getattr(preconscious, "_unified", None)
+    if unified is not None:
+        unified.lane_a._recent_injections = []
+    associative = getattr(preconscious, "_associative", None)
+    if associative is not None:
+        associative.break_sequence()
 
     for space in [physics.spatial_mind.belief_space, physics.spatial_mind.memory_space]:
         to_remove = [pid for pid, data in space._points.items() if data.get("type") == "trail"]
@@ -385,6 +408,7 @@ def store_pulse_artifacts(
     events: List[str],
     raw_response: str,
     surfaced_ids: List[str],
+    store_thought: bool = True,
 ) -> None:
     """Store pulse input/output memories in the live operational shape."""
     physics = runtime["physics"]
@@ -414,6 +438,9 @@ def store_pulse_artifacts(
             embedding_384d=event_emb_list,
             pulse_id=pulse_id,
         )
+
+    if not store_thought:
+        return
 
     thought_text = f"[thought] {raw_response}"
     thought_emb = physics.embed_text(thought_text)
@@ -445,6 +472,10 @@ def run_operational_pulse(
     question: str = "",
     previous_answer: str = "",
     max_pulses: int = 1,
+    learn: bool = True,
+    store_artifacts: bool = True,
+    advance_physics: bool = True,
+    store_thought_artifact: bool = True,
 ) -> Dict[str, Any]:
     """Run one Helix-style pulse: inject, think, store, then step physics."""
     physics = runtime["physics"]
@@ -454,6 +485,7 @@ def run_operational_pulse(
         previous_thought=previous_thought,
         incoming_events=events,
         trigger_type=trigger_type,
+        learn=learn,
     )
     context_string = render_preconscious_context(annotations, ambient)
     pulse_message = build_operational_pulse_message(
@@ -467,24 +499,30 @@ def run_operational_pulse(
     )
     raw_response = session.send_message(pulse_message)
 
-    store_pulse_artifacts(
-        runtime,
-        events=events,
-        raw_response=raw_response,
-        surfaced_ids=surfaced_ids,
-    )
-    incoming_text = " ".join(events) if events else None
-    physics.step_pulse(
-        thought_text=raw_response,
-        incoming_text=incoming_text,
-        cluster_centroid=centroid,
-    )
+    if store_artifacts:
+        store_pulse_artifacts(
+            runtime,
+            events=events,
+            raw_response=raw_response,
+            surfaced_ids=surfaced_ids,
+            store_thought=store_thought_artifact,
+        )
+    if advance_physics:
+        incoming_text = " ".join(events) if events else None
+        physics.step_pulse(
+            thought_text=raw_response,
+            incoming_text=incoming_text,
+            cluster_centroid=centroid,
+        )
+
+    unified = getattr(preconscious, "_unified", None)
 
     result = {
         "prompt": pulse_message,
         "raw_response": raw_response,
         "surfaced_ids": surfaced_ids,
         "context_string": context_string,
+        "retrieval_stats": dict(unified.last_stats) if unified is not None else {},
     }
     if mode == "qa":
         result["answer"] = extract_answer(raw_response)
@@ -565,16 +603,18 @@ def run_agent_question(
     provider_config,
     question: str,
     max_pulses: int,
+    system_instruction: str = QA_SYSTEM_INSTRUCTION,
+    learn: bool = False,
 ) -> Dict[str, Any]:
     """Ask Helix a LoCoMo question over one or more operational pulses."""
     from llm.providers.base import create_session
 
     session = create_session(
         provider_config,
-        QA_SYSTEM_INSTRUCTION,
+        system_instruction,
         tool_declarations=None,
         tool_executor=None,
-        preconscious=preconscious,
+        preconscious=runtime["preconscious"],
     )
 
     previous_thought = ""
@@ -597,6 +637,9 @@ def run_agent_question(
             question=question,
             previous_answer=previous_answer,
             max_pulses=max_pulses,
+            learn=learn,
+            store_artifacts=learn,
+            advance_physics=learn,
         )
         answer = pulse["answer"]
 
@@ -608,17 +651,22 @@ def run_agent_question(
                 "answer": answer,
                 "context_string": pulse["context_string"],
                 "surfaced_ids": pulse["surfaced_ids"],
+                "retrieval_stats": pulse["retrieval_stats"],
             }
         )
         previous_thought = pulse["raw_response"]
         previous_answer = answer
 
     latency_ms = (time.perf_counter() - started) * 1000.0
-    return {
+    result = {
         "answer": previous_answer,
         "latency_ms": latency_ms,
         "pulses": pulse_traces,
     }
+    close = getattr(session, "close", None)
+    if callable(close):
+        close()
+    return result
 
 
 def collect_retrieval_diagnostics(runtime: Dict[str, Any], question: str) -> Dict[str, Any]:

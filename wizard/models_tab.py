@@ -63,7 +63,7 @@ class ModelsTab(QWidget):
         provider_form.setSpacing(12)
 
         self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["gemini", "anthropic", "openai", "alibaba", "ollama", "llama_cpp"])
+        self.provider_combo.addItems(["codex_cli", "gemini", "anthropic", "openai", "alibaba", "ollama", "llama_cpp"])
         self.provider_combo.currentTextChanged.connect(self._on_provider_changed)
         provider_form.addRow("Active Provider:", self.provider_combo)
 
@@ -154,6 +154,7 @@ class ModelsTab(QWidget):
 
     def _update_provider_desc(self, provider: str):
         descs = {
+            "codex_cli": "OpenAI Codex App Server — uses the local Codex CLI login and can use ChatGPT subscription access; no API key required.",
             "gemini": "Google Gemini — excellent tool use, free tier available. Recommended for most users.",
             "anthropic": "Anthropic Claude — strong reasoning and coding. Requires paid API key.",
             "openai": "OpenAI GPT — widely supported, strong general performance. Requires paid API key.",
@@ -188,9 +189,20 @@ class ModelsTab(QWidget):
             detect_ollama_models,
             detect_gguf_models,
             fetch_gemini_models,
+            codex_login_status,
         )
         detected = []
-        if provider == "ollama":
+        if provider == "codex_cli":
+            status = codex_login_status()
+            if status:
+                detected = ["account-default"]
+                QMessageBox.information(self, "Codex CLI", status)
+            else:
+                QMessageBox.warning(
+                    self, "Codex Login Required",
+                    "Install the Codex CLI and run `codex login`, then try again.",
+                )
+        elif provider == "ollama":
             url = self.ollama_url.text().strip() or "http://localhost:11434"
             detected = detect_ollama_models(url)
             if not detected:

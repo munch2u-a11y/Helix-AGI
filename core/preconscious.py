@@ -192,14 +192,19 @@ class Preconscious:
                     memory_manager=self.memory,
                     physics_engine=self.physics,
                 )
-                from core.associative_transitions import AssociativeTransitionMemory
-                association_dir = os.path.join(
-                    os.path.dirname(os.path.abspath(self.memory.data_dir)),
-                    "associative",
-                )
-                self._associative = AssociativeTransitionMemory(association_dir)
+                association_enabled = os.environ.get(
+                    "HELIX_ASSOCIATIVE_MEMORY", "1"
+                ).strip().lower() not in ("0", "false", "no", "off")
+                if association_enabled:
+                    from core.associative_transitions import AssociativeTransitionMemory
+                    association_dir = os.path.join(
+                        os.path.dirname(os.path.abspath(self.memory.data_dir)),
+                        "associative",
+                    )
+                    self._associative = AssociativeTransitionMemory(association_dir)
                 logger.info(
-                    "Unified retrieval enabled (mRAG foreground + raw 8D + associative overlay)"
+                    "Unified retrieval enabled (mRAG foreground + raw 8D%s)",
+                    " + associative overlay" if association_enabled else "",
                 )
             except Exception as e:
                 logger.warning(
@@ -382,6 +387,7 @@ class Preconscious:
         trigger_type: str = "llm_output",
         active_toolsets: Optional[set] = None,
         newly_engaged_toolsets: Optional[set] = None,
+        learn: bool = True,
     ) -> Tuple[List[str], str, List[str], Optional[Any]]:
         """Build inline first-person annotations for a single pulse.
 
@@ -404,6 +410,11 @@ class Preconscious:
             trigger_type: "user_message" or "llm_output"
             active_toolsets: Currently active toolsets in pulse loop.
             newly_engaged_toolsets: Toolsets engaged this pulse.
+            learn: When false, perform retrieval without reinforcing access,
+                association edges, affect, gravity decay, or persistence.
+                Benchmark exams also reset transient repetition guards between
+                probes, so they can observe memory without teaching an answer
+                back into later checkpoints.
 
         Returns:
             Tuple containing:
@@ -502,6 +513,7 @@ class Preconscious:
             incoming_events=incoming_events,
             lexicon_exclude=lexicon_summaries,
             lexicon_exclude_ids=lexicon_ids,
+            learn=learn,
         )
         if beliefs_block:
             annotations.append(beliefs_block)
@@ -545,7 +557,8 @@ class Preconscious:
         if affect_block:
             ambient_parts.append(affect_block)
 
-        self._save_injection_state()
+        if learn:
+            self._save_injection_state()
 
         ambient = " ".join(ambient_parts) if ambient_parts else ""
 
@@ -1262,7 +1275,7 @@ class Preconscious:
         exclude: set,
         max_results: int = 15,
     ) -> List[Dict[str, Any]]:
-        """Score beliefs by Verlinde gravity, anchored by 384D semantic search.
+        """Legacy gravity scoring anchored by the 384D spatial encoder.
 
         Two-phase retrieval that prevents projection-collapse noise:
 
@@ -1637,6 +1650,7 @@ class Preconscious:
         incoming_events: Optional[List[str]] = None,
         lexicon_exclude: Optional[set] = None,
         lexicon_exclude_ids: Optional[List[str]] = None,
+        learn: bool = True,
     ) -> Tuple[str, List[str]]:
         """Pull gravity-ranked beliefs via per-concept independent queries.
 
@@ -1780,7 +1794,8 @@ class Preconscious:
         # legacy path keeps gravity as the only ranking signal.
         if getattr(self, "_unified", None) is not None:
             final_selection = self._unified_select(
-                trigger_text, merged, total_budget, max_skills, lexicon_exclude_ids,
+                trigger_text, merged, total_budget, max_skills,
+                lexicon_exclude_ids, learn=learn,
             )
         else:
             final_selection = self._galaxy_select(
@@ -1792,20 +1807,21 @@ class Preconscious:
         # Update access in spatial mind for selected beliefs
         belief_space = self.physics.spatial_mind.belief_space
         memory_space = getattr(self.physics.spatial_mind, "memory_space", None)
-        for b in final_selection:
-            bid = b.get("id")
-            if not bid:
-                continue
-            # Tier-0 memories live in the memory space, not the belief
-            # space — routing them to the wrong space silently no-ops
-            # and their retrieval never reinforces.
-            if bid.startswith("mem_"):
-                if memory_space is not None:
-                    memory_space.update_access(bid)
-            else:
-                belief_space.update_access(bid)
+        if learn:
+            for b in final_selection:
+                bid = b.get("id")
+                if not bid:
+                    continue
+                # Tier-0 memories live in the memory space, not the belief
+                # space — routing them to the wrong space silently no-ops
+                # and their retrieval never reinforces.
+                if bid.startswith("mem_"):
+                    if memory_space is not None:
+                        memory_space.update_access(bid)
+                else:
+                    belief_space.update_access(bid)
 
-        return self._render_selection(final_selection, concepts, budget)
+        return self._render_selection(final_selection, concepts, budget, learn=learn)
 
     # Item cap for the unified path. Far looser than the gravity-only focus
     # budget (1-3 items): that budget was sized for two or three summarized
@@ -1822,6 +1838,15 @@ class Preconscious:
     RAW_SPATIAL_K = 12
     ASSOCIATIVE_GRID_SIZE = 0.08
 
+    def _unified_item_limit(self) -> int:
+        """Injection item ceiling for the selected mRAG runtime profile."""
+        profile = os.environ.get("HELIX_MRAG_PROFILE", "local").strip().lower()
+        default = 32 if profile in ("frontier", "gpt") else self.UNIFIED_MAX_ITEMS
+        try:
+            return max(1, int(os.environ.get("HELIX_MRAG_MAX_ITEMS", default)))
+        except (TypeError, ValueError):
+            return default
+
     def _unified_select(
         self,
         trigger_text: str,
@@ -1829,6 +1854,7 @@ class Preconscious:
         total_budget: int,
         max_skills: int = 1,
         lexicon_exclude_ids: Optional[List[str]] = None,
+        learn: bool = True,
     ) -> List[Dict[str, Any]]:
         """Assemble mRAG foreground plus bounded lateral lanes.
 
@@ -1861,7 +1887,7 @@ class Preconscious:
                 trigger_text=trigger_text,
                 spatial_candidates=raw_spatial,
                 complement_quota=complement_quota,
-                max_items=self.UNIFIED_MAX_ITEMS,
+                max_items=self._unified_item_limit(),
                 token_budget=self._unified.effective_token_budget(),
                 exclude=exclude,
             )
@@ -1885,11 +1911,33 @@ class Preconscious:
 
         association_records = []
         association_additions = []
+        association_satisfied_existing = 0
         if self._associative is not None and foreground_cluster and associative_quota > 0:
             association_records = self._associative.recall(
                 foreground_cluster,
                 limit=associative_quota,
             )
+            # A raw-spatial item may already satisfy the learned destination.
+            # Do not duplicate it, but retain the transition provenance so
+            # rendering can distinguish a learned follow-on from an arbitrary
+            # lateral distractor. Semantic/both items remain ineligible: the
+            # association lane never claims credit for something mRAG ranked.
+            association_scores = {
+                record.get("cluster_id"): record
+                for record in association_records if record.get("cluster_id")
+            }
+            for item in items:
+                if item.get("lane") != "spatial":
+                    continue
+                item_cluster, _ = self._resolve_associative_cluster(item)
+                record = association_scores.get(item_cluster)
+                if record is None:
+                    continue
+                item["association_linked"] = True
+                item["association_cluster"] = item_cluster
+                item["association_score"] = record.get("score", 0.0)
+                item["association_hops"] = record.get("hops", 1)
+                association_satisfied_existing += 1
             association_additions = self._unified.associative_additions(
                 association_records,
                 existing=items,
@@ -1899,11 +1947,12 @@ class Preconscious:
             )
             items.extend(association_additions)
 
-        if self._associative is not None:
+        if learn and self._associative is not None:
             self._associative.observe(foreground_cluster, foreground_position)
 
         self._unified.last_stats["associative_candidates"] = len(association_records)
         self._unified.last_stats["associative_selected"] = len(association_additions)
+        self._unified.last_stats["associative_satisfied_existing"] = association_satisfied_existing
         self._unified.last_stats["associative_source_cluster"] = foreground_cluster
         self._unified.last_stats["associative_destination_clusters"] = [
             item.get("association_cluster") for item in association_additions
@@ -1957,6 +2006,8 @@ class Preconscious:
                 "affective_salience": item.get("affective_salience", 0.0),
                 "association_cluster": item.get("association_cluster"),
                 "association_score": item.get("association_score", 0.0),
+                "association_linked": item.get("association_linked", lane == "associative"),
+                "association_hops": item.get("association_hops"),
             })
 
         return selection
@@ -2025,7 +2076,22 @@ class Preconscious:
                 self._association_cluster_cache[item_id] = resolved
                 return resolved[0], resolved[1].copy()
 
-        raw_position = item.get("position_8d")
+        # Event envelopes contain volatile ids/timestamps (for example
+        # ``[D2:3] [TIME: ...] Mara:``). Letting those tokens choose the 8D
+        # fallback cell assigns the same recurring idea to a new cluster on
+        # every occurrence, so no repeated transition can reinforce. Re-project
+        # the stable payload for cluster identity only; canonical item
+        # positions remain untouched in both spatial fields.
+        content = str(item.get("content", "") or "")
+        association_text = self._association_payload(content)
+        raw_position = None
+        if association_text and association_text != content.strip():
+            try:
+                raw_position = self.physics.embed_and_project(association_text[:500])
+            except Exception:
+                raw_position = None
+        if raw_position is None:
+            raw_position = item.get("position_8d")
         if raw_position is None or len(raw_position) != 8:
             corpus_item = self._unified.corpus.get(item_id) if self._unified else None
             raw_position = (corpus_item or {}).get("position_8d", [])
@@ -2049,6 +2115,14 @@ class Preconscious:
         prototype = cells.astype(np.float32) * self.ASSOCIATIVE_GRID_SIZE
         self._association_cluster_cache[item_id] = (cluster_id, prototype.copy())
         return cluster_id, prototype
+
+    @staticmethod
+    def _association_payload(content: str) -> str:
+        """Strip volatile event provenance before fallback cluster routing."""
+        text = str(content or "").strip()
+        text = re.sub(r"^(?:\[[^\]]+\]\s*)+", "", text)
+        text = re.sub(r"^[A-Za-z][\w .'-]{0,39}:\s*", "", text)
+        return " ".join(text.split()).strip()
 
     def _galaxy_select(
         self,
@@ -2136,6 +2210,7 @@ class Preconscious:
         final_selection: List[Dict[str, Any]],
         concepts: List[str],
         budget: int,
+        learn: bool = True,
     ) -> Tuple[str, List[str]]:
         """Turn the selected items into an annotation, and record the
         after-effects of having surfaced them (repetition tracking, attention
@@ -2171,21 +2246,25 @@ class Preconscious:
             if token_budget is not None and token_count + est_tokens > token_budget:
                 break # Hard cut-off to stay under token cap
                 
-            belief_texts.append(content)
+            if b.get("association_linked") or b.get("lane") == "associative":
+                belief_texts.append(f"[learned follow-on association] {content}")
+            else:
+                belief_texts.append(content)
             rendered_selection.append(b)
             token_count += est_tokens
             this_pulse_beliefs.add(content)
 
         # Track for next pulse's filter
-        self._prev_pulse_beliefs.append(this_pulse_beliefs)
-        if len(self._prev_pulse_beliefs) > 3:
-            self._prev_pulse_beliefs.pop(0)
+        if learn:
+            self._prev_pulse_beliefs.append(this_pulse_beliefs)
+            if len(self._prev_pulse_beliefs) > 3:
+                self._prev_pulse_beliefs.pop(0)
 
-        self._prev_pulse_belief_ids.append(
-            {b.get("id") for b in rendered_selection if b.get("id")}
-        )
-        if len(self._prev_pulse_belief_ids) > 3:
-            self._prev_pulse_belief_ids.pop(0)
+            self._prev_pulse_belief_ids.append(
+                {b.get("id") for b in rendered_selection if b.get("id")}
+            )
+            if len(self._prev_pulse_belief_ids) > 3:
+                self._prev_pulse_belief_ids.pop(0)
 
         skills_count = sum(1 for b in rendered_selection if b.get("category") == "skills")
         logger.info(
@@ -2233,30 +2312,45 @@ class Preconscious:
         surfaced_ids = [bid for bid in all_ids if not bid.startswith("mem_")]
         self._last_surfaced_memory_ids = [bid for bid in all_ids if bid.startswith("mem_")]
 
-        if unified is not None:
+        if learn and unified is not None:
             unified.note_injected(all_ids)
 
-        self._apply_recalled_affect(rendered_selection)
+        if learn:
+            self._apply_recalled_affect(rendered_selection)
 
         # Record injection counts for gravity decay — each injection
         # halves the effective gravity for subsequent queries.
-        for bid in all_ids:
-            self._injection_gravity_decay[bid] = self._injection_gravity_decay.get(bid, 0) + 1
+        if learn:
+            for bid in all_ids:
+                self._injection_gravity_decay[bid] = self._injection_gravity_decay.get(bid, 0) + 1
 
         if not belief_texts:
             return "", []
 
-        # Try to summarize using the local model, otherwise fall back to top belief as-is (truncated to 150 tokens)
-        try:
-            summary = self.summarizer.summarize(belief_texts, context_type="beliefs")
-            annotation = f"*({summary})*"
-        except Exception:
-            # Fallback: top belief as-is, truncated to 150 tokens
-            top_content = belief_texts[0]
-            words = top_content.split()
-            if len(words) > 150:
-                top_content = " ".join(words[:150]) + "..."
-            annotation = f"*({top_content})*"
+        profile = os.environ.get("HELIX_MRAG_PROFILE", "local").strip().lower()
+        default_render_mode = "verbatim" if profile in ("frontier", "gpt") else "summary"
+        render_mode = os.environ.get(
+            "HELIX_MRAG_RENDER_MODE", default_render_mode,
+        ).strip().lower()
+        if unified is not None and render_mode == "verbatim":
+            lines = ["Recalled context (historical memory, possibly with distractors):"]
+            lines.extend(f"- {text}" for text in belief_texts)
+            annotation = "*(" + "\n".join(lines) + ")*"
+        else:
+            # A small local summarizer preserves a tight local-model context,
+            # but can erase names, dates, and arbitrary relations after mRAG
+            # already found them. Frontier evaluation therefore defaults to
+            # exact evidence rather than another lossy inference pass.
+            try:
+                summary = self.summarizer.summarize(belief_texts, context_type="beliefs")
+                annotation = f"*({summary})*"
+            except Exception:
+                # Fallback: top belief as-is, truncated to 150 tokens
+                top_content = belief_texts[0]
+                words = top_content.split()
+                if len(words) > 150:
+                    top_content = " ".join(words[:150]) + "..."
+                annotation = f"*({top_content})*"
 
         return annotation, surfaced_ids
 

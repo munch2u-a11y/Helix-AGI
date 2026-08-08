@@ -34,6 +34,13 @@ def main():
     parser.add_argument("--gemini-key", default="", help="Gemini API Key")
     parser.add_argument("--anthropic-key", default="", help="Anthropic API Key")
     parser.add_argument("--openai-key", default="", help="OpenAI API Key")
+    parser.add_argument(
+        "--provider",
+        choices=["codex_cli", "gemini", "anthropic", "ollama", "llama_cpp"],
+        default="gemini",
+        help="Primary conscious LLM provider",
+    )
+    parser.add_argument("--model", default="", help="Provider model (blank uses the provider default)")
     parser.add_argument("--telegram-token", default="", help="Telegram Bot Token")
     parser.add_argument("--telegram-owner", default="", help="Telegram Owner ID")
     parser.add_argument("--discord-token", default="", help="Discord Bot Token")
@@ -92,6 +99,8 @@ def main():
         webhook_inbound_secret = args.webhook_inbound_secret
         moltbook_key = args.moltbook_key
         vision_provider = args.vision_provider
+        llm_provider = args.provider
+        llm_model = args.model
 
         # Track which comms channels the user enables
         enabled_channels = ["dashboard"]  # Dashboard is always enabled
@@ -100,7 +109,16 @@ def main():
             print("\n" + "-"*40)
             print("  [API Configuration - WARNING: MONITOR YOUR COSTS]")
             print("  Due to Helix's continuous autonomy, API costs can spike rapidly.")
-            print("  Subconscious systems require a Gemini API key (free tier is fine).")
+            print("  Subconscious systems follow the selected provider; Gemini remains an optional fallback.")
+            selected = input(
+                "  Primary provider (codex_cli/gemini/anthropic/ollama/llama_cpp) "
+                "[gemini]: "
+            ).strip().lower()
+            if selected in {"codex_cli", "gemini", "anthropic", "ollama", "llama_cpp"}:
+                llm_provider = selected
+            llm_model = input(
+                "  Primary model (blank = provider/account default): "
+            ).strip()
             gemini_api_key = input("  Gemini API key: ").strip()
             anthropic_api_key = input("  Anthropic API key (optional): ").strip()
             openai_api_key = input("  OpenAI API key (optional): ").strip()
@@ -191,7 +209,8 @@ def main():
             f.write(f"HELIX_WEBHOOK_INBOUND_SECRET={webhook_inbound_secret}\n")
             f.write(f"MOLTBOOK_API_KEY={moltbook_key}\n")
             f.write(f"HELIX_COMMS_CHANNELS={comms_channels}\n")
-            f.write(f"HELIX_PROVIDER=gemini\n")
+            f.write(f"HELIX_PROVIDER={llm_provider}\n")
+            f.write(f"HELIX_MODEL={llm_model}\n")
             f.write(f"HELIX_VISION_PROVIDER={vision_provider}\n")
             f.write(f"HELIX_VISION_MODEL=gemini-2.5-flash\n")
 

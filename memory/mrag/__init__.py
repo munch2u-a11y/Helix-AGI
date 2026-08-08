@@ -1,7 +1,7 @@
 """Helix — Micro-RAG retrieval lane.
 
 The primary semantic foreground of the unified retrieval pipeline, vendored
-from Micro-RAG (Local-mRag) and re-pointed at Helix's own 384D/FAISS index.
+from Micro-RAG (Local-mRag) and re-pointed at Helix's native 1024D/FAISS index.
 See core/unified_retrieval.py for the additive raw-8D and transition lanes.
 
 Vendored/adapted: tagger.py, token_counting.py.

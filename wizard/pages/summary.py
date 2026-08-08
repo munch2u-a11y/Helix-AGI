@@ -182,6 +182,7 @@ class SummaryPage(QWidget):
 
         provider = cfg.get("llm_provider", "gemini")
         provider_labels = {
+            "codex_cli": "Codex CLI (ChatGPT login)",
             "gemini": "Google Gemini",
             "anthropic": "Anthropic Claude",
             "openai": "OpenAI GPT",
@@ -192,7 +193,10 @@ class SummaryPage(QWidget):
         rows = [("Primary Provider", provider_labels.get(provider, provider.title()))]
 
         # Always show the primary provider's key/config prominently
-        if provider == "ollama":
+        if provider == "codex_cli":
+            rows.append(("Authentication", "Local `codex login`"))
+            rows.append(("Model", cfg.get("llm_model", "") or "Account default"))
+        elif provider == "ollama":
             rows.append(("Ollama URL", cfg.get("ollama_url", "http://localhost:11434")))
             rows.append(("Ollama Model", cfg.get("ollama_model", "") or "Not set"))
         elif provider == "alibaba":

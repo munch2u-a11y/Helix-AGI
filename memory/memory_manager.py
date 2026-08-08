@@ -53,7 +53,7 @@ class MemoryManager:
         # In‑memory counter to emulate short‑term IDs for compatibility
         self._st_counter = self._initialize_counter()
         # Physics engine reference (injected after construction)
-        # Provides access to the 384D SemanticIndex for conscious recall
+        # Provides access to the 1024D SemanticIndex for conscious recall
         self._physics = None
         logger.info(f"MemoryManager initialized with journal at {self.journal.path}")
 
@@ -85,14 +85,14 @@ class MemoryManager:
         return point_id
 
     def set_physics(self, physics_engine):
-        """Wire the physics engine for 384D semantic search.
+        """Wire the physics engine for native 1024D semantic search.
 
         Called during setup_helix() after both MemoryManager and PhysicsEngine
         are constructed. Enables semantic anchoring, contextual recall,
         and somatic-echo retrieval.
         """
         self._physics = physics_engine
-        logger.info("MemoryManager: physics engine wired for 384D semantic search")
+        logger.info("MemoryManager: physics engine wired for 1024D semantic search")
 
     def _find_reinforcement_target(
         self,
@@ -399,7 +399,7 @@ class MemoryManager:
         filter_fn=None,
         return_embeddings: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Search the 384D SemanticIndex for memories matching a query.
+        """Search the 1024D SemanticIndex for memories matching a query.
 
         Uses cosine similarity in native embedding space for precise
         semantic matching. Falls back gracefully if the physics engine

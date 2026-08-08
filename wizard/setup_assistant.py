@@ -296,9 +296,12 @@ class SetupAssistant:
         self._error: Optional[str] = None
 
     def is_available(self) -> bool:
-        """Check if the assistant can be initialized (API key exists)."""
+        """Check whether the selected provider has local access configured."""
         provider = self.config.get("llm_provider", "gemini")
-        if provider == "gemini":
+        if provider == "codex_cli":
+            from wizard.model_detector import codex_login_status
+            return bool(codex_login_status())
+        elif provider == "gemini":
             return bool(self.config.get("gemini_api_key"))
         elif provider == "anthropic":
             return bool(self.config.get("anthropic_api_key"))
@@ -323,7 +326,16 @@ class SetupAssistant:
         model = self.config.get("llm_model", "")
 
         try:
-            if provider == "gemini":
+            if provider == "codex_cli":
+                pc = ProviderConfig(
+                    provider_type="codex_cli",
+                    model=model,
+                    context_window=128_000,
+                    temperature=0.7,
+                    max_output_tokens=2048,
+                    options={"timeout": 600, "effort": "medium"},
+                )
+            elif provider == "gemini":
                 key = self.config.get("gemini_api_key", "")
                 os.environ["GEMINI_API_KEY"] = key
                 pc = ProviderConfig(

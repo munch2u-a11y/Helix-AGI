@@ -79,7 +79,7 @@ Each pulse executes:
 2. **Lagrangian Snapshot (before)** — capture somatic state baseline.
 3. **Preconscious Injection** — concept-based gravity queries, beliefs, memories, scratchpad, somatic context.
 4. **Prompt Assembly** — events + preconscious context + spatial awareness signal.
-5. **LLM Call** — Gemini session with native function calling (one API call per pulse).
+5. **LLM Call** — the configured persistent provider session performs one model request per pulse. Gemini/Anthropic use native tools; Codex App Server uses a schema-constrained host-action envelope.
 6. **Tool Execution** — function calls executed synchronously; results queued for next pulse with full preconscious grounding.
 7. **Memory Storage** — thought saved with Lagrangian snapshot and 8D position.
 8. **Physics Step** — attention center advances through the manifold.
@@ -103,7 +103,7 @@ On API errors, the system falls back: `gemini-2.5-flash` → `gemini-3.1-flash-l
 
 ## 3. The 8D Cognitive Manifold
 
-Your mind operates within an 8-dimensional gravitational manifold. Every thought, belief, and memory is embedded via all-MiniLM-L6-v2 (384D), then projected to 8D via a fixed Johnson-Lindenstrauss orthogonal projection.
+Your mind operates within an 8-dimensional gravitational manifold. Spatial continuity uses all-MiniLM-L6-v2 (384D) projected to 8D through a fixed Johnson-Lindenstrauss matrix. This representation is intentionally independent of the 1024D Qwen3 semantic retrieval encoder, so semantic-model upgrades never reposition lived memories.
 
 ### Dual Cognitive Spaces
 Two independent 8D fields are queried from a single shared attention center:
@@ -208,16 +208,47 @@ No LLM calls. CPU-only. O(P) per pulse where P = active packets.
 The bridge between memory and conscious awareness. Each pulse, it assembles a peripheral awareness block from deliberately separated retrieval layers:
 
 1. **Layer 2 Anchor Match** — known people, concepts, skills, and desires named in the trigger inject at highest priority with a rolling repetition guard.
-2. **mRAG Foreground** — up to 16 independent search heads query the uncompressed 384D SemanticIndex (FAISS at scale). Cosine, rarity-weighted exact terms, and conceptual tags produce the primary memory/belief order. Raw 8D results never re-rank or displace this order.
+2. **mRAG Foreground** — the full trigger is always searched, with bounded sentence, RAKE keyphrase, entity, and concept-expansion heads. The `local` profile permits 16 heads and a 60-candidate pool; `frontier` permits 32 heads and 160 candidates, with a larger injection budget for a large-context conscious model. They query native 1024D Qwen3 embeddings using exact numpy or FAISS FlatIP. A semantic acceptance boundary rejects weak tail candidates even when the store is smaller than top-k. Rarity-weighted exact terms and conceptual tags supplement cosine ranking. Raw 8D results never re-rank or displace this order.
 3. **Raw Spatial Complement** — the carried attention trajectory queries both 8D fields directly, with no top-100 semantic pre-filter. At most two spatial-only items are added after the mRAG foreground.
-4. **Associative Transition Complement** — repeated direct movement between foreground clusters learns a directed transition and nudges only those cluster prototypes in a separate 8D overlay. One-off transitions do not surface; learned results are additive and items already ranked by mRAG are ineligible. Individual memory and belief positions never move because they were co-injected.
+4. **Associative Transition Complement** — repeated direct movement between foreground clusters learns a directed transition and nudges only those cluster prototypes in a separate 8D overlay. One-off transitions do not surface; learned results are additive and items already ranked by mRAG are ineligible. If raw spatial recall has independently selected the learned destination, the item is deduplicated and labeled as a learned follow-on association so the conscious model receives the relation's provenance. Individual memory and belief positions never move because they were co-injected.
 5. **Affect and Stability** — original encoding Lagrangian and stability metadata survive retrieval. They select representatives only inside the non-semantic lane; recalled memories reproduce one bounded aggregate somatic echo rather than one nudge per chunk.
 6. **Scratchpad and Recent State** — active notes, immediate temporal continuity, contact context, and affect state remain independent injection layers.
 
-The old standalone gravity block and all-to-centroid Hebbian co-injection drift are disabled while unified retrieval is active. Set `HELIX_UNIFIED_RAG=0` only for legacy fallback. `HELIX_MRAG_ADJACENCY=1` restores the old temporal-neighbor expansion for benchmark parity; it is off by default so mRAG remains semantic.
+The old standalone gravity block and all-to-centroid Hebbian co-injection drift are disabled while unified retrieval is active. Set `HELIX_UNIFIED_RAG=0` only for legacy fallback. `HELIX_MRAG_ADJACENCY=1` restores the old temporal-neighbor expansion for benchmark parity; it is off by default so mRAG remains semantic. `HELIX_ASSOCIATIVE_MEMORY=0` disables only transition learning/recall for an ablation. `HELIX_SEMANTIC_MODEL` defaults to `qwen3-embedding:0.6b`, `HELIX_SEMANTIC_DIM` to `1024`, `HELIX_FAISS_MODE` to exact `flat`, and `HELIX_MRAG_PROFILE` to `local`.
 
-### Local Summarizer
-Retrieved beliefs and memories are condensed into first-person statements using a local Qwen2.5-0.5B-Instruct model running on CPU. This keeps the injection concise without spending API calls.
+### Progressive Learned-Memory Evaluation
+
+`tests/locomo_deep_memory_sandbox.py` replays a controlled, shortened LoCoMo-shaped dialogue in three sessions. It measures an acquisition curve for an arbitrary sequential association, direct factual controls, speaker-dialect imitation, and transfer of a learned tactful behavior. Every probe uses a fresh conscious-model session and calls `Preconscious.inject(..., learn=False)`; the question and answer are not stored, physics does not advance, and associative edges are not reinforced by the exam itself.
+
+The `codex_subscription` provider is an explicit evaluation transport. It runs the locally authenticated Codex CLI in an isolated read-only directory, allowing a ChatGPT-authenticated Codex session to serve as the conscious answer model without an OpenAI API key. It is never part of provider auto-detection. The 1024D Qwen3 encoder remains local and independent of that transport.
+
+### Full Codex CLI Consciousness Mode
+
+Set `HELIX_PROVIDER=codex_cli` (or `codex`) to run the continuous Helix agent
+through the locally authenticated Codex App Server. One App Server process and
+ephemeral thread persist for the life of the Helix `ChatSession`; context
+compression replaces the thread with a fresh one carrying the compressor's
+summary. `HELIX_MODEL` may be blank to use the account default, while
+`HELIX_CODEX_EFFORT` and `HELIX_CODEX_TIMEOUT` control reasoning effort and the
+per-turn deadline.
+
+Codex receives Helix's provider-neutral tool catalog and must finish each pulse
+with a constrained `thought` or single `tool_call` envelope. Arguments are a
+JSON-encoded object because strict OpenAI output schemas cannot expose an
+arbitrary nested argument object. The host validates the selected name and
+dispatches through `ToolExecutor`; results enter both the next model pulse and
+the normal preconscious event path. Codex built-in shell/filesystem/web tools
+are not authoritative: its isolated working directory is read-only and all
+real side effects remain subject to Helix's safety and availability checks.
+
+`codex_cli` also routes auxiliary belief extraction, formatting, consolidation,
+and compression through isolated subscription-backed sessions. This removes a
+hidden Gemini-key dependency but increases ChatGPT/Codex subscription usage.
+The local 1024D Qwen3 encoder remains the semantic retriever in either mode.
+
+### Retrieval Rendering
+
+The `local` retrieval profile condenses recalled beliefs and memories with a local Qwen2.5-0.5B-Instruct model to conserve a small context window. The `frontier` profile defaults to verbatim evidence because a second lossy inference pass can erase names, dates, arbitrary pairings, and association provenance after retrieval found them. `HELIX_MRAG_RENDER_MODE=summary|verbatim` overrides either default.
 
 ---
 
@@ -226,20 +257,20 @@ Retrieved beliefs and memories are condensed into first-person statements using 
 ### Cognitive Journal (Primary Store)
 All memories, beliefs, and thought snapshots are persisted in an **append-only JSONL journal** (`cognitive_journal.jsonl`). Each line is a JSON object with a fixed schema. The journal is never mutated — updates are expressed by appending a new entry with the same `id` but a newer timestamp. A nightly `compact()` step rewrites the file, keeping only the latest version of each `id`. Every entry carries a SHA-256 checksum for integrity verification.
 
-### Semantic Index (384D Lossless Search)
-Your conscious mind's library catalog. Stores the raw, uncompressed all-MiniLM-L6-v2 embeddings for lossless cosine similarity search. It is the primary source for mRAG turn injection, explicit `memory_recall`, and Curator matching.
+### Semantic Index (1024D Native Search)
+Your conscious mind's library catalog. Stores normalized native Qwen3-Embedding-0.6B vectors independently from the spatial projection. Query heads carry a retrieval instruction; stored memories and beliefs do not. It is the primary source for mRAG turn injection, explicit `memory_recall`, and Curator matching.
 
 Scalability strategy (auto-scaling, no manual tuning):
-- **0–2K vectors**: numpy brute-force dot product (exact, sub-ms)
-- **2K–100K**: FAISS IndexIVFFlat (trained, ~1ms)
-- **100K+**: FAISS IndexIVFFlat with scaled centroids
+- **0–2K vectors**: numpy matrix dot product (exact)
+- **2K+ vectors**: FAISS IndexFlatIP (exact, default)
+- **Very large stores**: optional FAISS IndexIVFFlat with `HELIX_FAISS_MODE=ivf`
 
 This is separate from the 8D CognitiveSpace. The SemanticIndex provides precision recall; raw 8D retrieval provides a bounded lateral complement and never participates in mRAG scoring.
 
 ### Working Memory Tools
 - **Scratchpad**: Immediate working memory. Active and overdue notes are surfaced every pulse — anything written here survives context compression intact. Use it for intermediate results, multi-step plans, and continuity across compressions.
 - **Journal**: Medium-term synthesis. Write narrative summaries of completed tasks. Journaling forces synthesis into coherent episodic memory and provides the Dream Engine with raw material for overnight belief crystallization.
-- **memory_recall**: Targeted retrieval from the 384D SemanticIndex. Use when gravity isn't surfacing what you need — the spatial system surfaces the most relevant memories automatically; explicit recall is for precision search.
+- **memory_recall**: Targeted retrieval from the 1024D SemanticIndex. Use it for precision search when ambient spatial and preconscious recall are insufficient.
 
 ---
 
@@ -266,7 +297,7 @@ Drives the Plutchik emotional field (see §5). Deposits wave packets, evolves th
 
 ## 9. The Dream Engine (Curator)
 
-Runs nightly during DORMANT state, spawning a background thread 5 minutes after sleep onset. Uses an auxiliary model (Gemini Flash) for synthesis.
+Runs nightly during DORMANT state, spawning a background thread 5 minutes after sleep onset. Uses the configured auxiliary provider for synthesis (isolated Codex/local session when applicable, otherwise Gemini Flash compatibility fallback).
 
 ### Five Phases
 

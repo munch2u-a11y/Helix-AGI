@@ -34,11 +34,13 @@ choices — the comments explaining them are kept deliberately.
 
 import logging
 import math
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from core.concept_extractor import ConceptExtractor
 from memory.mrag.token_counting import count_text_tokens
 
 logger = logging.getLogger("helix.memory.mrag.semantic_lane")
@@ -85,14 +87,27 @@ GENERIC_FILLER_WORDS = {
 # Bounds on how many parallel embedding queries a single retrieve() call fires.
 # Keeps worst-case latency bounded as more head-generation strategies stack up.
 MAX_SEARCH_HEADS = 16
+MAX_SENTENCE_HEADS = 4
+MAX_RAKE_HEADS = 5
+MAX_QUERY_KEYWORDS = 8
 MAX_CONCEPT_EXPANSION_HEADS = 8
 MAX_RELATION_EXPANSION_HEADS = 6
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
 
 # Derived heads widen recall, while the full query remains the most precise
 # representation of intent. Their cosine can win, but with a small discount
 # that prevents a one-word head from overpowering an already-good full-query
 # match.
 DERIVED_HEAD_SIMILARITY_WEIGHT = 0.92
+SENTENCE_HEAD_SIMILARITY_WEIGHT = 0.97
+RAKE_HEAD_SIMILARITY_WEIGHT = 0.95
+EXPANSION_HEAD_SIMILARITY_WEIGHT = DERIVED_HEAD_SIMILARITY_WEIGHT
 
 # Lexicon pre-filter (Tier 2): a belief whose `term` (or an alias) appears in
 # the trigger text ranks ahead of the fused ranking — it's an exact anchor
@@ -204,6 +219,61 @@ class SemanticLane:
         self._vector_store = vector_store
         self.top_k_candidates = top_k_candidates
 
+        profile = os.environ.get("HELIX_MRAG_PROFILE", "local").strip().lower()
+        frontier = profile in ("frontier", "gpt")
+        self.profile = "frontier" if frontier else "local"
+        self.max_search_heads = _positive_env_int(
+            "HELIX_MRAG_MAX_HEADS", 32 if frontier else MAX_SEARCH_HEADS,
+        )
+        self.max_sentence_heads = _positive_env_int(
+            "HELIX_MRAG_MAX_SENTENCE_HEADS", 8 if frontier else MAX_SENTENCE_HEADS,
+        )
+        self.max_rake_heads = _positive_env_int(
+            "HELIX_MRAG_MAX_RAKE_HEADS", 8 if frontier else MAX_RAKE_HEADS,
+        )
+        self.max_query_keywords = _positive_env_int(
+            "HELIX_MRAG_MAX_KEYWORDS", 12 if frontier else MAX_QUERY_KEYWORDS,
+        )
+        self.max_concept_expansion_heads = _positive_env_int(
+            "HELIX_MRAG_MAX_CONCEPT_HEADS",
+            12 if frontier else MAX_CONCEPT_EXPANSION_HEADS,
+        )
+        self.max_relation_expansion_heads = _positive_env_int(
+            "HELIX_MRAG_MAX_RELATION_HEADS",
+            10 if frontier else MAX_RELATION_EXPANSION_HEADS,
+        )
+        self.min_candidate_pool = _positive_env_int(
+            "HELIX_MRAG_MIN_CANDIDATES", 60 if frontier else 30,
+        )
+        self.max_candidate_pool = _positive_env_int(
+            "HELIX_MRAG_MAX_CANDIDATES", 160 if frontier else 60,
+        )
+        self.candidate_fraction = 0.15 if frontier else 0.10
+        try:
+            self.candidate_fraction = max(
+                0.01,
+                min(1.0, float(os.environ.get(
+                    "HELIX_MRAG_CANDIDATE_FRACTION", self.candidate_fraction,
+                ))),
+            )
+        except (TypeError, ValueError):
+            pass
+        self.min_per_head_k = _positive_env_int(
+            "HELIX_MRAG_MIN_PER_HEAD_K", 8 if frontier else 5,
+        )
+        try:
+            self.min_semantic_similarity = float(os.environ.get(
+                "HELIX_MRAG_MIN_SIMILARITY", "0.12",
+            ))
+        except (TypeError, ValueError):
+            self.min_semantic_similarity = 0.12
+        try:
+            self.max_semantic_score_drop = max(0.0, float(os.environ.get(
+                "HELIX_MRAG_MAX_SCORE_DROP", "0.18",
+            )))
+        except (TypeError, ValueError):
+            self.max_semantic_score_drop = 0.18
+
         # Three layers, increasing priority: built-in defaults, expansions
         # learned from consolidated facts, and explicit user overrides.
         # Defaults and learned entries are additive (unioned per category); an
@@ -214,6 +284,9 @@ class SemanticLane:
         self._lexicon_concept_expansions: Dict[str, List[str]] = {}
         self._concept_expansions = self._compute_concept_expansions()
         self._learned_relation_expansions: Dict[str, Dict[str, List[str]]] = {}
+        self._rake = ConceptExtractor()
+        self._head_weights: Dict[str, float] = {}
+        self.last_search_heads: List[Dict[str, Any]] = []
 
         # Conversational-position indexes over Tier-0 memories, for adjacency
         # expansion driven by the merge layer.
@@ -323,6 +396,7 @@ class SemanticLane:
                         bucket.append(word)
 
         self._lexicon_terms = terms
+        self._rake.update_lexicon_keys(set(terms))
         if expansions != self._lexicon_concept_expansions:
             self._lexicon_concept_expansions = expansions
             self._concept_expansions = self._compute_concept_expansions()
@@ -408,25 +482,52 @@ class SemanticLane:
 
     # ── Search heads ─────────────────────────────────────────────────
 
+    def _sentence_heads(self, text: str) -> List[str]:
+        """Bounded sentence views of a compound conversational trigger."""
+        pieces = re.split(r'(?<=[.!?])\s+|[\n\r]+', text)
+        sentences = []
+        normalized_full = " ".join(text.split()).lower()
+        for piece in pieces:
+            sentence = " ".join(piece.split()).strip()
+            if not sentence or sentence.lower() == normalized_full:
+                continue
+            if len(re.findall(r"\w+", sentence)) < 3:
+                continue
+            if sentence not in sentences:
+                sentences.append(sentence)
+            if len(sentences) >= self.max_sentence_heads:
+                break
+        return sentences
+
+    def _rake_phrases(self, text: str) -> List[str]:
+        extraction = self._rake.extract(text, max_concepts=self.max_rake_heads)
+        return list(dict.fromkeys(
+            extraction.get("lexicon_matches", [])
+            + extraction.get("concepts", [])
+        ))[:self.max_rake_heads]
+
     def _generate_search_heads(self, text: str) -> List[str]:
         """Build the set of parallel embedding queries (multi-head retrieval).
 
-        Priority order (highest-value heads first, since the total is capped
-        at MAX_SEARCH_HEADS):
-          1. The raw query text itself.
-          2. Capitalized words (proper nouns: names, places).
-          3. Consecutive-noun-phrase bigrams ("charity race").
-          4. Individual significant single words — a bigram extractor alone
-             misses key nouns that appear alone ("school" in "give a speech at
-             a school").
-          5. Concept-expansion vocabulary — when the query uses abstract
-             language, add the concrete synonyms a memory would be phrased with.
-          6. Named-entity relation expansion — when the query mentions both a
-             known subject ("John") and one of that subject's learned relation
-             words ("friends"), add the specific named entities from that
-             relation so the query never has to name them itself.
+        The full trigger is always searched. Compound inputs additionally get
+        sentence heads, and the real RAKE extractor supplies specific phrase
+        heads. Expansions and lightweight entity/word views fill any remaining
+        slots. Every view remains a query over canonical memories; sentences
+        are not turned into separately injected or separately learned items.
         """
-        heads = [text]
+        candidates: List[Tuple[str, float, str]] = []
+
+        def add(value: str, weight: float, kind: str):
+            value = " ".join(str(value or "").split()).strip()
+            if value:
+                candidates.append((value, weight, kind))
+
+        add(text, 1.0, "full")
+        for sentence in self._sentence_heads(text):
+            add(sentence, SENTENCE_HEAD_SIMILARITY_WEIGHT, "sentence")
+        for phrase in self._rake_phrases(text):
+            add(phrase, RAKE_HEAD_SIMILARITY_WEIGHT, "rake")
+
         words = text.split()
         clean_words = [re.sub(r'[^\w]', '', w) for w in words]
         lowered_words = [w.lower() for w in clean_words]
@@ -434,16 +535,17 @@ class SemanticLane:
         if len(words) > 1:
             for w_clean in clean_words[1:]:
                 if w_clean and w_clean[0].isupper() and w_clean.lower() not in STOPWORDS:
-                    heads.append(w_clean)
+                    add(w_clean, RAKE_HEAD_SIMILARITY_WEIGHT, "entity")
 
-            noun_phrases = []
             for i in range(len(clean_words) - 1):
                 w1, w2 = lowered_words[i], lowered_words[i + 1]
                 if w1 not in STOPWORDS and w2 not in STOPWORDS and len(w1) > 2 and len(w2) > 2:
                     if w1 not in _QUESTION_WORDS:
-                        noun_phrases.append(f"{clean_words[i]} {clean_words[i + 1]}")
-            if noun_phrases:
-                heads.extend(noun_phrases[:2])
+                        add(
+                            f"{clean_words[i]} {clean_words[i + 1]}",
+                            DERIVED_HEAD_SIMILARITY_WEIGHT,
+                            "bigram",
+                        )
 
             for w_clean, w_lower in zip(clean_words, lowered_words):
                 if (
@@ -453,7 +555,7 @@ class SemanticLane:
                     and w_lower not in GENERIC_FILLER_WORDS
                     and w_lower.isalpha()
                 ):
-                    heads.append(w_lower)
+                    add(w_lower, DERIVED_HEAD_SIMILARITY_WEIGHT, "term")
 
         # Word/phrase-boundary matching only — a substring trigger let a common
         # lexicon term ("dance") fire from inside unrelated phrases and flood
@@ -463,7 +565,7 @@ class SemanticLane:
         for trigger, expansions in self._concept_expansions.items():
             if _term_pattern(trigger).search(text_lower):
                 expansion_heads.extend(expansions)
-        expansion_heads = list(dict.fromkeys(expansion_heads))[:MAX_CONCEPT_EXPANSION_HEADS]
+        expansion_heads = list(dict.fromkeys(expansion_heads))[:self.max_concept_expansion_heads]
 
         # Requires BOTH the subject and one of its tagged relation words —
         # matching on the subject alone would fire on every mention of "John"
@@ -478,18 +580,49 @@ class SemanticLane:
                 for rel_type, entities in relations.items():
                     if _stem_word(rel_type) in query_word_stems or rel_type in text_lower:
                         relation_heads.extend(entities)
-        relation_heads = list(dict.fromkeys(relation_heads))[:MAX_RELATION_EXPANSION_HEADS]
+        relation_heads = list(dict.fromkeys(relation_heads))[:self.max_relation_expansion_heads]
+        for head in expansion_heads:
+            add(head, EXPANSION_HEAD_SIMILARITY_WEIGHT, "concept_expansion")
+        for head in relation_heads:
+            add(head, DERIVED_HEAD_SIMILARITY_WEIGHT, "relation_expansion")
 
-        # Reserve room for expansion/relation heads so a long question's
-        # single-word heads can't crowd out these targeted fixes at the final
-        # cap — both are the highest-value additions and must survive
-        # truncation.
-        priority_heads = list(dict.fromkeys(expansion_heads + relation_heads))
-        heads = list(dict.fromkeys(heads))
-        base_budget = max(1, MAX_SEARCH_HEADS - len(priority_heads))
-        heads = heads[:base_budget]
+        # Deduplicate case-insensitively while retaining the first (highest
+        # priority) view. Sentence/RAKE/expansion views cannot be crowded out
+        # by a long tail of single words. The cap bounds embedding/FAISS cost.
+        kind_priority = {
+            "full": 0,
+            "sentence": 1,
+            "rake": 2,
+            "entity": 3,
+            "concept_expansion": 4,
+            "relation_expansion": 5,
+            "bigram": 6,
+            "term": 7,
+        }
+        candidates = [
+            candidate
+            for _position, candidate in sorted(
+                enumerate(candidates),
+                key=lambda pair: (kind_priority.get(pair[1][2], 99), pair[0]),
+            )
+        ]
+        selected: List[Tuple[str, float, str]] = []
+        seen = set()
+        for head, weight, kind in candidates:
+            key = head.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append((head, weight, kind))
+            if len(selected) >= self.max_search_heads:
+                break
 
-        return list(dict.fromkeys(heads + priority_heads))[:MAX_SEARCH_HEADS]
+        self._head_weights = {head: weight for head, weight, _ in selected}
+        self.last_search_heads = [
+            {"text": head, "weight": weight, "kind": kind}
+            for head, weight, kind in selected
+        ]
+        return [head for head, _weight, _kind in selected]
 
     def _match_lexicon_terms(self, text: str) -> List[str]:
         """Item ids whose term/alias appears in the trigger text — multi-word
@@ -613,8 +746,18 @@ class SemanticLane:
         if not all_items:
             return []
 
-        # 1. Parse the trigger for up to 4 keyword/keyphrase search terms.
-        query_keywords = extract_keywords_and_phrases(text, limit=4)
+        # 1. Parse the trigger through the same RAKE pass that supplies vector
+        # heads, then add spaCy noun phrases as a secondary linguistic view.
+        # These terms drive exact rarity-weighted lookup independently of the
+        # full-query semantic search.
+        rake_keywords = self._rake_phrases(text)
+        linguistic_keywords = extract_keywords_and_phrases(
+            text,
+            limit=self.max_query_keywords,
+        )
+        query_keywords = list(dict.fromkeys(
+            rake_keywords + linguistic_keywords
+        ))[:self.max_query_keywords]
         query_tag_counts = get_tag_counts(text)
 
         # 2. Split keywords into conceptually similar terms via the expansion
@@ -635,7 +778,10 @@ class SemanticLane:
                             seen_terms.add(e)
             keyword_search_groups.append(terms)
 
-        dynamic_top_k = max(30, min(60, int(len(all_items) * 0.10)))
+        dynamic_top_k = max(
+            self.min_candidate_pool,
+            min(self.max_candidate_pool, int(len(all_items) * self.candidate_fraction)),
+        )
 
         # 3. Rarity-weighted keyword scores. Conceptual tags are evaluated
         # after the vector/keyword union is known; parsing the entire lifetime
@@ -659,13 +805,33 @@ class SemanticLane:
         # Multi-head vector retrieval: every head contributes its own top-k,
         # so a query mixing an entity with an abstraction reaches both.
         heads = self._generate_search_heads(text)
-        per_head_k = max(5, dynamic_top_k // max(1, len(heads)))
-        query_embedding = self._vector_store.embed_text(text)
+        per_head_k = max(self.min_per_head_k, dynamic_top_k // max(1, len(heads)))
+        if hasattr(self._vector_store, "embed_texts"):
+            head_embeddings = self._vector_store.embed_texts(heads)
+        else:
+            head_embeddings = np.vstack([
+                self._vector_store.embed_text(head) for head in heads
+            ])
+        query_embedding = head_embeddings[0]
+
+        if hasattr(self._vector_store, "query_top_k_batch"):
+            head_results = self._vector_store.query_top_k_batch(
+                head_embeddings,
+                k=per_head_k,
+            )
+        else:
+            head_results = [
+                self._vector_store.query_top_k(head_embedding, k=per_head_k)
+                for head_embedding in head_embeddings
+            ]
+
         multi_head_similarities: Dict[str, float] = {}
-        for head in heads:
-            head_emb = query_embedding if head == text else self._vector_store.embed_text(head)
-            head_weight = 1.0 if head == text else DERIVED_HEAD_SIMILARITY_WEIGHT
-            for bid, similarity in self._vector_store.query_top_k(head_emb, k=per_head_k):
+        for head, results in zip(heads, head_results):
+            head_weight = self._head_weights.get(
+                head,
+                1.0 if head == text else DERIVED_HEAD_SIMILARITY_WEIGHT,
+            )
+            for bid, similarity in results:
                 item = by_id.get(bid)
                 if item is not None:
                     union[bid] = item
@@ -729,6 +895,30 @@ class SemanticLane:
             -x[1],
             -x[0].get("relevance", 0.0),
         ))
+
+        # FAISS/top-k is candidate generation, not permission to inject every
+        # item in a small corpus. Without an acceptance boundary, k >= corpus
+        # size turns semantic retrieval into a full-store dump and makes an
+        # arbitrary-association benchmark meaningless. Keep the best item,
+        # then require both a minimally useful cosine and a bounded drop from
+        # the query's best fused score. Literal keyword hits remain eligible.
+        if fused:
+            best_score = max(score for _item, score in fused)
+            accepted: List[Tuple[Dict[str, Any], float]] = []
+            for index, (item, score) in enumerate(fused):
+                bid = item["id"]
+                literal_hit = keyword_scores.get(bid, 0.0) > 0.0
+                if (
+                    index == 0
+                    or literal_hit
+                    or (
+                        cosine_similarities.get(bid, 0.0) >= self.min_semantic_similarity
+                        and score >= best_score - self.max_semantic_score_drop
+                    )
+                ):
+                    accepted.append((item, score))
+            fused = accepted
+
         scores_by_id = {item["id"]: score for item, score in fused}
         ranked = [item for item, _ in fused]
 

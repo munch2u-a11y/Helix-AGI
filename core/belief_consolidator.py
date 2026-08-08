@@ -3,7 +3,7 @@ Helix — Belief Consolidator (Nightly Merge Pass)
 
 Simple, direct belief merging:
   1. Word-match each new belief against Layer 2 terms + same-category existing beliefs
-  2. Send matches to Gemini Flash for MERGE/PASS decision (one call per belief, parallel)
+  2. Send matches to the configured auxiliary LLM for MERGE/PASS decisions
   3. Apply merges programmatically (LLM handles content, code handles metadata)
   4. If a merge overflows the belief char cap, divert to Layer 2 automatically
 
@@ -301,34 +301,24 @@ def _find_matches(
     return scored[:_MAX_MATCH_CANDIDATES]
 
 
-# ── Gemini API ───────────────────────────────────────────────────────
+# ── Auxiliary LLM ───────────────────────────────────────────────────
 
 def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
-    """Single Gemini API call. Mirrors batch_service._call_gemini."""
+    """Compatibility name for one provider-aware auxiliary LLM call."""
     try:
-        from google import genai
-
-        key = os.environ.get("GEMINI_API_KEY", "")
-        if not key:
-            logger.warning("No GEMINI_API_KEY — cannot consolidate beliefs")
+        from core.auxiliary_llm import get_auxiliary_client
+        client = get_auxiliary_client()
+        if client is None:
+            logger.warning("Auxiliary LLM unavailable — cannot consolidate beliefs")
             return None
-
-        client = genai.Client(api_key=key)
-        response = client.models.generate_content(
-            model=_MODEL,
-            contents=prompt,
-            config={
-                "system_instruction": system,
-                "temperature": 0.15,
-                "max_output_tokens": 512,
-            },
+        return client.generate(
+            prompt,
+            system_instruction=system,
+            temperature=0.15,
+            max_output_tokens=512,
         )
-
-        if response and response.text:
-            return response.text.strip()
-
     except Exception as e:
-        logger.warning("Gemini consolidation call failed: %s", e)
+        logger.warning("Auxiliary consolidation call failed: %s", e)
 
     return None
 
@@ -728,4 +718,3 @@ def _call_llm_for_relations(new_content: str, candidates: List[Dict[str, Any]]) 
                     break
                     
     return found_ids
-

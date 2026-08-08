@@ -452,11 +452,20 @@ class AssistantPanel(QWidget):
 
         if not self._assistant.is_available():
             provider = self.wizard.config.get("llm_provider", "gemini")
+            if provider == "codex_cli":
+                access_help = (
+                    "I need an authenticated Codex CLI to help you. Install it and "
+                    "run `codex login`, then come back and ask me anything."
+                )
+            else:
+                access_help = (
+                    f"I need API credentials to help you! Please configure your "
+                    f"{provider.title()} API key on the Credentials page first, "
+                    "then come back and ask me anything."
+                )
             self._add_message(
                 "assistant",
-                f"🔑 I need API credentials to help you! Please configure "
-                f"your {provider.title()} API key on the Credentials page first, "
-                f"then come back and ask me anything."
+                f"🔑 {access_help}"
             )
             self._assistant = None
             return False

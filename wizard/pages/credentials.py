@@ -44,13 +44,13 @@ class CredentialsPage(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(60, 24, 60, 24)
 
-        heading = QLabel("API Credentials")
+        heading = QLabel("Model Access & Credentials")
         heading.setProperty("class", "heading")
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(heading)
 
         sub = QLabel(
-            "Enter your API keys below. At minimum, one LLM provider key is required.\n"
+            "Choose an authenticated CLI, local model, or API provider below.\n"
             "Keys are stored locally in ~/.config/helix/credentials.env — never uploaded."
         )
         sub.setProperty("class", "subheading")
@@ -175,6 +175,7 @@ class CredentialsPage(QWidget):
 
         self.provider_combo = QComboBox()
         self._provider_map = {
+            "Codex CLI (ChatGPT subscription)": "codex_cli",
             "Gemini (Google)": "gemini",
             "Claude (Anthropic)": "anthropic",
             "GPT (OpenAI)": "openai",
@@ -311,6 +312,7 @@ class CredentialsPage(QWidget):
     def _update_provider_desc(self, provider: str):
         """Update the description label based on selected provider."""
         descs = {
+            "codex_cli": "OpenAI Codex App Server — uses your local `codex login` (including ChatGPT subscription access); no API key required.",
             "gemini": "Google Gemini — excellent tool use, free tier available. Recommended for most users.",
             "anthropic": "Anthropic Claude — strong reasoning and coding. Requires paid API key.",
             "openai": "OpenAI GPT — widely supported, strong general performance. Requires paid API key.",
@@ -349,12 +351,23 @@ class CredentialsPage(QWidget):
         from wizard.model_detector import (
             detect_ollama_models,
             detect_gguf_models,
-            fetch_gemini_models
+            fetch_gemini_models,
+            codex_login_status,
         )
         from PyQt6.QtWidgets import QMessageBox
         
         detected = []
-        if provider == "ollama":
+        if provider == "codex_cli":
+            status = codex_login_status()
+            if status:
+                detected = ["account-default"]
+                QMessageBox.information(self, "Codex CLI", status)
+            else:
+                QMessageBox.warning(
+                    self, "Codex Login Required",
+                    "Install the Codex CLI and run `codex login`, then try again.",
+                )
+        elif provider == "ollama":
             url = self.ollama_url.text().strip() or "http://localhost:11434"
             detected = detect_ollama_models(url)
             if not detected:

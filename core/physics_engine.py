@@ -18,6 +18,7 @@ Previous implementation (single flat dict, brute-force O(N)) saved to:
 import re
 import time
 import math
+import hashlib
 import logging
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Callable
@@ -26,12 +27,15 @@ import numpy as np
 
 from core.cognitive_space import CognitiveSpace, CognitiveProjection, PROJECTION_DIM
 from core.spatial_mind import SpatialMind
+from memory.semantic_encoder import SemanticEncoder
 from memory.semantic_index import SemanticIndex
 
 logger = logging.getLogger("helix.core.physics_engine")
 
 # ── Constants ────────────────────────────────────────────────────────
-EMBEDDING_DIM = 384  # all-MiniLM-L6-v2
+SPATIAL_EMBEDDING_DIM = 384  # Stable all-MiniLM-L6-v2 -> 8D projection
+# Backward-compatible name for callers that mean the spatial representation.
+EMBEDDING_DIM = SPATIAL_EMBEDDING_DIM
 PROJECTION_SEED = 42
 
 
@@ -63,15 +67,24 @@ class PhysicsEngine:
 
         # ── SpatialMind (dual 8D spaces) ──
         self.spatial_mind = SpatialMind(
-            embedding_dim=EMBEDDING_DIM,
+            embedding_dim=SPATIAL_EMBEDDING_DIM,
             base_dir=self.data_dir,
         )
 
-        # ── 384D Semantic Index (conscious recall) ──
-        self.semantic_index = SemanticIndex(dim=EMBEDDING_DIM)
+        # ── Independent 1024D semantic representation ──
+        # Spatial memory intentionally keeps its original 384D -> 8D mapping;
+        # changing the semantic model must never reposition lived memories.
+        self.semantic_encoder = SemanticEncoder()
+        self.semantic_index = SemanticIndex(
+            dim=self.semantic_encoder.dim,
+            model_id=self.semantic_encoder.identity,
+        )
+        self._semantic_index_path = None
         if self.data_dir:
-            idx_path = self.data_dir / "semantic_index"
-            loaded = self.semantic_index.load(idx_path)
+            self._semantic_index_path = (
+                self.data_dir / f"semantic_index_{self.semantic_encoder.dim}d"
+            )
+            loaded = self.semantic_index.load(self._semantic_index_path)
             if loaded > 0:
                 logger.info(f"SemanticIndex loaded: {loaded} vectors")
 
@@ -91,7 +104,12 @@ class PhysicsEngine:
         # instead of restarting at pulse 0 every boot.
         self._pulse_count = getattr(self.spatial_mind, "_pulse_count", 0)
 
-        logger.info("PhysicsEngine initialized (dual 8D manifold + 384D semantic index)")
+        logger.info(
+            "PhysicsEngine initialized (stable 384D->8D spatial manifold + "
+            "%dD semantic index via %s)",
+            self.semantic_encoder.dim,
+            self.semantic_encoder.model,
+        )
 
     # ── Properties delegated to SpatialMind ───────────────────────────
 
@@ -177,7 +195,7 @@ class PhysicsEngine:
         return self._embedder
 
     def embed_text(self, text: str) -> np.ndarray:
-        """Embed text → 384D vector. Returns zeros on failure."""
+        """Embed text for the stable spatial projection (384D MiniLM)."""
         embedder = self._get_embedder()
         if embedder is None:
             return np.zeros(EMBEDDING_DIM, dtype=np.float32)
@@ -189,9 +207,26 @@ class PhysicsEngine:
             return np.zeros(EMBEDDING_DIM, dtype=np.float32)
 
     def embed_and_project(self, text: str) -> np.ndarray:
-        """Text → 384D embedding → 8D position. The main interface."""
+        """Text → stable 384D MiniLM embedding → persistent 8D position."""
         emb = self.embed_text(text)
         return self.spatial_mind.belief_space.projection.project(emb)
+
+    def embed_semantic_text(self, text: str, *, is_query: bool = False) -> np.ndarray:
+        """Embed text into the independent native 1024D semantic space."""
+        if is_query:
+            return self.semantic_encoder.encode_query(text)
+        return self.semantic_encoder.encode_document(text)
+
+    def embed_semantic_batch(
+        self,
+        texts: List[str],
+        *,
+        is_query: bool = False,
+    ) -> np.ndarray:
+        """Batch semantic encoding used by mRAG heads and index migration."""
+        if is_query:
+            return self.semantic_encoder.encode_queries(texts)
+        return self.semantic_encoder.encode_documents(texts)
 
     @staticmethod
     def memory_point_id(memory_id: Any) -> str:
@@ -286,8 +321,8 @@ class PhysicsEngine:
         # Periodic save
         if self._pulse_count % 10 == 0:
             self._save_attention()
-            if self.data_dir:
-                self.semantic_index.save(self.data_dir / "semantic_index")
+            if self._semantic_index_path:
+                self.semantic_index.save(self._semantic_index_path)
 
         logger.debug(
             f"Pulse {self._pulse_count}: "
@@ -425,6 +460,55 @@ class PhysicsEngine:
 
     # ── Dual Registration (single source of truth) ─────────────────────
 
+    def _upsert_semantic_point(
+        self,
+        point_id: str,
+        content: str,
+        metadata: dict,
+        embedding: np.ndarray = None,
+    ) -> bool:
+        """Upsert one native semantic vector without touching 8D state."""
+        semantic_text = str(content or "").strip()
+        if not point_id or not semantic_text:
+            return False
+
+        content_hash = hashlib.sha256(
+            semantic_text.encode("utf-8", errors="ignore")
+        ).hexdigest()
+        existing_meta = self.semantic_index.get_metadata(point_id) or {}
+        semantic_embedding = embedding
+        if (
+            semantic_embedding is None
+            and self.semantic_index.contains(point_id)
+            and existing_meta.get("semantic_content_hash") == content_hash
+        ):
+            idx = self.semantic_index._id_to_idx[point_id]
+            semantic_embedding = self.semantic_index._embeddings[idx]
+        if semantic_embedding is None:
+            semantic_embedding = self.embed_semantic_text(
+                semantic_text,
+                is_query=False,
+            )
+
+        semantic_embedding = np.asarray(
+            semantic_embedding, dtype=np.float32,
+        ).ravel()
+        if (
+            len(semantic_embedding) != self.semantic_encoder.dim
+            or float(np.linalg.norm(semantic_embedding)) < 1e-8
+        ):
+            return False
+
+        semantic_metadata = dict(metadata or {})
+        semantic_metadata["semantic_content_hash"] = content_hash
+        semantic_metadata["semantic_model"] = self.semantic_encoder.identity
+        self.semantic_index.add(
+            id=point_id,
+            embedding=semantic_embedding,
+            metadata=semantic_metadata,
+        )
+        return True
+
     def _register_point(
         self,
         point_id: str,
@@ -432,37 +516,42 @@ class PhysicsEngine:
         point_type: str,
         spatial_kwargs: dict,
         semantic_metadata: dict,
+        semantic_embedding: np.ndarray = None,
+        register_spatial: bool = True,
+        register_semantic: bool = True,
     ) -> np.ndarray:
-        """Register a point in BOTH the 8D manifold and 384D semantic index.
+        """Register a point in the independent spatial and semantic stores.
 
         This is the single place where dual-registration happens.
         All public add methods and bootstrap logic delegate here.
 
         Args:
             point_id: Unique ID (e.g., "bel_42", "mem_17")
-            emb: Raw 384D embedding (pre-projected for 8D internally)
+            emb: Raw 384D MiniLM embedding for the 8D manifold
             point_type: "belief" or "memory"
             spatial_kwargs: Extra kwargs for the SpatialMind add
                             (confidence, importance, content, etc.)
-            semantic_metadata: Metadata dict for the 384D index
-                               (content, type, importance, etc.)
+            semantic_metadata: Metadata dict for the 1024D semantic index
         """
         # 8D manifold
-        if point_type == "belief":
-            self.spatial_mind.add_belief(point_id, emb, **spatial_kwargs)
-        elif point_type == "memory":
-            self.spatial_mind.add_memory(point_id, emb, **spatial_kwargs)
-        else:
-            logger.warning(f"Unknown point_type '{point_type}' for {point_id}")
+        if register_spatial:
+            if point_type == "belief":
+                self.spatial_mind.add_belief(point_id, emb, **spatial_kwargs)
+            elif point_type == "memory":
+                self.spatial_mind.add_memory(point_id, emb, **spatial_kwargs)
+            else:
+                logger.warning(f"Unknown point_type '{point_type}' for {point_id}")
 
-        # 384D semantic index
-        self.semantic_index.add(
-            id=point_id,
-            embedding=emb,
-            metadata=semantic_metadata,
-        )
+        if register_semantic:
+            semantic_text = spatial_kwargs.get("content") or semantic_metadata.get("content", "")
+            self._upsert_semantic_point(
+                point_id,
+                semantic_text,
+                semantic_metadata,
+                embedding=semantic_embedding,
+            )
 
-        if point_type == "belief":
+        if point_type == "belief" and register_spatial:
             self.spatial_mind.refresh_identity_center()
 
         space = (
@@ -473,7 +562,7 @@ class PhysicsEngine:
         return space.get_position(point_id)
 
     def _remove_point(self, point_id: str, point_type: str) -> bool:
-        """Remove a point from both the manifold and 384D semantic index."""
+        """Remove a point from both the manifold and semantic index."""
         space = (
             self.spatial_mind.belief_space
             if point_type == "belief"
@@ -490,7 +579,7 @@ class PhysicsEngine:
     # Will be removed once all call sites are verified.
 
     def add_belief_point(self, belief_id: str, text: str, **metadata):
-        """Add a belief to both the 8D manifold and 384D semantic index.
+        """Add a belief to both the 8D manifold and 1024D semantic index.
 
         .. deprecated:: Use _register_point() directly for new code.
         """
@@ -509,7 +598,7 @@ class PhysicsEngine:
         )
 
     def add_memory_point(self, memory_id: str, text: str, **metadata):
-        """Add a memory to both the 8D manifold and 384D semantic index.
+        """Add a memory to both the 8D manifold and 1024D semantic index.
 
         .. deprecated:: Use _register_point() directly for new code.
         """
@@ -538,6 +627,7 @@ class PhysicsEngine:
         self,
         belief: Dict[str, Any],
         embedding: np.ndarray = None,
+        register_semantic: bool = True,
     ) -> tuple[list[float], list[float]]:
         """Upsert a belief record into the live manifold and semantic index."""
         content = belief.get("content", "")
@@ -586,6 +676,7 @@ class PhysicsEngine:
                 "stability_index": belief.get("stability_index", 0.5),
                 "position_8d": belief.get("position_8d") or [],
             },
+            register_semantic=register_semantic,
         )
         return position.tolist() if position is not None else [], emb.tolist()
 
@@ -605,6 +696,7 @@ class PhysicsEngine:
         access_count: int = 0,
         tags: Optional[List[str]] = None,
         belief_ids: Optional[List[str]] = None,
+        register_semantic: bool = True,
     ) -> tuple[str, list[float], list[float]]:
         """Upsert a journal memory entry into the live manifold and semantic index."""
         lag = lagrangian_snapshot or {}
@@ -651,10 +743,11 @@ class PhysicsEngine:
                 "tags": tags or [],
                 "belief_ids": belief_ids or [],
             },
+            register_semantic=register_semantic,
         )
         return point_id, position.tolist() if position is not None else [], emb.tolist()
 
-    # ── Semantic Search (384D, for conscious recall) ──────────────────
+    # ── Semantic Search (1024D, for mRAG and conscious recall) ────────
 
     def semantic_search(
         self,
@@ -663,7 +756,7 @@ class PhysicsEngine:
         filter_fn: Optional[Callable] = None,
         return_embeddings: bool = False,
     ) -> list:
-        """Search the 384D semantic index for conscious recall.
+        """Search the independent 1024D semantic index for conscious recall.
 
         Used by the memory_recall tool and Curator deep search.
         Returns results sorted by cosine similarity (most similar first).
@@ -673,10 +766,10 @@ class PhysicsEngine:
             k: Maximum number of results
             filter_fn: Optional predicate (id, metadata) → bool to filter
                        results before ranking
-            return_embeddings: If True, include the normalized 384D embedding
+            return_embeddings: If True, include the normalized semantic embedding
                                in each result dict under key "embedding"
         """
-        emb = self.embed_text(query_text)
+        emb = self.embed_semantic_text(query_text, is_query=True)
         results = self.semantic_index.search(emb, k=k, filter_fn=filter_fn)
 
         if return_embeddings:
@@ -690,13 +783,82 @@ class PhysicsEngine:
 
     # ── Bootstrap from existing stores ────────────────────────────────
 
+    def _bootstrap_semantic_records(
+        self,
+        beliefs: List[Dict[str, Any]],
+        memories: List[Dict[str, Any]],
+    ) -> int:
+        """Batch-reembed canonical stores into the native semantic index."""
+        records = []
+        for belief in beliefs:
+            content = str(belief.get("content", "") or "").strip()
+            belief_id = str(belief.get("id", "") or "")
+            if not belief_id or len(content) < 5:
+                continue
+            records.append((belief_id, content, {
+                "content": content[:500],
+                "type": "belief",
+                "confidence": belief.get("confidence", 0.5),
+                "importance": belief.get("mass", 1.0),
+                "category": belief.get("_category") or belief.get("category", ""),
+                "stability_index": belief.get("stability_index", 0.5),
+                "position_8d": belief.get("position_8d") or [],
+            }))
+
+        for memory in memories:
+            if memory.get("type") not in (None, "memory"):
+                continue
+            content = str(memory.get("content", "") or "").strip()
+            metadata = memory.get("metadata", {}) or {}
+            journal_id = str(memory.get("id", "") or "")
+            point_id = str(metadata.get("point_id") or self.memory_point_id(journal_id))
+            if not journal_id or len(content) < 5:
+                continue
+            records.append((point_id, content, {
+                "content": content[:500],
+                "type": "memory",
+                "importance": metadata.get("importance", 0.5),
+                "memory_type": metadata.get("memory_type", ""),
+                "created_at": metadata.get("created_at") or memory.get("timestamp", ""),
+                "source": metadata.get("source", ""),
+                "journal_id": journal_id,
+                "pulse_id": memory.get("pulse_id", 0),
+                "position_8d": memory.get("position_8d") or [],
+                "tags": metadata.get("tags", []) or [],
+                "belief_ids": metadata.get("belief_ids", []) or [],
+            }))
+
+        added = 0
+        migration_batch = max(16, self.semantic_encoder.batch_size * 4)
+        for start in range(0, len(records), migration_batch):
+            batch = records[start:start + migration_batch]
+            vectors = self.embed_semantic_batch(
+                [record[1] for record in batch],
+                is_query=False,
+            )
+            for (point_id, content, metadata), vector in zip(batch, vectors):
+                if self._upsert_semantic_point(
+                    point_id,
+                    content,
+                    metadata,
+                    embedding=vector,
+                ):
+                    added += 1
+            logger.info(
+                "Semantic migration: %d/%d records encoded",
+                min(start + len(batch), len(records)),
+                len(records),
+            )
+        return added
+
     def bootstrap_from_stores(self, belief_store, memory_manager):
-        """Populate both 8D spaces and the 384D index from existing stores.
+        """Populate stable 8D spaces and the independent semantic index.
 
         Called once during initialization to hydrate the manifold with
         existing data so gravity fields are non-empty from the start.
-        Every entry is registered via _register_point() to ensure both
-        the 8D manifold and 384D semantic index stay in sync.
+        Existing 8D positions are never regenerated merely because the
+        semantic model changed. A missing 1024D index is rebuilt separately
+        from all canonical beliefs and journal memories.
 
         Checks belief and memory spaces INDEPENDENTLY — if beliefs are
         already loaded from a previous boot but memories are empty, only
@@ -707,27 +869,45 @@ class PhysicsEngine:
         # which skipped memory loading when beliefs were already present.
         belief_loaded = self.spatial_mind.belief_space.point_count > 0
         memory_loaded = self.spatial_mind.memory_space.point_count > 0
+        semantic_loaded = self.semantic_index.count > 0
 
-        if belief_loaded and memory_loaded:
+        if belief_loaded and memory_loaded and semantic_loaded:
             logger.info(
-                f"Both spaces already populated (beliefs={self.spatial_mind.belief_space.point_count}, "
-                f"memories={self.spatial_mind.memory_space.point_count}) — skipping bootstrap"
+                "Spatial and semantic stores already populated "
+                "(beliefs=%d, memories=%d, semantic=%d) — skipping bootstrap",
+                self.spatial_mind.belief_space.point_count,
+                self.spatial_mind.memory_space.point_count,
+                self.semantic_index.count,
             )
             return
 
         beliefs_added = 0
         memories_added = 0
+        all_beliefs: List[Dict[str, Any]] = []
+        semantic_memories: List[Dict[str, Any]] = []
+
+        try:
+            all_beliefs = belief_store.get_all_beliefs_flat()
+        except Exception as e:
+            logger.warning("Belief bootstrap read failed: %s", e)
+
+        try:
+            semantic_memories = list(memory_manager.journal.latest_by_id().values())
+        except Exception as e:
+            logger.warning("Semantic memory bootstrap read failed: %s", e)
 
         # Bootstrap beliefs (skip if already loaded from persisted state)
         if not belief_loaded:
             try:
-                all_beliefs = belief_store.get_all_beliefs_flat()
                 for b in all_beliefs:
                     content = b.get("content", "")
                     if not content or len(content) < 5:
                         continue
                     bid = b.get("id", f"belief_{beliefs_added}")
-                    self.sync_belief_record(b)
+                    self.sync_belief_record(
+                        b,
+                        register_semantic=semantic_loaded,
+                    )
                     beliefs_added += 1
             except Exception as e:
                 logger.warning(f"Belief bootstrap failed: {e}")
@@ -771,6 +951,7 @@ class PhysicsEngine:
                         position_8d=m.get("position_8d"),
                         access_count=m.get("access_count", 0),
                         tags=m.get("tags", []),
+                        register_semantic=semantic_loaded,
                     )
                     memories_added += 1
             except Exception as e:
@@ -787,16 +968,24 @@ class PhysicsEngine:
         # Compute identity center from beliefs
         self.spatial_mind.refresh_identity_center()
 
+        semantic_added = 0
+        if not semantic_loaded:
+            semantic_added = self._bootstrap_semantic_records(
+                all_beliefs,
+                semantic_memories,
+            )
+
         # Save the fully hydrated semantic index to disk so we don't re-embed on next boot
-        if self.data_dir:
-            self.semantic_index.save(self.data_dir / "semantic_index")
+        if self._semantic_index_path:
+            self.semantic_index.save(self._semantic_index_path)
             # Also save spatial state so memory_space_state.json is populated
             self.spatial_mind.save_state()
 
         logger.info(
             f"Spatial mind bootstrapped: {beliefs_added} beliefs, "
             f"{memories_added} memories, "
-            f"{self.semantic_index.count} vectors in 384D index"
+            f"{semantic_added} newly encoded / {self.semantic_index.count} "
+            f"vectors in {self.semantic_encoder.dim}D semantic index"
         )
 
     # ── Persistence ───────────────────────────────────────────────────
@@ -812,6 +1001,9 @@ class PhysicsEngine:
     def save_all(self):
         """Save all state (called on shutdown)."""
         self.spatial_mind.save_state()
-        if self.data_dir:
-            self.semantic_index.save(self.data_dir / "semantic_index")
-            logger.info("PhysicsEngine: all state saved (8D manifold + 384D index)")
+        if self._semantic_index_path:
+            self.semantic_index.save(self._semantic_index_path)
+            logger.info(
+                "PhysicsEngine: all state saved (8D manifold + %dD semantic index)",
+                self.semantic_encoder.dim,
+            )

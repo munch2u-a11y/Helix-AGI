@@ -164,7 +164,7 @@ def setup_helix(data_dir: str = "data"):
     print(f"  Beliefs: {belief_stats}")
     print(f"  Scratchpad: {len(scratchpad.get_active_notes())} active notes")
 
-    # ── 2. Physics Engine (8D manifold + 384D semantic index) ──────────
+    # ── 2. Physics Engine (stable 8D manifold + 1024D semantic index) ──
     spatial_dir = os.path.join(data_dir, "spatial")
     physics = PhysicsEngine(data_dir=spatial_dir)
     memory_manager.set_physics(physics)
@@ -264,6 +264,12 @@ def setup_helix(data_dir: str = "data"):
         print(f"  Provider: {provider_config.provider_type} ({provider_config.model})")
     else:
         print("  Provider: NONE — running without LLM")
+
+    # One provider-aware subconscious route for classification, compression,
+    # belief formatting/consolidation, and Curator synthesis.  Codex/local
+    # providers use isolated sessions; API fallback remains Gemini Flash.
+    from core.auxiliary_llm import init_auxiliary_client
+    auxiliary_llm = init_auxiliary_client(provider_config)
 
     # ── 6. Pulse Loop ────────────────────────────────────────────
     journal_dir = "journals"
@@ -433,37 +439,26 @@ def setup_helix(data_dir: str = "data"):
     # ── 7. Background Daemon (Dream Engine) ────────────────────────
     #    The Curator needs an llm_client with .generate(prompt, system_instruction)
     #    for Phase 2 (belief extraction) and Phase 3 (compound synthesis).
-    curator_llm = None
-    try:
-        from google import genai as _genai
-        _curator_client = _genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+    class _CuratorResponse:
+        def __init__(self, text: str):
+            self.text = text or ""
 
-        class _CuratorLLM:
-            """Lightweight wrapper giving the Curator a .generate() interface."""
-            _model = "gemini-2.5-flash"
-            def generate(self, prompt: str, system_instruction: str = ""):
-                from google.genai import types as _types
-                config = _types.GenerateContentConfig(
-                    system_instruction=system_instruction or None,
-                    temperature=0.3,
-                    max_output_tokens=8192,
-                )
-                resp = _curator_client.models.generate_content(
-                    model=self._model,
-                    contents=[_types.Content(role="user", parts=[_types.Part(text=prompt)])],
-                    config=config,
-                )
-                # Return the full response: .text concatenates ALL text
-                # parts. Returning parts[0] handed the Curator only the
-                # first part of a multi-part (thinking-model) response,
-                # so every Phase 2 batch failed JSON parsing on
-                # truncated output.
-                return resp
+    class _CuratorLLM:
+        """Adapt AuxiliaryLLM text results to Curator's response interface."""
+        def generate(self, prompt: str, system_instruction: str = ""):
+            text = auxiliary_llm.generate(
+                prompt,
+                system_instruction=system_instruction,
+                temperature=0.3,
+                max_output_tokens=8192,
+            )
+            return _CuratorResponse(text or "")
 
-        curator_llm = _CuratorLLM()
-        print("  Curator LLM: ready (gemini-2.5-flash)")
-    except Exception as e:
-        print(f"  Curator LLM: unavailable ({e})")
+    curator_llm = _CuratorLLM()
+    curator_route = (
+        provider_config.provider_type if provider_config else "gemini fallback"
+    )
+    print(f"  Curator LLM: ready ({curator_route} auxiliary route)")
 
     daemon = BackgroundDaemon(
         physics_engine=physics,

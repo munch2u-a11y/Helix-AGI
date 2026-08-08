@@ -7,7 +7,7 @@ hours. Runs during the 1–6 AM sleep cycle as a standalone step.
 Pipeline:
   1. Read pending_beliefs.json (tags from belief_detector)
   2. Pass 1 — Extraction: For new-format tags (raw thought text),
-     call Gemini to extract specific belief statements
+     call the configured auxiliary LLM to extract specific statements
   3. FAISS Dedup: Compare extracted beliefs against all existing
      beliefs. Verifications (>0.90) bump existing belief mass.
      Ambiguous matches (0.85-0.90) are dropped.
@@ -17,7 +17,8 @@ Pipeline:
   5. Validate and write to the belief store
   6. Mark processed tags as "extracted" / "integrated" / "rejected"
 
-Uses Gemini API (not Ollama) for higher quality formatting decisions.
+Uses Helix's configured auxiliary provider, with Gemini as a compatibility
+fallback when no auxiliary client has been initialized.
 Designed to be called from the dream cycle or a standalone cron.
 
 Zero-blocking. CPU-minimal. Runs overnight.
@@ -35,7 +36,7 @@ from datetime import datetime
 
 logger = logging.getLogger("helix.core.batch_service")
 
-# Unified LLM dispatch — routes to Gemini or Anthropic based on HELIX_PROVIDER
+# Unified LLM dispatch — bound after provider helper definitions below.
 _call_llm = None
 
 # ── Configuration ────────────────────────────────────────────────────
@@ -244,7 +245,6 @@ def _faiss_dedup(
         logger.warning("FAISS not available — skipping dedup")
         return new_beliefs, []
 
-    dim = 384  # embedding dimension
     existing_embeddings = []
     existing_ids = []
 
@@ -267,6 +267,7 @@ def _faiss_dedup(
 
     # Build index
     matrix = np.array(existing_embeddings, dtype=np.float32)
+    dim = int(matrix.shape[1])
     index = faiss.IndexFlatIP(dim)  # Inner product on normalized = cosine
     index.add(matrix)
 
@@ -328,7 +329,7 @@ def _faiss_dedup(
     return novel, verifications
 
 
-# ── Gemini API Client ───────────────────────────────────────────────
+# ── Auxiliary LLM Dispatch ─────────────────────────────────────────
 
 def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
     """Make a single Gemini API call for belief processing.
@@ -364,7 +365,26 @@ def _call_gemini(prompt: str, system: str = "") -> Optional[str]:
 
     return None
 
-_call_llm = _call_gemini
+def _call_configured_llm(prompt: str, system: str = "") -> Optional[str]:
+    """Use the configured subconscious provider, then legacy Gemini fallback."""
+    try:
+        from core.auxiliary_llm import get_auxiliary_client
+        client = get_auxiliary_client()
+        if client is not None:
+            result = client.generate(
+                prompt,
+                system_instruction=system,
+                temperature=0.15,
+                max_output_tokens=2048,
+            )
+            if result:
+                return result
+    except Exception as e:
+        logger.warning("Configured auxiliary LLM call failed: %s", e)
+    return _call_gemini(prompt, system=system)
+
+
+_call_llm = _call_configured_llm
 
 
 # ── Response Parser ─────────────────────────────────────────────────
@@ -843,7 +863,7 @@ def process_pending_beliefs(
                                 pass
 
                         # Give the belief a position and register it in
-                        # the live 8D manifold + 384D semantic index.
+                        # the live 8D manifold + independent semantic index.
                         # Previously new beliefs existed only in the
                         # JSON store: no position_8d, invisible to the
                         # spatial mind, and (because bootstrap skipped

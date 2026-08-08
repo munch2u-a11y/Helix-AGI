@@ -1,34 +1,33 @@
 """
-Helix — Semantic Index (384D Lossless Vector Search)
+Helix — High-Dimensional Semantic Index
 
 The conscious mind's library catalog. Searched explicitly when
 the agent uses memory_recall or when the Curator needs precise
 semantic matching during nightly synthesis.
 
-Separate from the 8D CognitiveSpace which handles ambient
-preconscious gravity and attention dynamics. This index stores
-the raw, uncompressed all-MiniLM-L6-v2 embeddings for lossless
-cosine similarity search.
+Separate from the 8D CognitiveSpace which handles ambient preconscious
+gravity and attention dynamics. This index stores the semantic encoder's
+native, uncompressed vectors for cosine similarity search.
 
 Scalability strategy:
-  - 0–5K vectors:   numpy brute-force (sub-ms)
-  - 5K–100K:        FAISS IndexIVFFlat (trained, ~1ms)
-  - 100K+:          FAISS IndexIVFFlat with more centroids
+  - Small stores:   numpy exact inner product
+  - Larger stores:  FAISS IndexFlatIP (exact, default)
+  - Optional scale: FAISS IndexIVFFlat via HELIX_FAISS_MODE=ivf
 
 The index automatically upgrades its search strategy as the
 vector count grows. No manual tuning required.
 
 Thread safety:
-  The pulse loop writes (add/remove) while tool execution reads
-  (search). A read-write lock ensures consistency without
-  blocking the pulse loop unnecessarily.
+  The pulse loop writes while retrieval reads. A re-entrant lock protects
+  vector, metadata, and FAISS row alignment.
 """
 
 import json
 import logging
+import os
 import threading
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
@@ -45,30 +44,46 @@ _IVF_TRAINING_MIN = 256
 
 
 class SemanticIndex:
-    """384D semantic vector index for conscious memory search.
+    """Semantic vector index for mRAG and conscious memory search.
 
     Stores raw embeddings alongside metadata. Provides cosine-similarity
     search via normalized inner product.
 
     The index is dynamic — it grows with the agent's lifetime. Search
     strategy scales automatically:
-      - Small index (< 5K): numpy dot product (exact)
-      - Large index (≥ 5K): FAISS IVFFlat (approximate, trained)
+      - Small index (< threshold): numpy dot product (exact)
+      - Large index: FAISS FlatIP (exact) or optional IVFFlat
 
     All vectors are L2-normalized on ingest so cosine similarity
     reduces to inner product.
 
     Attributes:
-        dim: Embedding dimensionality (384 for MiniLM-L6-v2)
+        dim: Native embedding dimensionality of the semantic encoder
         _ids: Ordered list of vector IDs
         _embeddings: (N, dim) array of L2-normalized embeddings
         _metadata: Dict mapping ID → metadata dict
         _faiss_index: FAISS index (None if not available or < threshold)
     """
 
-    def __init__(self, dim: int = 384, faiss_threshold: int = _DEFAULT_FAISS_THRESHOLD):
+    def __init__(
+        self,
+        dim: int = 1024,
+        faiss_threshold: int = _DEFAULT_FAISS_THRESHOLD,
+        *,
+        model_id: str = "",
+        faiss_mode: Optional[str] = None,
+    ):
         self.dim = dim
         self.faiss_threshold = faiss_threshold
+        self.model_id = str(model_id or "")
+        self.faiss_mode = str(
+            faiss_mode or os.environ.get("HELIX_FAISS_MODE", "flat")
+        ).strip().lower()
+        if self.faiss_mode not in {"flat", "ivf"}:
+            logger.warning(
+                "Unknown HELIX_FAISS_MODE=%s; using exact flat", self.faiss_mode,
+            )
+            self.faiss_mode = "flat"
 
         # ── Core storage ──
         self._ids: List[str] = []
@@ -118,21 +133,17 @@ class SemanticIndex:
 
         Args:
             id: Unique identifier (belief ID, memory ID, etc.)
-            embedding: Raw 384D embedding (will be L2-normalized)
+            embedding: Native semantic embedding (will be L2-normalized)
             metadata: Arbitrary metadata dict (content, importance, etc.)
         """
         emb = np.asarray(embedding, dtype=np.float32).ravel()
 
-        # Ensure correct dimensionality
+        # Never pad a legacy 384D vector into a 1024D index. It would look
+        # valid to FAISS while defeating the native semantic representation.
         if len(emb) != self.dim:
-            logger.warning(
-                "Embedding dim %d != expected %d for id=%s. Truncating/padding.",
-                len(emb), self.dim, id,
+            raise ValueError(
+                f"Embedding dim {len(emb)} != expected {self.dim} for id={id}"
             )
-            padded = np.zeros(self.dim, dtype=np.float32)
-            n = min(len(emb), self.dim)
-            padded[:n] = emb[:n]
-            emb = padded
 
         # L2 normalize for cosine similarity via inner product
         norm = np.linalg.norm(emb)
@@ -172,12 +183,9 @@ class SemanticIndex:
             # Auto-upgrade to FAISS when threshold is reached
             if self.count >= self.faiss_threshold:
                 if self._faiss_available:
-                    # New memories must be visible immediately. The previous
-                    # deferred rebuild policy left up to 99 freshly written
-                    # vectors absent from FAISS even though they were present
-                    # in numpy storage. IVF supports incremental append; an
-                    # vector-changing upsert still requires a rebuild because
-                    # row replacement is not supported by this index shape.
+                    # New memories must be visible immediately. FAISS Flat and
+                    # IVF both support append; vector-changing upserts rebuild
+                    # because this index does not perform row replacement.
                     if self._faiss_index is not None and not is_update:
                         try:
                             self._faiss_index.add(emb.reshape(1, -1).astype(np.float32))
@@ -185,11 +193,15 @@ class SemanticIndex:
                             logger.warning("FAISS incremental add failed: %s", e)
                             self._faiss_index = None
 
-                    # Rebuild periodically (every ~5% growth or 100 adds) to
-                    # retrain centroids, and immediately for a vector-changing
-                    # upsert. Metadata-only touches require no FAISS write.
+                    # IVF periodically retrains centroids as the store grows.
+                    # Exact FlatIP only rebuilds for changed vectors.
+                    # Metadata-only touches require no FAISS write.
                     if (self._faiss_index is None or vector_changed
-                            or self._additions_since_rebuild >= max(100, self.count // 20)):
+                            or (
+                                self.faiss_mode == "ivf"
+                                and self._additions_since_rebuild
+                                >= max(100, self.count // 20)
+                            )):
                         self._rebuild_faiss_index()
                 elif not self._faiss_warning_emitted:
                     logger.warning(
@@ -210,7 +222,7 @@ class SemanticIndex:
         """Search for the K most similar vectors by cosine similarity.
 
         Args:
-            query: 384D query embedding (will be L2-normalized)
+            query: Native-dimension query embedding (will be L2-normalized)
             k: Maximum results to return
             filter_fn: Optional predicate (id, metadata) → bool.
                        If provided, only vectors where filter_fn returns
@@ -239,11 +251,109 @@ class SemanticIndex:
                 return self._numpy_search(q, k, filter_fn)
 
             # Unfiltered: choose strategy based on index size
+            if (
+                self._faiss_index is None
+                and self._faiss_available
+                and self.count >= self.faiss_threshold
+            ):
+                self._rebuild_faiss_index()
             if (self._faiss_index is not None
                     and self.count >= self.faiss_threshold):
                 return self._faiss_search(q, k)
             else:
                 return self._numpy_search(q, k)
+
+    def search_batch(
+        self,
+        queries: np.ndarray,
+        k: int = 10,
+    ) -> List[List[Dict[str, Any]]]:
+        """Search several query heads in one matrix/FAISS operation.
+
+        mRAG commonly issues a full-query head plus sentence and RAKE heads.
+        Batching them avoids repeating Python and FAISS dispatch overhead and
+        lets BLAS evaluate exact search as one matrix multiplication.
+        """
+        matrix = np.asarray(queries, dtype=np.float32)
+        if matrix.ndim == 1:
+            matrix = matrix.reshape(1, -1)
+        if matrix.ndim != 2 or matrix.shape[1] != self.dim:
+            return [[] for _ in range(matrix.shape[0] if matrix.ndim else 0)]
+        if self.count == 0 or k <= 0:
+            return [[] for _ in range(len(matrix))]
+
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        valid = norms[:, 0] > 1e-8
+        normalized = np.divide(
+            matrix,
+            norms,
+            out=np.zeros_like(matrix),
+            where=norms > 1e-8,
+        )
+
+        with self._lock:
+            actual_k = min(k, self.count)
+            if (
+                self._faiss_index is None
+                and self._faiss_available
+                and self.count >= self.faiss_threshold
+            ):
+                self._rebuild_faiss_index()
+            if (
+                self._faiss_index is not None
+                and self.count >= self.faiss_threshold
+            ):
+                if hasattr(self._faiss_index, "nprobe"):
+                    nlist = getattr(self._faiss_index, "nlist", 16)
+                    self._faiss_index.nprobe = max(1, int(nlist ** 0.5))
+                try:
+                    scores, indices = self._faiss_index.search(
+                        normalized.astype(np.float32), actual_k,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "FAISS batch search failed: %s — falling back to numpy",
+                        exc,
+                    )
+                    scores = normalized @ self._embeddings.T
+                    indices = None
+            else:
+                scores = normalized @ self._embeddings.T
+                indices = None
+
+            rows: List[List[Dict[str, Any]]] = []
+            for row_idx in range(len(normalized)):
+                if not valid[row_idx]:
+                    rows.append([])
+                    continue
+                if indices is None:
+                    row_scores = scores[row_idx]
+                    if actual_k < len(row_scores):
+                        top = np.argpartition(row_scores, -actual_k)[-actual_k:]
+                        top = top[np.argsort(row_scores[top])[::-1]]
+                    else:
+                        top = np.argsort(row_scores)[::-1]
+                    row_indices = top
+                    selected_scores = row_scores[top]
+                else:
+                    row_indices = indices[row_idx]
+                    selected_scores = scores[row_idx]
+
+                results = []
+                for raw_idx, raw_score in zip(row_indices, selected_scores):
+                    idx = int(raw_idx)
+                    if idx < 0 or idx >= len(self._ids):
+                        continue
+                    similarity = float(raw_score)
+                    vector_id = self._ids[idx]
+                    results.append({
+                        "id": vector_id,
+                        "similarity": similarity,
+                        "distance": 1.0 - similarity,
+                        "metadata": self._metadata.get(vector_id, {}),
+                    })
+                rows.append(results)
+            return rows
 
     def remove(self, id: str) -> bool:
         """Remove a vector from the index.
@@ -291,7 +401,7 @@ class SemanticIndex:
     ) -> List[Dict[str, Any]]:
         """Brute-force cosine similarity via numpy dot product.
 
-        Exact search. O(N×D) but sub-millisecond for N < 5K, D = 384.
+        Exact search. O(N×D), evaluated by optimized matrix multiplication.
         """
         # Inner product on L2-normalized vectors = cosine similarity
         similarities = self._embeddings @ query  # (N,)
@@ -340,16 +450,15 @@ class SemanticIndex:
         query: np.ndarray,
         k: int,
     ) -> List[Dict[str, Any]]:
-        """FAISS IVF search for large collections.
+        """FAISS inner-product search for larger collections.
 
-        Approximate search. Much faster than brute-force at > 5K vectors.
+        Exact under the default FlatIP mode; approximate only when the
+        operator explicitly selects IVFFlat.
         """
         if self._faiss_index is None:
             self._rebuild_faiss_index()
             if self._faiss_index is None:
                 return self._numpy_search(query, k)
-
-        import faiss  # noqa: F811
 
         q = query.reshape(1, -1).astype(np.float32)
         actual_k = min(k, self.count)
@@ -382,31 +491,41 @@ class SemanticIndex:
         return results
 
     def _rebuild_faiss_index(self) -> None:
-        """Build or rebuild the FAISS IVF index.
+        """Build or rebuild the configured FAISS inner-product index.
 
-        Centroids scale as sqrt(N), clamped to [16, 256].
-        Training requires at least 256 vectors.
+        Exact FlatIP is the default because retrieval recall is Helix's
+        priority. IVFFlat remains an explicit large-store option; its
+        centroids scale as sqrt(N), clamped to [16, 256].
         """
         if not self._faiss_available or self._embeddings is None:
             return
 
         n = len(self._embeddings)
-        if n < min(_IVF_TRAINING_MIN, self.faiss_threshold):
+        if n < self.faiss_threshold:
             self._faiss_index = None
             return
 
         try:
             import faiss  # noqa: F811
 
-            # Dynamic centroid count: sqrt(N)
-            nlist = max(_MIN_IVF_CENTROIDS, min(_MAX_IVF_CENTROIDS, int(n ** 0.5)))
+            if self.faiss_mode == "ivf" and n >= _IVF_TRAINING_MIN:
+                nlist = max(
+                    _MIN_IVF_CENTROIDS,
+                    min(_MAX_IVF_CENTROIDS, int(n ** 0.5)),
+                )
+                quantizer = faiss.IndexFlatIP(self.dim)
+                index = faiss.IndexIVFFlat(
+                    quantizer,
+                    self.dim,
+                    nlist,
+                    faiss.METRIC_INNER_PRODUCT,
+                )
+                index.train(self._embeddings)
+                detail = f"{nlist} centroids"
+            else:
+                index = faiss.IndexFlatIP(self.dim)
+                detail = "exact"
 
-            # IndexIVFFlat with inner product (cosine on normalized vectors)
-            quantizer = faiss.IndexFlatIP(self.dim)
-            index = faiss.IndexIVFFlat(quantizer, self.dim, nlist, faiss.METRIC_INNER_PRODUCT)
-
-            # Train on all vectors
-            index.train(self._embeddings)
             index.add(self._embeddings)
 
             self._faiss_index = index
@@ -414,8 +533,10 @@ class SemanticIndex:
             self._dirty = False
 
             logger.info(
-                "FAISS IVF index rebuilt: %d vectors, %d centroids",
-                n, nlist,
+                "FAISS %s index rebuilt: %d vectors, %s",
+                self.faiss_mode if self.faiss_mode == "ivf" else "flat",
+                n,
+                detail,
             )
         except Exception as e:
             logger.warning("FAISS index build failed: %s", e)
@@ -430,6 +551,7 @@ class SemanticIndex:
           - embeddings.npy — (N, dim) float32 array
           - ids.json — ordered list of vector IDs
           - metadata.json — ID → metadata mapping
+          - config.json — semantic model and index compatibility metadata
 
         FAISS index is NOT persisted — rebuilt on load from embeddings.
         This keeps the format simple and portable.
@@ -446,6 +568,13 @@ class SemanticIndex:
 
                 with open(path / "metadata.json", "w", encoding="utf-8") as f:
                     json.dump(self._metadata, f, default=str)
+
+                with open(path / "config.json", "w", encoding="utf-8") as f:
+                    json.dump({
+                        "dim": self.dim,
+                        "model_id": self.model_id,
+                        "faiss_mode": self.faiss_mode,
+                    }, f, indent=2)
 
                 logger.info(
                     "SemanticIndex saved: %d vectors → %s",
@@ -464,12 +593,30 @@ class SemanticIndex:
         emb_path = path / "embeddings.npy"
         ids_path = path / "ids.json"
         meta_path = path / "metadata.json"
+        config_path = path / "config.json"
 
         if not emb_path.exists() or not ids_path.exists():
             return 0
 
         try:
             with self._lock:
+                if config_path.exists():
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        config = json.load(f)
+                    stored_model = str(config.get("model_id", "") or "")
+                    if (
+                        self.model_id
+                        and stored_model
+                        and stored_model != self.model_id
+                    ):
+                        logger.warning(
+                            "Semantic model mismatch: stored %s, expected %s; "
+                            "index will be rebuilt",
+                            stored_model,
+                            self.model_id,
+                        )
+                        return 0
+
                 embeddings = np.load(emb_path).astype(np.float32)
 
                 with open(ids_path, "r", encoding="utf-8") as f:
@@ -523,10 +670,11 @@ class SemanticIndex:
             "total_vectors": self.count,
             "dim": self.dim,
             "search_strategy": (
-                "faiss_ivf" if self._faiss_index is not None
+                f"faiss_{self.faiss_mode}" if self._faiss_index is not None
                 else "numpy_brute"
             ),
             "faiss_available": self._faiss_available,
+            "model_id": self.model_id,
             "dirty": self._dirty,
             "memory_bytes": (
                 self._embeddings.nbytes if self._embeddings is not None else 0

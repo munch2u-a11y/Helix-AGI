@@ -18,10 +18,11 @@ a memory stays whole and independently retrievable no matter how many beliefs
 cite it. The only write it performs is reliance telemetry, routed to the
 BeliefStore's own counters so the Curator keeps seeing what got used.
 
-No embeddings are computed here. Helix's PhysicsEngine already dual-registers
-every belief and memory into the 384D SemanticIndex on the ingest path
-(_register_point), so embeddings are read from there. The journal's stored
-embedding_384d is the fallback, and embedding on the fly is the last resort.
+Helix's PhysicsEngine registers every belief and memory into the independent
+1024D SemanticIndex on ingest, so embeddings are normally read from there.
+The journal's legacy 384D vector belongs only to the stable 8D spatial
+projection and is never padded or reused for semantic search. If an item is
+missing during migration, it is embedded natively on demand.
 """
 
 import logging
@@ -268,7 +269,6 @@ class HelixCorpus:
                 "turn_id": pulse_id,
                 "event_id": None,
                 "chunk_index": None,
-                "_embedding_384d": entry.get("embedding_384d"),
             })
 
         # The journal appends a new line per update rather than mutating, so
@@ -333,11 +333,11 @@ class HelixCorpus:
     # ── Embeddings ───────────────────────────────────────────────────
 
     def embedding(self, item: Dict[str, Any]) -> Optional[np.ndarray]:
-        """The item's 384D L2-normalized embedding.
+        """The item's native semantic L2-normalized embedding.
 
-        SemanticIndex first (already normalized, written on ingest), then the
-        journal's stored copy, then embed on the fly. Never re-embeds anything
-        the index already holds.
+        SemanticIndex first (already normalized, written on ingest), then a
+        native 1024D document embedding on the fly. The journal's 384D spatial
+        vector is deliberately ineligible.
         """
         cached = item.get("_embedding")
         if cached is not None:
@@ -349,15 +349,13 @@ class HelixCorpus:
         if index is not None and index.contains(item_id):
             emb = index._embeddings[index._id_to_idx[item_id]]
 
-        if emb is None:
-            raw = item.get("_embedding_384d")
-            if raw:
-                emb = np.asarray(raw, dtype=np.float32)
-
         if emb is None and self._physics is not None:
             try:
                 from memory.mrag.semantic_lane import strip_timestamp_prefix
-                emb = self._physics.embed_text(strip_timestamp_prefix(item.get("content", "")))
+                emb = self._physics.embed_semantic_text(
+                    strip_timestamp_prefix(item.get("content", "")),
+                    is_query=False,
+                )
             except Exception as e:
                 logger.debug("On-the-fly embed failed for %s: %s", item_id, e)
                 return None
