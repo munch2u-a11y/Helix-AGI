@@ -12,6 +12,7 @@ latest version of each ``id`` so the file does not grow without bound.
 import json
 import os
 import hashlib
+import threading
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -51,6 +52,7 @@ class CognitiveJournal:
     def __init__(self, directory: Path, filename: str = DEFAULT_JOURNAL_NAME):
         self.dir = directory
         self.path = self.dir / filename
+        self._lock = threading.RLock()
         self.dir.mkdir(parents=True, exist_ok=True)
         # Ensure the file exists
         self.path.touch(exist_ok=True)
@@ -110,28 +112,30 @@ class CognitiveJournal:
             entry["embedding_384d"] = embedding_384d
         line = _serialize_entry(entry)
         # Write atomically – open in append mode and flush immediately.
-        with self.path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-            f.flush()
-            os.fsync(f.fileno())
+        with self._lock:
+            with self.path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+                f.flush()
+                os.fsync(f.fileno())
 
     def load_all(self) -> List[Dict[str, Any]]:
         """Load every entry from the journal (oldest → newest)."""
         entries: List[Dict[str, Any]] = []
-        with self.path.open("r", encoding="utf-8") as f:
-            for raw in f:
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    entry = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                # Verify checksum – if it fails we simply skip the corrupted line.
-                chk = entry.pop("checksum", None)
-                if chk != _checksum(entry):
-                    continue
-                entries.append(entry)
+        with self._lock:
+            with self.path.open("r", encoding="utf-8") as f:
+                for raw in f:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        entry = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    # Verify checksum – if it fails we simply skip the corrupted line.
+                    chk = entry.pop("checksum", None)
+                    if chk != _checksum(entry):
+                        continue
+                    entries.append(entry)
         return entries
 
     def latest_by_id(self) -> Dict[str, Dict[str, Any]]:
@@ -155,16 +159,17 @@ class CognitiveJournal:
         write those entries back to a temporary file which then atomically
         replaces the original.
         """
-        latest = self.latest_by_id()
-        tmp_path = self.path.with_suffix(".tmp")
-        with tmp_path.open("w", encoding="utf-8") as tmp:
-            for entry in latest.values():
-                line = _serialize_entry(entry)
-                tmp.write(line + "\n")
-            tmp.flush()
-            os.fsync(tmp.fileno())
-        # Replace original file atomically
-        tmp_path.replace(self.path)
+        with self._lock:
+            latest = self.latest_by_id()
+            tmp_path = self.path.with_suffix(".tmp")
+            with tmp_path.open("w", encoding="utf-8") as tmp:
+                for entry in latest.values():
+                    line = _serialize_entry(entry)
+                    tmp.write(line + "\n")
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            # Replace original file atomically
+            tmp_path.replace(self.path)
 
     # ---------------------------------------------------------------------
     # Convenience helpers used by the rest of Helix

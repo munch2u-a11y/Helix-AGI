@@ -9,6 +9,8 @@ is preserved via the migration script (to be added later).
 import json
 import logging
 import os
+import threading
+from functools import wraps
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,6 +18,15 @@ from typing import Any, Dict, List, Optional
 from memory.cognitive_journal import CognitiveJournal
 
 logger = logging.getLogger("helix.memory.manager")
+
+
+def _serialized_store(method):
+    """Serialize memory ingest across conscious and task-focus threads."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._store_lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 def _now_iso() -> str:
@@ -55,6 +66,7 @@ class MemoryManager:
         # Physics engine reference (injected after construction)
         # Provides access to the 1024D SemanticIndex for conscious recall
         self._physics = None
+        self._store_lock = threading.RLock()
         logger.info(f"MemoryManager initialized with journal at {self.journal.path}")
 
     def _initialize_counter(self) -> int:
@@ -196,6 +208,7 @@ class MemoryManager:
         }
 
     # ── Primary Write ────────────────────────────────────────────────
+    @_serialized_store
     def store(
         self,
         content: str,

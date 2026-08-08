@@ -97,6 +97,7 @@ class TestSuiteRunner:
             ("test_associative_transitions.py", "Associative Transition Tests"),
             ("test_deep_memory_benchmark.py", "Progressive Deep-Memory Benchmark Tests"),
             ("test_codex_cli_provider.py", "Codex App Server Provider Tests"),
+            ("test_task_cognition.py", "Event-Driven Task Cognition Tests"),
             ("test_crash_reporter.py", "Crash Reporter Tests"),
             ("test_emc2_retrieval.py", "E=mc² Retrieval Tests"),
             

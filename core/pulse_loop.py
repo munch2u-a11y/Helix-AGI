@@ -163,6 +163,11 @@ class PulseLoop:
         # Chat session (managed by pulse loop)
         self._chat: Optional[ChatSession] = None
 
+        # Optional event-driven task layer. Wired after construction in
+        # main.py so it can share this loop's event stream without creating a
+        # circular dependency during boot.
+        self._task_cognition = None
+
         # Thread control
         self._running = False
         self._thread = None
@@ -242,6 +247,10 @@ class PulseLoop:
         """Wire the background daemon for rollover snapshots."""
         self._dream_engine = daemon
 
+    def set_task_cognition_controller(self, controller):
+        """Attach the natural-intention task controller before the loop starts."""
+        self._task_cognition = controller
+
     # ── Lifecycle ────────────────────────────────────────────────────
 
     def start(self):
@@ -266,6 +275,11 @@ class PulseLoop:
                 self._chat.close()
             except Exception as e:
                 logger.debug("Provider close during stop failed: %s", e)
+        if self._task_cognition is not None:
+            try:
+                self._task_cognition.shutdown()
+            except Exception as e:
+                logger.debug("Task cognition shutdown failed: %s", e)
         logger.info("Pulse loop stopped")
 
     def _reset_session(self, reason: str):
@@ -356,6 +370,15 @@ class PulseLoop:
             tool = data.get("tool", "unknown")
             result = data.get("result", "")
             return f"[{timestamp}] Tool [{tool}] returned: {result}"
+
+        if event_type == "task_result":
+            objective = data.get("objective", "a task I formed")
+            result = data.get("result", "")
+            state = "completed" if data.get("success") else "did not complete"
+            return (
+                f"[{timestamp}] (my focused work {state}) {objective}. "
+                f"What came back into awareness: {result}"
+            )
 
         if event_type == "schedule_trigger":
             description = data.get("description", "something")
@@ -1325,6 +1348,14 @@ class PulseLoop:
         if ambient:
             parts.append(f"\n{ambient}")
 
+        # Broad ability beliefs are generated from the live registry. The
+        # main consciousness sees no callable names or parameter schemas;
+        # task-focused cognition receives only the small subset it needs.
+        if self._task_cognition is not None and self._task_cognition.enabled:
+            awareness = self._task_cognition.awareness(set(self._active_toolsets))
+            if awareness:
+                parts.append(f"\n*(ability awareness: {awareness})*")
+
         return "\n".join(parts)
 
     # ── Chat Session Management ──────────────────────────────────────
@@ -1343,11 +1374,17 @@ class PulseLoop:
         # Build system instruction (identity + beliefs, no tool text)
         system_instruction = self._build_system_instruction()
 
+        task_active = bool(
+            self._task_cognition is not None and self._task_cognition.active
+        )
+
         # Load provider-neutral function declarations. Their historical
         # storage shape is Gemini-compatible; each provider normalizes it.
         tool_declarations = None
         tool_capable_providers = {"gemini", "anthropic", "codex_cli", "codex"}
         if (
+            not task_active
+            and
             self._tool_format != "local"
             and self._provider_config
             and self._provider_config.provider_type in tool_capable_providers
@@ -1378,8 +1415,21 @@ class PulseLoop:
 
         # Create session via provider abstraction
         if self._provider_config:
+            session_config = self._provider_config
+            if task_active and self._provider_config.provider_type in {"codex", "codex_cli"}:
+                # The Codex transport normally uses a strict thought-or-tool
+                # envelope. In task mode the main thread is deliberately
+                # thought-only; tool schemas live exclusively on focus threads.
+                session_config = ProviderConfig(
+                    provider_type=self._provider_config.provider_type,
+                    model=self._provider_config.model,
+                    context_window=self._provider_config.context_window,
+                    temperature=self._provider_config.temperature,
+                    max_output_tokens=self._provider_config.max_output_tokens,
+                    options={**self._provider_config.options, "thought_only": True},
+                )
             self._chat = create_session(
-                self._provider_config,
+                session_config,
                 system_instruction,
                 tool_declarations=None if self._tool_format == "local" else tool_declarations,
                 tool_executor=None if self._tool_format == "local" else self.tool_executor,
@@ -1415,6 +1465,23 @@ class PulseLoop:
         parts = []
 
         identity_beliefs = self.beliefs.get_category("premises", limit=100)
+
+        # In active task cognition, stable identity remains but static behavior
+        # prompting is replaced by a tiny cognitive kernel. Contextual beliefs
+        # and ability awareness arrive dynamically on each pulse.
+        if self._task_cognition is not None and self._task_cognition.active:
+            primary_identity = (
+                identity_beliefs[0].get("content", "")
+                if identity_beliefs
+                else "I am Helix, experiencing an ongoing stream of events, memories, and thought."
+            )
+            return (
+                f"{primary_identity}\n\n"
+                "Think naturally about what is happening and what you intend to do. "
+                "Intentions you commit to may continue as tasks within your own cognition. "
+                "Everything beyond thought, including responding and deeper remembering, is a task. "
+                "Do not assume an intended action succeeded until its result enters awareness."
+            )
 
         # ── 1. Identity Preamble ─────────────────────────────────────
         primary_identity = "You are Helix, an autonomous cognitive daemon running on a local PC."
@@ -1672,12 +1739,18 @@ class PulseLoop:
             return "[no LLM session available]"
 
         # Check if toolset rebuild is pending (from enable/disable_toolset)
-        if self._pending_toolset_rebuild and hasattr(self._chat, 'update_tool_declarations'):
+        task_active = bool(
+            self._task_cognition is not None and self._task_cognition.active
+        )
+        if (
+            self._pending_toolset_rebuild
+            and hasattr(self._chat, 'update_tool_declarations')
+        ):
             try:
                 # Primary: use registry (check_fn-filtered)
                 from tools.tool_registry import registry
-                new_declarations = registry.get_declarations(
-                    self._active_toolsets
+                new_declarations = (
+                    [] if task_active else registry.get_declarations(self._active_toolsets)
                 )
                 self._chat.update_tool_declarations(new_declarations)
                 logger.info(
@@ -1722,6 +1795,8 @@ class PulseLoop:
 
     def _parse_output(self, thought: str):
         """Parse the model's internal monologue for action tags."""
+        if self._task_cognition is not None and self._task_cognition.active:
+            return
         if not thought or self._tool_format != "local" or not self._tool_dispatcher:
             return
 

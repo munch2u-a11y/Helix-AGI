@@ -58,6 +58,12 @@ DEFAULT_CONFIG = {
     "personality": "curious",
     "vision_provider": "local",
     "ai_assist": False,
+    # Observe records naturally voiced intentions while leaving the legacy
+    # action path intact. Set to "active" after reviewing the task audit to
+    # hide schemas from main thought and enable identity-shared focus threads.
+    "task_cognition_mode": "observe",
+    "task_focus_workers": 2,
+    "task_focus_max_depth": 4,
 }
 
 

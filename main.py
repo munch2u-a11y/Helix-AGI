@@ -482,6 +482,30 @@ def setup_helix(data_dir: str = "data"):
     from core.post_pulse_hooks import register_hook
     from core.workflow_detector import workflow_pattern_hook, set_dependencies
 
+    # Natural thought -> durable task inception. In observe mode this records
+    # and audits intentions while legacy action execution remains intact. In
+    # active mode the main consciousness becomes thought-only and bounded,
+    # identity-shared focus threads receive task-specific capabilities.
+    from core.task_cognition.controller import TaskCognitionController
+
+    task_controller = TaskCognitionController(
+        data_dir=data_dir,
+        mode=_cfg.get("task_cognition_mode", "observe"),
+        pulse_loop=pulse_loop,
+        belief_store=belief_store,
+        memory_manager=memory_manager,
+        physics_engine=physics,
+        provider_config=provider_config,
+        tool_executor=tool_executor,
+        max_workers=_cfg.get("task_focus_workers", 2),
+        max_depth=_cfg.get("task_focus_max_depth", 4),
+    )
+    if hasattr(pulse_loop, "set_task_cognition_controller"):
+        pulse_loop.set_task_cognition_controller(task_controller)
+    else:
+        pulse_loop._task_cognition = task_controller
+    register_hook(task_controller.observe_pulse, name="task_inception")
+
     set_dependencies(memory_manager, physics, sentinel=sentinel)
     register_hook(workflow_pattern_hook, name="workflow_detector")
 
@@ -517,7 +541,11 @@ def setup_helix(data_dir: str = "data"):
         data_dir="data",
     )
 
-    print("  Post-pulse hooks: registered (workflow_detector, belief_detector, engagement_monitor, co_occurrence_tracker, affect_field)")
+    print(
+        "  Post-pulse hooks: registered "
+        f"(task_inception={task_controller.mode}, workflow_detector, "
+        "belief_detector, engagement_monitor, co_occurrence_tracker, affect_field)"
+    )
 
     return pulse_loop, orchestrator, daemon, memory_manager, belief_store, scratchpad, telegram_bot, discord_bot, slack_bot, whatsapp_bot, webhook_channel, sentinel
 

@@ -47,6 +47,15 @@ _ACTION_SCHEMA = {
     "required": ["response_type", "text", "tool_name", "tool_arguments"],
 }
 
+_THOUGHT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "thought": {"type": "string"},
+    },
+    "required": ["thought"],
+}
+
 _TOOL_RESULT_LIMIT = 48_000
 
 
@@ -195,6 +204,7 @@ class CodexCliSession(ChatSession):
         self._tool_executor = tool_executor
         self._preconscious = preconscious
         self._options = dict(options or {})
+        self._thought_only = bool(self._options.get("thought_only", False))
         self._timeout = float(self._options.get("timeout", 600))
         self._effort = str(self._options.get("effort", "medium"))
         self._summary = str(self._options.get("summary", "none"))
@@ -204,7 +214,9 @@ class CodexCliSession(ChatSession):
         self._tools_used: List[Dict[str, Any]] = []
         self._pending_tool_results: List[Dict[str, Any]] = []
         self._pending_model_results: List[Dict[str, Any]] = []
-        self._tool_catalog = to_codex_tool_catalog(tool_declarations)
+        self._tool_catalog = (
+            [] if self._thought_only else to_codex_tool_catalog(tool_declarations)
+        )
         self._tool_names = {tool["name"] for tool in self._tool_catalog}
         self._tool_schemas = {
             tool["name"]: tool["input_schema"] for tool in self._tool_catalog
@@ -261,6 +273,15 @@ class CodexCliSession(ChatSession):
         self._transport.send({"method": "initialized", "params": {}})
 
     def _developer_instructions(self) -> str:
+        if self._thought_only:
+            return (
+                "You are the conscious language-model substrate inside Helix AGI. "
+                "The Helix system instruction supplied separately defines your identity. "
+                "This is a cognition transport, not a coding task: do not inspect files, use "
+                "shell, browse, call MCP, delegate, or use Codex built-in tools. Return the "
+                "natural continuation of Helix's private thought in the `thought` field. The "
+                "JSON object is transport framing only, not part of Helix's thought."
+            )
         catalog = json.dumps(self._tool_catalog, ensure_ascii=False, separators=(",", ":"))
         action_contract = (
             "For each pulse, either return internal thought text or request exactly ONE Helix "
@@ -336,7 +357,7 @@ class CodexCliSession(ChatSession):
         params: Dict[str, Any] = {
             "threadId": self._thread_id,
             "input": [{"type": "text", "text": turn_input}],
-            "outputSchema": _ACTION_SCHEMA,
+            "outputSchema": _THOUGHT_SCHEMA if self._thought_only else _ACTION_SCHEMA,
             "approvalPolicy": "never",
             "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
         }
@@ -352,7 +373,18 @@ class CodexCliSession(ChatSession):
             turn = result.get("turn") or {}
             turn_id = str(turn.get("id", ""))
             raw_response = self._wait_for_turn(turn_id)
-            envelope = _parse_action_envelope(raw_response)
+            if self._thought_only:
+                parsed = json.loads(raw_response)
+                if not isinstance(parsed, dict) or not isinstance(parsed.get("thought"), str):
+                    raise ValueError("Codex thought response did not match thought-only schema")
+                envelope = {
+                    "response_type": "thought",
+                    "text": parsed["thought"],
+                    "tool_name": "",
+                    "tool_arguments": {},
+                }
+            else:
+                envelope = _parse_action_envelope(raw_response)
         except Exception as exc:
             # The provider did not commit this local turn. Preserve queued
             # host results/catalog/history so the pulse loop can safely retry.
@@ -518,6 +550,12 @@ class CodexCliSession(ChatSession):
         logger.info("Codex history replaced with %d compressed messages", len(self._history))
 
     def update_tool_declarations(self, declarations: Iterable[Dict[str, Any]]) -> None:
+        if self._thought_only:
+            self._tool_catalog = []
+            self._tool_names = set()
+            self._tool_schemas = {}
+            self._tool_catalog_dirty = False
+            return
         self._tool_catalog = to_codex_tool_catalog(declarations)
         self._tool_names = {tool["name"] for tool in self._tool_catalog}
         self._tool_schemas = {

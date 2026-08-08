@@ -28,6 +28,7 @@ missing during migration, it is embedded natively on demand.
 import logging
 import os
 import re
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional, Set
 
 import numpy as np
@@ -211,19 +212,21 @@ class HelixCorpus:
         if path is None or not path.exists():
             return False
 
-        try:
-            size = os.path.getsize(path)
-        except OSError:
-            return False
+        journal_lock = getattr(journal, "_lock", None)
+        with journal_lock if journal_lock is not None else nullcontext():
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                return False
 
-        if size == self._journal_offset:
-            return False
-        if size < self._journal_offset:
-            # compact() rewrote the file — everything must be re-read.
-            self._journal_offset = 0
-            self._memory_items = []
+            if size == self._journal_offset:
+                return False
+            if size < self._journal_offset:
+                # compact() rewrote the file — everything must be re-read.
+                self._journal_offset = 0
+                self._memory_items = []
 
-        new_entries = self._read_journal_from(path, self._journal_offset)
+            new_entries = self._read_journal_from(path, self._journal_offset)
         if not new_entries:
             return False
 

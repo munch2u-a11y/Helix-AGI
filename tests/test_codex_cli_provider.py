@@ -15,6 +15,7 @@ from llm.providers.base import detect_available_provider
 from llm.providers.codex_cli_provider import (
     CodexCliSession,
     _ACTION_SCHEMA,
+    _THOUGHT_SCHEMA,
     _parse_action_envelope,
 )
 from llm.tool_schema import (
@@ -204,6 +205,32 @@ class CodexSessionTests(unittest.TestCase):
         finally:
             session.close()
         self.assertTrue(_FakeTransport.instances[0].closed)
+
+    def test_thought_only_mode_hides_tools_and_uses_minimal_schema(self):
+        _FakeTransport.next_response = {"thought": "I should remember the blue vase."}
+        declaration = [{
+            "name": "memory_recall",
+            "description": "Recall",
+            "parameters": {"type": "object", "properties": {}},
+        }]
+        session = CodexCliSession(
+            system_instruction="identity",
+            tool_declarations=declaration,
+            options={"timeout": 2, "thought_only": True},
+        )
+        try:
+            self.assertEqual(
+                session.send_message("pulse"),
+                "I should remember the blue vase.",
+            )
+            self.assertEqual(session.get_last_tool_calls(), [])
+            transport = _FakeTransport.instances[0]
+            turns = [p for p in transport.sent if p.get("method") == "turn/start"]
+            self.assertEqual(turns[0]["params"]["outputSchema"], _THOUGHT_SCHEMA)
+            starts = [p for p in transport.sent if p.get("method") == "thread/start"]
+            self.assertNotIn("memory_recall", starts[0]["params"]["developerInstructions"])
+        finally:
+            session.close()
 
     def test_tool_call_dispatches_once_and_queues_grounded_result(self):
         _FakeTransport.next_response = {

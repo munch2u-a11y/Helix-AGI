@@ -118,6 +118,24 @@ Helix uses a high-accuracy semantic foreground together with a deliberately sepa
 - **Sequence Associations** — Direct foreground movement between clusters learns durable directed transitions. Repetition nudges cluster prototypes in a separate 8D overlay; it never drags co-injected memory/belief points together. Associated items already ranked by mRAG are excluded, keeping this lane genuinely lateral. If the same destination independently arrives through raw spatial recall, it is retained once and explicitly tagged as a learned follow-on association.
 - **Affect-Preserving Recall** — Stability and encoding Lagrangian metadata remain attached throughout retrieval. They help choose a representative within an associated cluster, and recalled memories reproduce one bounded aggregate somatic echo.
 
+### Event-Driven Task Cognition
+
+- **Natural task inception** — Helix's main thread remains private, natural thought. A conservative post-pulse detector distinguishes committed first-person intentions (for example, “I should reply…”) from questions, hypotheticals, and passing possibilities, then writes a durable `TaskRecord`.
+- **Hidden capabilities** — The main thread receives broad generated ability awareness but not callable names, parameter schemas, or a large static action prompt. A lexical + 1024D reverse search over the live, available registry gives each focused task only the schemas relevant to its objective and authorization scope; capabilities need not already occupy the main thread's active toolset.
+- **Learned situational orchestrators** — Task templates are embedded into a 1024D task space. Successful and failed work updates situational centroids, capability affinities, expected focus depth, and reliability. A separate 8D directed transition overlay learns which working contexts tend to follow each other; it never moves memories, beliefs, or identity points.
+- **Identity-shared focus** — In active mode, bounded focus threads use the same identity, mRAG corpus, beliefs, memories, and host tool executor. Helix receives accepted outcomes back as first-person cognitive events; speculative focus text is not written to memory.
+- **Contextual procedural memory** — Successful tool sequences accumulate in a separate procedural store and bias future task-specific capability selection. They are learned habits, not hardcoded personas or universal system prompts.
+
+Task cognition rolls out in three modes:
+
+| Mode | Behavior |
+|------|----------|
+| `off` | Existing pulse and action path only |
+| `observe` (default) | Detect, deduplicate, persist, and audit natural intentions; existing direct tool behavior remains available |
+| `active` | Main thread is thought-only; committed tasks run in scoped identity-shared focus threads |
+
+Set `HELIX_TASK_COGNITION=active` to override the local config. Active mode currently requires the standard pulse loop and a tool-capable provider (Codex CLI, Gemini, or Anthropic); unsupported combinations safely fall back to observe mode. External mutation is withheld unless the triggering event contains an explicit user request. Internal recall/read operations and direct replies use narrower scopes, and every host action still passes through `ToolExecutor` safety checks.
+
 ### Stability & Affect
 
 - **Stability Sentinel** — A background daemon thread that computes a composite Lagrangian stability score from attention entropy H(q) and identity drift D_KL, weighted by hedonic state Ω. Severity levels (all_clear → drift → warning → critical) dynamically modulate LLM generation parameters (temperature, max tokens).
@@ -330,6 +348,7 @@ codex login
 export HELIX_PROVIDER=codex_cli
 export HELIX_MODEL=                 # blank = account default
 export HELIX_MRAG_PROFILE=frontier  # larger retrieval budget for GPT-class context
+export HELIX_TASK_COGNITION=active  # thought-only main + scoped focus threads
 python main.py
 ```
 
@@ -376,6 +395,9 @@ All LLM model names are configurable via environment variables. Set these in `~/
 | `HELIX_MRAG_MIN_SIMILARITY` | `0.12` | Lowest cosine accepted unless an item has literal evidence |
 | `HELIX_MRAG_MAX_SCORE_DROP` | `0.18` | Largest accepted cosine drop from the best semantic candidate |
 | `HELIX_ASSOCIATIVE_MEMORY` | `1` | Enable directed cluster-transition learning/recall; set `0` for benchmark ablation |
+| `HELIX_TASK_COGNITION` | config / `observe` | `off`, `observe`, or `active`; active hides schemas from main thought and enables focused task execution |
+
+The corresponding local `config/config.json` keys are `task_cognition_mode`, `task_focus_workers`, and `task_focus_max_depth`. Runtime task state is stored under `data/tasks/` as an atomic task snapshot plus append-only audit events, learned orchestrator centroids, 8D habit transitions, and contextual procedural skills.
 
 ### Progressive Deep-Memory Benchmark
 
