@@ -220,6 +220,7 @@ class MemoryManager:
         belief_ids: Optional[List[str]] = None,
         position_8d: Optional[List[float]] = None,
         embedding_384d: Optional[List[float]] = None,
+        semantic_embedding_1024d: Optional[List[float]] = None,
         pulse_id: Optional[int] = None,
     ) -> int:
         """Append a memory entry to the journal.
@@ -227,9 +228,10 @@ class MemoryManager:
         Returns a generated short‑term ID (incrementing integer) for backward
         compatibility. No SQLite or ChromaDB writes are performed.
 
-        If embedding_384d is provided, it is persisted in the journal for
-        SemanticIndex rebuilds and also registered in the 384D index for
-        immediate searchability.
+        ``embedding_384d`` is the stable spatial representation persisted for
+        8D rebuilds. ``semantic_embedding_1024d`` optionally supplies a
+        separately batch-computed native semantic vector; ordinary callers
+        omit it and the PhysicsEngine encodes the content itself.
         """
         tags = list(dict.fromkeys(tags or []))
         belief_ids = belief_ids or []
@@ -275,6 +277,7 @@ class MemoryManager:
                 lagrangian_snapshot=lagrangian_snapshot,
                 pulse_id=actual_pulse_id,
                 embedding_384d=embedding_384d,
+                semantic_embedding_1024d=semantic_embedding_1024d,
                 position_8d=canonical_position,
                 tags=tags,
                 belief_ids=belief_ids,

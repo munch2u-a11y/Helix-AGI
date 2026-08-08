@@ -88,6 +88,26 @@ class SemanticEncoderTests(unittest.TestCase):
             self.assertTrue(physics.semantic_index.contains("belief_1"))
             self.assertEqual(physics.spatial_mind.belief_space.point_count, before)
 
+    def test_precomputed_semantic_vector_bypasses_document_encoder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            physics = PhysicsEngine(tmp)
+            vector = np.zeros(1024, dtype=np.float32)
+            vector[17] = 1.0
+            with patch.object(
+                physics.semantic_encoder,
+                "encode_document",
+                side_effect=AssertionError("batch vector should be reused"),
+            ):
+                point_id, _position, _embedding = physics.register_memory_entry(
+                    memory_id=1,
+                    content="A batch-indexed benchmark session.",
+                    embedding_384d=np.ones(384, dtype=np.float32).tolist(),
+                    semantic_embedding_1024d=vector.tolist(),
+                )
+
+            self.assertEqual(point_id, "mem_1")
+            self.assertTrue(physics.semantic_index.contains(point_id))
+
 
 class SemanticIndexTests(unittest.TestCase):
     def test_legacy_vector_cannot_be_padded_into_native_index(self):

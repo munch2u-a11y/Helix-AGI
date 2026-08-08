@@ -163,6 +163,17 @@ Codex built-in tools are not the authority for Helix side effects. The App
 Server runs in an isolated read-only workspace; Helix validates real actions
 through its own executor and availability/safety checks.
 
+The sandboxed LongMemEval adapter follows the same boundary. Every question
+gets a fresh temporary journal, semantic index, spatial field, and model
+session. Historical conversations are indexed at session granularity; scorer
+annotations are stripped; and the question pulse uses `learn=False`, so the
+exam cannot update access, attention, associations, affect, or persistence.
+If the associative lane is enabled, chronological history ingestion observes
+direct session-cluster transitions before that non-teaching exam boundary.
+Its generated EM, token-F1, and evidence-session recall fields are diagnostic
+review aids, while the retained prediction, evidence transcript, and injected
+context are the auditable record.
+
 ## Persistence Map
 
 | Data | Location | Update model |

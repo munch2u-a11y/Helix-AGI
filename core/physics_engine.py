@@ -692,6 +692,7 @@ class PhysicsEngine:
         lagrangian_snapshot: Optional[Dict[str, Any]] = None,
         pulse_id: int = 0,
         embedding_384d: Optional[List[float]] = None,
+        semantic_embedding_1024d: Optional[List[float]] = None,
         position_8d: Optional[List[float]] = None,
         access_count: int = 0,
         tags: Optional[List[str]] = None,
@@ -743,6 +744,11 @@ class PhysicsEngine:
                 "tags": tags or [],
                 "belief_ids": belief_ids or [],
             },
+            semantic_embedding=(
+                np.asarray(semantic_embedding_1024d, dtype=np.float32)
+                if semantic_embedding_1024d is not None
+                else None
+            ),
             register_semantic=register_semantic,
         )
         return point_id, position.tolist() if position is not None else [], emb.tolist()

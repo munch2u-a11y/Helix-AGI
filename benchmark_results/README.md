@@ -11,3 +11,36 @@ The progressive learned-memory runner writes `deep_memory_report.md` and
 ```bash
 venv/bin/python tests/locomo_deep_memory_sandbox.py --dry-run
 ```
+
+The LongMemEval-S development runner is hard-limited to 100 questions and
+writes a resumable, human-review-first directory containing:
+
+- `manifest.json` — dataset hash, fixed-seed stratified selection, and runtime configuration;
+- `details.jsonl` — one crash-safe full record per answered question;
+- `hypotheses.jsonl` — upstream-compatible question ID and hypothesis pairs;
+- `manual_review.md` and `review/*.md` — gold answers, raw predictions, gold evidence, and the exact injected context;
+- `summary.json` — transparent EM, token-F1, abstention, and retrieval diagnostics.
+
+Validate a downloaded cleaned dataset without invoking a model:
+
+```bash
+venv/bin/python tests/longmemeval_sandbox.py \
+  --dataset /path/to/longmemeval_s_cleaned.json \
+  --dry-run
+```
+
+Run or resume the bounded subscription-backed evaluation:
+
+```bash
+venv/bin/python tests/longmemeval_sandbox.py \
+  --dataset /path/to/longmemeval_s_cleaned.json \
+  --num-questions 100 \
+  --resume
+```
+
+The automated fields are review aids, not a final grade. The runner never
+sends scorer-only `has_answer` flags into Helix, and each question gets a
+fresh temporary memory system so histories cannot leak across examples.
+When associative memory is enabled, chronological history ingestion teaches
+only direct coarse-cluster transitions; the question itself remains
+retrieval-only and cannot reinforce the graph.

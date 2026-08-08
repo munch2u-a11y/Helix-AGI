@@ -412,6 +412,17 @@ venv/bin/python tests/locomo_deep_memory_sandbox.py \
 
 `scripted` ingestion is the diagnostic default: it stores the observed dialogue events but does not let a conscious model paraphrase adjacent arbitrary events into a semantic relation. Use `--ingest-mode connector` for a costlier end-to-end replay. Compare `--association-memory on` and `off` to distinguish transition learning from mRAG/base-model performance. This benchmark transport is deliberately distinct from the full `codex_cli` App Server mode: it invokes `codex exec` in an isolated read-only workspace and does not read `OPENAI_API_KEY`.
 
+For broader factual, temporal, preference, and knowledge-update memory testing,
+`tests/longmemeval_sandbox.py` adapts the cleaned LongMemEval-S dataset to the
+same isolated transport. It creates a new temporary Helix memory system per
+question, indexes historical sessions into both 1024D semantic and 8D spatial
+stores, records chronological coarse-cluster transitions, and keeps the exam
+retrieval-only. The development runner is hard-limited to 100 fixed-seed
+stratified questions and produces per-question
+manual review pages rather than treating its simple string metrics as an
+authoritative judge. See `benchmark_results/README.md` for commands and output
+layout.
+
 ### Communication Channels
 
 During `setup.py`, you choose which communication channels to enable. The dashboard chat is always available — external channels are opt-in:

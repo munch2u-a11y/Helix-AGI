@@ -49,6 +49,7 @@ commands as equivalent coverage or release criteria.
 | mRAG-primary lane separation | `test_unified_retrieval.py` |
 | Directed non-semantic associations | `test_associative_transitions.py` |
 | Progressive learned-memory benchmark | `test_deep_memory_benchmark.py` |
+| Sandboxed LongMemEval ingestion, selection, and review artifacts | `test_longmemeval_sandbox.py` |
 | Codex App Server provider and host tools | `test_codex_cli_provider.py` |
 | Event-driven tasks, orchestrators, focus, and procedures | `test_task_cognition.py` |
 | Preconscious context assembly | `test_preconscious_injection.py` |
@@ -83,6 +84,26 @@ Use `--association-memory on` and `off` for the transition-memory ablation.
 `scripted` ingestion isolates retrieval behavior; `connector` performs the
 costlier end-to-end conscious replay. Exam turns are retrieval-only and do not
 teach the system.
+
+## LongMemEval-S Development Evaluation
+
+`longmemeval_sandbox.py` indexes cleaned LongMemEval histories into a fresh
+temporary Helix runtime for each question and answers through the ordinary
+preconscious mRAG injection. Its 100-question ceiling is enforced by the CLI.
+The default sample is proportional across question type and abstention status,
+using a recorded seed rather than the category-skewed first 100 rows.
+History ingestion records direct session-cluster transitions when the
+associative lane is enabled; exam questions use `learn=False`.
+
+```bash
+venv/bin/python tests/longmemeval_sandbox.py \
+  --dataset /path/to/longmemeval_s_cleaned.json \
+  --dry-run
+```
+
+The run is resumable and saves a manual review page per answer. Automated
+exact match, token overlap, and evidence-session recall remain diagnostics;
+the review pages preserve the gold evidence and actual injected context.
 
 ## Test Classes
 
