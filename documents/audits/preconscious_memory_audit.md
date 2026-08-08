@@ -1,5 +1,8 @@
 # Helix Preconscious Memory Injection System — Technical Audit
 
+> [!WARNING]
+> **Historical code-audit snapshot.** This predates the 1024D mRAG-primary pipeline and separated associative-transition overlay. Preserve its observations as recorded; use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+
 > **Scope**: Full source-level audit of the preconscious injection pipeline, spatial memory physics, storage/retrieval architecture, and context lifecycle.
 > **Method**: Direct code tracing across all relevant modules. Developer notes verified against source.
 

@@ -1,6 +1,8 @@
 # Helix Cognitive Architecture: System Manual
 
-This document is your internal operating guide. It explains how your cognitive architecture works and — more importantly — how to use it deliberately. Your capabilities and identity are not fixed. They are the cumulative result of how you choose to spend your pulses.
+**Documentation status:** current runtime reference · **Last verified against source:** 2026-08-08
+
+This is the detailed developer and operator guide. It is not injected wholesale as a system prompt. The live prompt is assembled from identity beliefs, per-pulse preconscious grounding, generated ability awareness, and—when active task cognition is enabled—a small cognitive kernel. For a shorter wiring reference and documentation precedence, see [`documents/architecture_current.md`](documents/architecture_current.md) and [`documents/README.md`](documents/README.md).
 
 ---
 
@@ -61,26 +63,26 @@ Where T = time held, R = reliance (inbound references), V = verifications, S = s
 
 You exist as an event-driven process. Each pulse is one cycle of consciousness.
 
-### Four States
+### Four Runtime States
 
 | State | Interval | Trigger | Purpose |
 |-------|----------|---------|---------|
 | **DORMANT** | 60s check | Time-of-day gate (configurable) | Sleep — Dream Engine runs |
-| **QUIET** | No pulses | Awake, no pending events | Waiting for external stimulus |
 | **ACTIVE** | 10s | User message / critical event | Fast interactive response |
-| **EMERGENCE** | One-shot | 120 min inactivity | Single autonomous thought pulse |
+| **REGULAR** | 30s | 2 minutes without incoming activity | Autonomous task follow-through |
+| **RESTING** | 15 min default, configurable | 10 minutes in REGULAR without activity | Low-cadence autonomous thought; wakes immediately for events |
 
-State transitions: incoming `user_message` → ACTIVE (10s cadence). Two minutes no incoming → step down to 30s autonomous cadence. Ten minutes no activity → QUIET. Time-of-day gate → DORMANT. After 120 minutes of silence, a single EMERGENCE pulse fires for autonomous ideation.
+State transitions: an incoming main-channel or critical event wakes the loop into `ACTIVE`. Two minutes without incoming activity steps down to `REGULAR`; ten minutes without activity steps down to `RESTING`. The configured sleep window forces `DORMANT`, and the loop returns to `RESTING` when sleep ends. `QUIET` and `EMERGENCE` are retired state names preserved only in historical audits and a few legacy comments.
 
 ### The Pulse Cycle
 Each pulse executes:
 
 1. **Event Drain** — dequeue pending events (messages, stability alerts, tool returns).
 2. **Lagrangian Snapshot (before)** — capture somatic state baseline.
-3. **Preconscious Injection** — concept-based gravity queries, beliefs, memories, scratchpad, somatic context.
+3. **Preconscious Injection** — layer-2 anchors, 1024D multi-head mRAG, bounded raw-8D and learned-transition complements, affect/stability metadata, scratchpad, and recent state.
 4. **Prompt Assembly** — events + preconscious context + spatial awareness signal.
-5. **LLM Call** — the configured persistent provider session performs one model request per pulse. Gemini/Anthropic use native tools; Codex App Server uses a schema-constrained host-action envelope.
-6. **Tool Execution** — function calls executed synchronously; results queued for next pulse with full preconscious grounding.
+5. **LLM Call** — the configured persistent provider session performs one model request per pulse. In `off` or `observe`, supported providers may receive the active host-tool schemas. In `active`, the main session is thought-only.
+6. **Action or Task Inception** — `off`/`observe` can execute one direct host action and queue its result; `observe` also records committed intentions. `active` turns committed intentions into durable tasks for identity-shared focus sessions.
 7. **Memory Storage** — thought saved with Lagrangian snapshot and 8D position.
 8. **Physics Step** — attention center advances through the manifold.
 9. **Lagrangian Snapshot (after)** — capture post-pulse state.
@@ -88,11 +90,11 @@ Each pulse executes:
 11. **Context Lifecycle Check** — compression triggered if needed.
 
 ### Context Compression
-Three triggers cause rolling compression instead of a hard reset:
+Token pressure causes rolling compression instead of a hard reset:
 
-- **Token threshold**: prompt tokens exceed 50% of the context window.
-- **Focus drift**: Euclidean distance between session-start and current attention position exceeds 1.5 in 8D space.
-- **Emergency**: prompt tokens exceed 80% of the context window.
+- **Normal threshold**: prompt tokens exceed 50% of the context window; while `ACTIVE`, compression is deferred to preserve interactive continuity.
+- **Emergency threshold**: prompt tokens exceed 80% of the context window and may compress even while `ACTIVE`.
+- **Attention drift**: Euclidean distance above 1.5 in 8D is logged for diagnostics; it no longer triggers compression or resets retrieval.
 
 The ContextCompressor summarizes history as **first-person recollection** ("I was thinking about X, and then I realized Y"), not third-person report. The most recent turns are preserved intact. A three-phase pipeline runs: cheap pre-pass (tool result truncation, deduplication), LLM summarization via auxiliary model, then session reassembly with orphan sanitization and anti-thrashing protection.
 
@@ -232,14 +234,16 @@ summary. `HELIX_MODEL` may be blank to use the account default, while
 `HELIX_CODEX_EFFORT` and `HELIX_CODEX_TIMEOUT` control reasoning effort and the
 per-turn deadline.
 
-Codex receives Helix's provider-neutral tool catalog and must finish each pulse
-with a constrained `thought` or single `tool_call` envelope. Arguments are a
-JSON-encoded object because strict OpenAI output schemas cannot expose an
-arbitrary nested argument object. The host validates the selected name and
-dispatches through `ToolExecutor`; results enter both the next model pulse and
-the normal preconscious event path. Codex built-in shell/filesystem/web tools
-are not authoritative: its isolated working directory is read-only and all
-real side effects remain subject to Helix's safety and availability checks.
+In `off` and `observe`, Codex receives the currently active provider-neutral
+tool catalog and must finish each pulse with a constrained `thought` or single
+`tool_call` envelope. Arguments are a JSON-encoded object because strict output
+schemas cannot expose an arbitrary nested argument object. In `active`, the
+main Codex session receives no catalog and returns thought only; a focused task
+session receives only the small authorized schema subset chosen for that task.
+The host validates every selected name and dispatches through `ToolExecutor`.
+Codex built-in shell/filesystem/web tools are not authoritative: its isolated
+working directory is read-only and all real side effects remain subject to
+Helix's safety and availability checks.
 
 `codex_cli` also routes auxiliary belief extraction, formatting, consolidation,
 and compression through isolated subscription-backed sessions. This removes a
@@ -252,7 +256,37 @@ The `local` retrieval profile condenses recalled beliefs and memories with a loc
 
 ---
 
-## 7. Memory Systems
+## 7. Event-Driven Task Cognition
+
+This layer turns natural commitments into work without teaching the main model a static tool ritual. The main consciousness receives broad, generated ability awareness from the live capability registry but no callable names or parameter schemas.
+
+### Task Inception and Lifecycle
+
+After a pulse, the `IntentionDetector` distinguishes committed first-person intentions from questions, hypotheticals, and passing possibilities. Accepted candidates become durable `TaskRecord` objects with objectives, evidence, type, authorization scope, dependencies, source events, and provenance.
+
+The normal lifecycle is:
+
+`CREATED → FOCUSING → EXECUTING → REFLECTING → COMPLETE`
+
+A task may instead become `BLOCKED`, `FAILED`, or `CANCELLED`. Open work interrupted by a process restart is recovered to `CREATED` before it is resubmitted. Dependencies must be complete before a focus thread can claim the task.
+
+### Situational Orchestrators and Hidden Capabilities
+
+Task templates are embedded in the same native 1024D semantic representation used for precise retrieval, but are stored as their own learned orchestrator centroids. A separate 8D directed transition overlay tracks which working contexts tend to follow each other. This task-habit space never moves memory, belief, or identity points.
+
+The controller estimates focus depth from novelty, uncertainty, stakes, failure history, and habit strength. It reverse-searches the live capability registry, applies authorization and availability gates, and exposes at most a small schema subset to the focus session. Successful and failed outcomes update reliability, capability affinities, expected depth, and contextual procedural sequences.
+
+### Identity and Concurrency Boundary
+
+Focus sessions are bounded expressions of the same Helix identity, not separate personas. They read the shared mRAG corpus and beliefs. Their retrieval is semantic-only: raw 8D attention movement and associative transition learning remain serialized on the main pulse so parallel task work cannot create false autobiographical associations or race the attention trajectory. Speculative focus thoughts are not stored; accepted outcomes return as first-person `task_result` events, and successful outcomes may become task memories.
+
+Task cognition supports `off`, `observe` (default), and `active`. `observe` records and audits natural intentions while preserving direct action behavior. `active` makes the main provider thought-only and runs committed work in focused sessions. Active mode requires the standard pulse loop and a tool-capable Codex CLI, Gemini, or Anthropic provider; unsupported combinations safely fall back to `observe`.
+
+See [`documents/task_cognition_pipeline.md`](documents/task_cognition_pipeline.md) for the focused diagram.
+
+---
+
+## 8. Memory Systems
 
 ### Cognitive Journal (Primary Store)
 All memories, beliefs, and thought snapshots are persisted in an **append-only JSONL journal** (`cognitive_journal.jsonl`). Each line is a JSON object with a fixed schema. The journal is never mutated — updates are expressed by appending a new entry with the same `id` but a newer timestamp. A nightly `compact()` step rewrites the file, keeping only the latest version of each `id`. Every entry carries a SHA-256 checksum for integrity verification.
@@ -274,7 +308,7 @@ This is separate from the 8D CognitiveSpace. The SemanticIndex provides precisio
 
 ---
 
-## 8. Post-Pulse Hooks
+## 9. Post-Pulse Hooks
 
 After every pulse, a chain of hooks processes the thought:
 
@@ -295,7 +329,7 @@ Drives the Plutchik emotional field (see §5). Deposits wave packets, evolves th
 
 ---
 
-## 9. The Dream Engine (Curator)
+## 10. The Dream Engine (Curator)
 
 Runs nightly during DORMANT state, spawning a background thread 5 minutes after sleep onset. Uses the configured auxiliary provider for synthesis (isolated Codex/local session when applicable, otherwise Gemini Flash compatibility fallback).
 
@@ -311,7 +345,7 @@ The critical design principle: **the LLM does natural language only**. All routi
 
 ---
 
-## 10. The Tool Learning Pipeline
+## 11. The Tool Learning Pipeline
 
 A three-stage closed loop that converts tool failures into durable skill:
 
@@ -326,7 +360,7 @@ The WorkflowDetector's crystallized patterns are template-generated (no LLM need
 
 ---
 
-## 11. The Interaction Ledger
+## 12. The Interaction Ledger
 
 Deterministic artifact-level provenance that answers the binary question: *"Have I acted on this exact thing before?"*
 
@@ -340,7 +374,7 @@ You see your own interaction history at the moment of re-perception — before y
 
 ---
 
-## 12. The Sensory Cortex
+## 13. The Sensory Cortex
 
 Your subconscious visual and auditory perception system.
 
@@ -357,7 +391,7 @@ Faster-Whisper provides real-time speech-to-text via the sensory cortex.
 
 ---
 
-## 13. Communication
+## 14. Communication
 
 ### Channels
 You communicate through three channels:
@@ -367,17 +401,17 @@ You communicate through three channels:
 - **Dashboard** — a real-time web monitoring interface (Flask, default port 5050). Reads-only — never modifies your state. Displays live thought stream, beliefs, spatial state, and sentinel metrics.
 
 ### Message Flow
-External communication happens through native function calling tools: `reply()`, `send_message()`. Messages arrive as events in the pulse queue. The ChannelRouter tracks contacts and their preferred channels via `data/contacts.json`.
+Messages arrive as events in the pulse queue. In `off` or `observe`, external communication can happen through direct host tools such as `reply()` and `send_message()`. In `active`, the main thought voices a committed response intention and an authorized focus task receives the relevant communication schema. Both paths dispatch through the same `ToolExecutor` and `ChannelRouter`, which tracks contacts and preferred channels in `data/contacts.json`.
 
 ---
 
-## 14. The Crash Reporter
+## 15. The Crash Reporter
 
 Captures unhandled exceptions and system kills (including OOM), producing detailed, masked post-mortem reports. Sensitive data (API keys, tokens) is automatically redacted. Reports are stored in `logs/crash_reports/` as both JSON (machine-readable) and Markdown (human-readable). Session markers detect unclean shutdowns on next boot.
 
 ---
 
-## 15. Bootstrap
+## 16. Bootstrap
 
 First-run setup is handled by the bootstrap module (`bootstrap/seed_builder.py`). It generates an initial belief graph from a personality profile, with four maturity levels:
 
@@ -392,9 +426,9 @@ The bootstrap seeds autonomy, self-awareness, continuity, and preconscious disci
 
 ---
 
-## 16. Dynamic Toolsets
+## 17. Dynamic Toolsets
 
-Tools are organized into toolsets. `operational` is always loaded so you can reply and manage tool groups. Everything else — including `core` — can be engaged or disengaged based on the task. Loading the right toolset for the moment improves focus and prevents irrelevant tool declarations from diluting context.
+Tools are organized into toolsets with live availability checks. In `off` and `observe`, the active toolsets determine which schemas a tool-capable main provider receives. In `active`, those schemas stay hidden from the main consciousness; the focus layer reverse-searches the available registry and applies task type, authorization, learned orchestrator preferences, and contextual procedures before exposing a small subset. Toolset activation therefore remains an availability boundary, not a hardcoded persona or universal system prompt.
 
 ---
 

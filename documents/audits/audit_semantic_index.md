@@ -1,5 +1,8 @@
 # Semantic Index Audit
 
+> [!WARNING]
+> **Historical code-audit snapshot.** Preserve its observations as recorded; line numbers and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+
 **Scope:** `memory/semantic_index.py`
 
 ## Runtime role
@@ -30,4 +33,3 @@
 - `save()` persists `embeddings.npy`, `ids.json`, and `metadata.json` under a directory; it does not serialize the FAISS index itself. `memory/semantic_index.py:404-434`
 - `load()` restores those files, validates row counts and dimensionality, rebuilds the ID map, and optionally rebuilds FAISS afterward. `memory/semantic_index.py:435-497`
 - `get_stats()` reports vector count, dimensionality, active search strategy, FAISS availability, dirty flag, and raw embedding memory footprint. `memory/semantic_index.py:498-513`
-

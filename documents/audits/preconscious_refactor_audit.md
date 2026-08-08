@@ -1,5 +1,8 @@
 # Preconscious Refactor & Manifold Stabilization Audit
 
+> [!WARNING]
+> **Historical code-audit snapshot.** This describes the retired co-injection drift design. Current sequence learning moves only cluster prototypes in a separate overlay; use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md).
+
 **Date**: 2026-05-21  
 **Scope**: Concept-based injection pipeline, mass decoupling, attention steering, Hebbian drift  
 **Files Modified**: 9 (1 new, 8 updated)

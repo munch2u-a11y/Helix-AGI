@@ -1,5 +1,8 @@
 # Tool Learning Audit
 
+> [!WARNING]
+> **Historical code-audit snapshot.** Preserve its observations as recorded; line numbers and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+
 **Scope:** `core/tool_lesson_tracker.py`, `core/curator.py`, `tools/tool_registry.py`
 
 ## Runtime role

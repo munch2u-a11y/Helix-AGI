@@ -1,5 +1,8 @@
 # Benchmark Adapter Map
 
+> [!NOTE]
+> **Benchmark design artifact.** This describes the benchmark world and adapters, not the live Helix runtime. Use the [current architecture](../architecture_current.md) for production wiring.
+
 This benchmark should measure an *agentic system* operating in a hidden world, not just a raw model answering a prompt.
 
 That means the benchmark owns:

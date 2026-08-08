@@ -1,5 +1,8 @@
 # Scratchpad Audit
 
+> [!WARNING]
+> **Historical code-audit snapshot.** Preserve its observations as recorded; line numbers and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+
 **Scope:** `core/scratchpad.py`
 
 ## Runtime role
@@ -28,4 +31,3 @@
 
 - Note IDs are second-granularity modulo `100000`, so two notes created in the same second will collide. `core/scratchpad.py:105`
 - Due-note ordering assumes `due_at` is an ISO-like string that sorts lexicographically against `_now_iso()`. If callers write another format, sorting will not be correct. `core/scratchpad.py:23-26` (`_now_iso`), `core/scratchpad.py:251-256`
-

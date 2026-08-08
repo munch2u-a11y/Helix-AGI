@@ -1,5 +1,8 @@
 # Helix Cognitive Architecture — Full Systems Audit (Part 4)
 
+> [!WARNING]
+> **Historical code-audit snapshot.** Provider, state-machine, prompt, and action-path details may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+
 > **Scope**: Pulse Loop Workflow, Event‑Driven Architecture, Context Lifecycle
 > **Date**: 2026‑05‑18
 

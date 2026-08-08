@@ -1,4 +1,8 @@
 # Helix Memory Retrieval Benchmark Report (LoCoMo)
+
+> [!NOTE]
+> **Historical benchmark record.** Dimensions, retrieval labels, and metrics describe the build evaluated on 2026-07-06; they are not current runtime documentation. The live semantic index is native 1024D. See the [current architecture](architecture_current.md).
+
 **Date**: 2026-07-06 08:44:37
 **Dialogues Evaluated**: 3
 

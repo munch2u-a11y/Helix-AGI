@@ -1,6 +1,9 @@
 # Helix Technical Audit Overview
 
-These audits are maintained against the live runtime wiring in `main.py`, the core runtime under `core/`, and persistence/search modules under `memory/`.
+> [!WARNING]
+> **Historical code-audit collection.** These files preserve earlier source-level snapshots; line numbers, dimensions, provider behavior, and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+
+These audits were written against the runtime wiring in `main.py`, the core runtime under `core/`, and persistence/search modules under `memory/` at their respective audit dates.
 
 ## Runtime shape
 
@@ -43,4 +46,3 @@ These audits are maintained against the live runtime wiring in `main.py`, the co
 ## Important boundary notes
 
 - Several module header docstrings are older than the implementation. The detailed audits cite the executable code paths rather than the prose headers. Examples: `core/pulse_loop.py:1-25`, `core/preconscious.py:1-26`, `memory/semantic_index.py:13-19`
-

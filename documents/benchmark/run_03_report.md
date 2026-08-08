@@ -1,4 +1,8 @@
 # Benchmark Run 3 — Detailed Report
+
+> [!NOTE]
+> **Historical benchmark record.** Preserve this evaluated configuration and its metrics as recorded; use the [current architecture](../architecture_current.md) for live runtime behavior.
+
 **Seed**: `44`  |  **Date**: 2026-06-11 12:21:28
 
 ## Metric Scoreboard

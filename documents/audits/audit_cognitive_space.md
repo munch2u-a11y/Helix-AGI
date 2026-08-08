@@ -1,5 +1,8 @@
 # Cognitive Space Audit
 
+> [!WARNING]
+> **Historical code-audit snapshot.** Preserve its observations as recorded; line numbers and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+
 **Scope:** `core/cognitive_space.py`
 
 ## Runtime role
@@ -54,4 +57,3 @@
 
 - `compute_interaction_potential()` now exists on `CognitiveSpace`. It inspects nearby points, prefers explicit affordance metadata (`metadata["affordance"]`, `metadata["affordances"]`, or `metadata["tool_name"]`), and otherwise falls back to conservative tool-name matching against nearby point content. `core/cognitive_space.py:1517-1682`
 - `InteractionEngine.compute_affordances()` consumes those raw affordances, then applies cooldown filtering, tool-name deduplication, sentinel enrichment, and top-k truncation. `core/cognitive_space.py:1683-1802`
-

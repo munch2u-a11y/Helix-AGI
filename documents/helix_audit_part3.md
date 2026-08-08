@@ -1,5 +1,8 @@
 # Helix Cognitive Architecture — Full Systems Audit (Part 3 of 3)
 
+> [!WARNING]
+> **Historical code-audit snapshot (2026-05-16).** Preserve its observations as recorded; dimensions, providers, line numbers, and runtime paths may have changed. Use the [current architecture](architecture_current.md) and [system manual](../SYSTEM_MANUAL.md) for current behavior.
+
 > **Scope**: Dream Engine/Curator, Belief Store, Memory, Post-Pulse Hooks, Vision, Tools, LLM, Comms  
 > **Date**: 2026-05-16
 

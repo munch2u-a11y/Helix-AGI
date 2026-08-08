@@ -1,5 +1,8 @@
 # Spatial Mind Audit
 
+> [!WARNING]
+> **Historical code-audit snapshot.** Preserve its observations as recorded; line numbers and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+
 **Scope:** `core/spatial_mind.py`
 
 ## Runtime role
@@ -44,4 +47,3 @@
 ## Wake-up behavior
 
 - `load_overnight_trail()` can restore the final overnight position, clear velocity, reset gamma to its minimum, queue wake flashes for the first conscious pulse, and archive the consumed trail file by renaming it with a `.loaded.json` suffix. `core/spatial_mind.py:679-743`
-

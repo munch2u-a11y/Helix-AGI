@@ -1,5 +1,7 @@
 # Helix Event-Driven Task Cognition
 
+**Documentation status:** current focused design · **Last verified against source:** 2026-08-08 · **Canonical system context:** [`architecture_current.md`](architecture_current.md)
+
 This layer replaces “show the main model every tool and tell it exactly how to
 behave” with a small cognitive kernel and learned runtime structure. It is
 additive to mRAG and the non-semantic spatial lanes.

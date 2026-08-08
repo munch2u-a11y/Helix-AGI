@@ -1,5 +1,8 @@
 # Preconscious Audit
 
+> [!WARNING]
+> **Historical code-audit snapshot.** Preserve its observations as recorded; line numbers and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+
 **Scope:** `core/preconscious.py`
 
 ## Runtime role
@@ -55,4 +58,3 @@
 
 - `_save_injection_state()` writes `data/spatial/spatial_injection.json` plus a rolling history file, including concepts, surfaced memories, surfaced beliefs, somatic data, affect data, and the trigger preview. `core/preconscious.py:2002-2099`
 - Because the injection state is written on every call to `inject()`, this module is not purely read-only even when it is only preparing prompt context. `core/preconscious.py:477`, `core/preconscious.py:2002-2099`
-

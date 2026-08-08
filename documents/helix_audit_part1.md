@@ -1,5 +1,8 @@
 # Helix Cognitive Architecture — Full Systems Audit (Part 1 of 3)
 
+> [!WARNING]
+> **Historical code-audit snapshot (2026-05-16).** Preserve its observations as recorded; dimensions, providers, line numbers, and runtime paths may have changed. Use the [current architecture](architecture_current.md) and [system manual](../SYSTEM_MANUAL.md) for current behavior.
+
 > **Scope**: Orchestration Layer, Pulse Loop, Physics Engine, 8D Cognitive Manifold  
 > **Date**: 2026-05-16  
 > **Method**: Line-by-line code verification across all active source files

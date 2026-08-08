@@ -1,5 +1,8 @@
 # Affect Field Audit
 
+> [!WARNING]
+> **Historical code-audit snapshot.** Preserve its observations as recorded; line numbers and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+
 **Scope:** `core/affect_field.py`
 
 ## Runtime role
@@ -37,4 +40,3 @@
 - `_cognitive_diversity_signal()` is a boredom-style novelty score derived from mild disgust plus low anticipation. `core/affect_field.py:636-654`
 - `save_state()` persists `current_pulse`, previous lagrangian values, stagnation counter, and the full packet list to `data/affect_field.json`; `_load_state()` restores the same structure. `core/affect_field.py:676-692` (`save_state`), `core/affect_field.py:693-717` (`_load_state`)
 - `to_dict()` is the thin external serialization surface used by dashboards or tools. `core/affect_field.py:718-726`
-

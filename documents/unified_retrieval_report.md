@@ -1,4 +1,8 @@
 # Helix Unified Retrieval Benchmark (LoCoMo)
+
+> [!NOTE]
+> **Historical benchmark record.** Dimensions, retrieval labels, and metrics describe the build evaluated on 2026-08-07; they are not current runtime documentation. The report is preserved as the baseline that preceded the native 1024D semantic split. See the [current architecture](architecture_current.md).
+
 **Date**: 2026-08-07 17:59:44
 **Dialogues Evaluated**: 3
 

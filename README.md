@@ -1,6 +1,6 @@
 <p align="center">
   <h1 align="center">Helix AGI</h1>
-  <p align="center"><strong>A continuous, autonomous agent architecture with physics-based memory retrieval and adaptive tool learning</strong></p>
+  <p align="center"><strong>A continuous agent architecture with separated semantic recall, associative memory, and learned task cognition</strong></p>
 </p>
 
 ---
@@ -9,78 +9,63 @@
 
 Helix AGI is a multi-model agentic system that implements continuous autonomous operation, structured memory consolidation, and adaptive tool learning.
 
-Unlike traditional agents that wait for a prompt, execute a chain, and terminate, Helix runs a **continuous background pulse** — a four-state event-driven loop (ACTIVE / EMERGENCE / QUIET / DORMANT) that processes incoming messages, generates autonomous thought, executes tools, and consolidates learning without waiting for human input. For developers and researchers exploring alternatives to traditional RAG (Retrieval-Augmented Generation), Helix introduces a **Spatial Mind** — an 8-dimensional vector space where retrieval is governed by a physics simulation (mass, distance, recency) rather than cosine similarity, requiring zero embedding API calls at inference time. The retrieval pipeline injects an average of **~30 tokens per turn** into context, compared to ~1,900 for flat semantic RAG — a 63× reduction in context window consumption while maintaining stateful attentional continuity across topics.
+Unlike agents that wait for a prompt, execute one chain, and terminate, Helix runs a continuous event-driven pulse with `ACTIVE`, `REGULAR`, `RESTING`, and scheduled `DORMANT` states. Its preconscious retrieval has deliberately separate jobs: multi-head mRAG supplies high-accuracy semantic recall from native 1024D embeddings, while raw 8D spatial attention and learned directed cluster transitions add a small non-semantic complement. Affect, stability, provenance, and Lagrangian metadata remain attached through injection.
+
+Helix can also turn naturally voiced intentions into durable tasks. In active task-cognition mode the main consciousness sees broad ability beliefs but no tool schemas; identity-shared focus threads receive only the small, authorized capability subset selected for the situation, then return accepted outcomes to the same memory and event stream.
 
 ---
 
 ## Architecture Overview
 
 ```mermaid
-graph TD
-    A[Pulse Trigger] --> B{State Machine}
-    B -->|DORMANT| C[Nightly Dream Cycle<br/>Curator + Belief Consolidation]
-    C --> Z[Wait for Next Pulse]
-    B -->|RESTING| D[Autonomous Thought<br/>15-min interval]
-    B -->|ACTIVE| E[Interactive Reasoning<br/>30s interval]
-    D --> F[Concept Extraction]
-    E --> F
-    F --> G[Preconscious Injection<br/>Lexicon + Gravity-Ranked Beliefs + Memories]
-    G --> H[LLM Generation<br/>Codex App Server / Gemini / Anthropic / Local]
-    H --> I[Tool Execution]
-    I --> J[Somatic Memory Encoding<br/>8D position + Lagrangian snapshot]
-    J --> K[Physics Step<br/>Attention center update]
-    K --> L[Post-Pulse Hooks<br/>BeliefDetector · WorkflowDetector<br/>CoOccurrence · AffectField · Engagement]
-    L --> M[Context Lifecycle Check]
-    M --> Z
+flowchart TD
+    A[Events and pulse timer] --> B{ACTIVE / REGULAR /<br/>RESTING / DORMANT}
+    B -->|DORMANT| C[Nightly dream and consolidation]
+    B -->|awake pulse| P[Preconscious assembly]
+    P --> M[1024D multi-head mRAG<br/>semantic foreground]
+    P --> S[Raw 8D spatial<br/>lateral complement]
+    P --> R[Learned directed cluster<br/>transition complement]
+    M --> I[Bounded contextual injection]
+    S --> I
+    R --> I
+    I --> H[Main Helix consciousness<br/>Codex / Gemini / Anthropic / local]
+    H -->|off or observe| X[Direct host-tool path]
+    H -->|active: committed intention| T[Durable task + learned<br/>situational orchestrator]
+    T --> F[Identity-shared focus<br/>scoped hidden schemas]
+    F --> X
+    X --> E[Central ToolExecutor]
+    E --> O[Outcome event]
+    H --> K[Memory encoding + physics + hooks]
+    O --> A
+    K --> A
 ```
 
 ### Documentation
 
-**Subsystem Audits** — granular, line-by-line breakdowns of each module:
-
-| Audit | Covers |
-|-------|--------|
-| [Overview & Architecture Map](documents/audits/audit_overview.md) | Full system diagram and module index |
-| [Pulse Loop](documents/audits/audit_pulse_loop.md) | State machine, event injection, pulse cycle |
-| [Preconscious](documents/audits/audit_preconscious.md) | Concept-based injection, gravity queries, lexicon |
-| [Physics Engine](documents/audits/audit_physics_engine.md) | Dual-space coordination, text embeddings, neighborhood/temporal queries |
-| [Spatial Mind](documents/audits/audit_spatial_mind.md) | Dual-space manifold, Euler-Lagrange dynamics |
-| [Cognitive Space](documents/audits/audit_cognitive_space.md) | 8D projection, cognitive gravity, KD-Tree |
-| [Affect Field](documents/audits/audit_affect_field.md) | Plutchik emotional wave packets, anisotropic diffusion |
-| [Affect Hook](documents/audits/audit_affect_hook.md) | Post-pulse hook integration, Lagrangian snapshot read, and sentinel Ω nudges |
-| [Belief Detector](documents/audits/audit_belief_detector.md) | Real-time belief extraction via Lagrangian deltas |
-| [Cognitive Journal](documents/audits/audit_cognitive_journal.md) | Append-only JSONL event sourcing |
-| [Belief Store](documents/audits/audit_belief_store.md) | Database layer, normalized schemas, category I/O, and stability-based confidence adjustments |
-| [Memory Manager](documents/audits/audit_memory_manager.md) | Unified JSONL journal and semantic recall integration |
-| [Semantic Index](documents/audits/audit_semantic_index.md) | Normalized 1024D vector storage, exact numpy/FAISS search |
-| [Scratchpad](documents/audits/audit_scratchpad.md) | Markdown-based working memory |
-| [Tool Learning](documents/audits/audit_tool_learning.md) | Failure capture, lesson verification, and Curator notes compilation |
-
-
-**Deep Dives:**
-
-| Document | Focus |
-|----------|-------|
-| [Preconscious Memory Deep Dive](documents/preconscious_memory_audit.md) | Full injection pipeline rationale |
-| [Preconscious Refactor Audit](documents/preconscious_refactor_audit.md) | Concept-based injection redesign |
-| [Pulse Workflow Audit](documents/pulse_workflow_audit.md) | Step-by-step pulse execution |
-| [Phase 1: Core Memory & Beliefs](documents/helix_audit_part1.md) | Belief store, mass, attrition |
-| [Phase 2: Spatial Manifold & Physics](documents/helix_audit_part2.md) | 8D manifold, gravity mechanics |
-| [Phase 3: Subconscious Autonomy](documents/helix_audit_part3.md) | Dream engine, nightly cycles |
+| Document | Status and purpose |
+|---|---|
+| [Technical documentation index](documents/README.md) | Start here; defines authoritative versus historical documents |
+| [Current technical architecture](documents/architecture_current.md) | Canonical live wiring, retrieval contract, providers, and persistence |
+| [System manual](SYSTEM_MANUAL.md) | Detailed current subsystem and operating reference |
+| [Task cognition pipeline](documents/task_cognition_pipeline.md) | Focused event-driven task diagram and lifecycle |
+| [Historical audits](documents/audits/) | Preserved source snapshots; not current runtime contracts |
+| [Benchmark records](documents/README.md#benchmark-records) | Dated evaluated configurations and results |
 
 ---
 
-## Moving Beyond Traditional RAG: The Spatial Mind
+## Separated Semantic and Associative Memory
 
 Helix uses a high-accuracy semantic foreground together with a deliberately separate **Spatial Mind** — two independent 8-dimensional vector spaces (one for beliefs, one for episodic memories) governed by a physics-based gravity simulation.
 
-**Why spatial-gravitational instead of traditional RAG?**
+**Why keep the representations separate?**
 
 - **Local retrieval inference** — Qwen3 produces semantic embeddings through local Ollama; FAISS, KD-Tree queries, and spatial physics remain local. No paid embedding API is required.
-- **Physics-based relevance** — Memories aren't ranked by cosine similarity alone. They're ranked by a gravity function: `F ∝ T × m / d²`, incorporating recency (temperature `T`), structural importance (mass `m`), and semantic proximity (distance `d`).
-- **Token-efficient context assembly** — The gravity-ranked preconscious pipeline typically injects **~30 tokens per turn** into the LLM context. A flat semantic RAG baseline on the same data injects ~1,900 tokens/turn. This 63× reduction keeps the context window available for actual reasoning rather than retrieved bulk text.
+- **Semantic accuracy first** — Native 1024D Qwen3 vectors and exact normalized search give mRAG a high-recall foreground. FAISS indexes Helix's chosen vectors; it does not determine their dimensionality.
+- **Non-semantic recall stays non-semantic** — Raw 8D attention can append a bounded item that semantic search missed. Its score cannot re-rank the mRAG foreground.
+- **Learned succession, not co-injection collapse** — Repeated direct movement between clusters teaches a directed association in a separate overlay. Co-injected beliefs can still inform nightly synthesis, but are not physically pulled together merely because they appeared in one prompt.
+- **Context-scaled injection** — Local and frontier profiles use different head, candidate, item, and token budgets. The frontier profile preserves more verbatim evidence for GPT-class context windows; neither profile dumps every retrieved item into the prompt.
 - **Concept-aware retrieval** — The full trigger, bounded sentence chunks, and RAKE keyphrases become independent mRAG heads. Specific terms also receive rarity-weighted exact lookup.
-- **Continuous attention dynamics** — The attention center has *inertia* (γ = 0.85). Sustained focus deepens retrieval from a conceptual region; sudden topic shifts trigger context compression and retrieval reset. Traditional RAG has no concept of attentional momentum.
+- **Continuous attention dynamics** — The attention center has *inertia* (γ = 0.85). Sustained focus changes the spatial neighborhood even when a future query is not semantically similar. Context compression is token-driven; attention drift is diagnostic rather than a reset trigger.
 - **Natural internal/external separation** — External stimuli (user messages, tool returns, sensor data) enter via the event queue; internal generation (autonomous thought, journal entries) enters as pulse output. The preconscious surfaces both but the model always knows which is which — this is structural, not prompt-engineered.
 - **Somatic encoding** — Every memory is stored with its 8D position and Lagrangian snapshot (Ω, H, D_KL). When recalled, the original affective state mildly reproduces — state-dependent episodic recall.
 
@@ -90,7 +75,7 @@ Helix uses a high-accuracy semantic foreground together with a deliberately sepa
 
 ### Cognitive Architecture
 
-- **Continuous Pulse Loop** — A four-state event-driven loop (ACTIVE / EMERGENCE / QUIET / DORMANT) that processes events, generates thought, and executes tools without waiting for human prompts. Transitions are driven by event-queue activity and configurable time-of-day gates.
+- **Continuous Pulse Loop** — An event-driven loop with `ACTIVE`, `REGULAR`, `RESTING`, and scheduled `DORMANT` states processes events and generates thought without waiting for human prompts. Events wake the loop immediately; cadence relaxes as activity subsides.
 - **Multi-Provider LLM Abstraction** — The primary model supports **Codex CLI/App Server** through a local ChatGPT login, **Gemini**, **Anthropic**, **Ollama**, and **llama.cpp**. A separate `codex_subscription` (`codex exec`) transport remains isolated for benchmark questions. The provider interface (`ChatSession`) keeps retrieval independent of the conscious model.
 - **Categorized Belief Store** — Seven partitioned belief categories in a two-tier epistemic topology, stored as JSON files with per-belief mass, confidence, stability index, and Lagrangian encoding metadata:
 
@@ -174,7 +159,7 @@ helix_agi/
 ├── main.py                    # Entry point — orchestrates the full architecture
 ├── setup.py                   # Interactive first-run setup (CLI)
 ├── install.sh                 # Graphical PyQt6 setup wizard launcher
-├── SYSTEM_MANUAL.md           # Internal operating guide (injected as system prompt)
+├── SYSTEM_MANUAL.md           # Detailed technical and operating reference
 │
 ├── bootstrap/                 # Bootstrap seed generation
 │   ├── __init__.py
@@ -204,6 +189,7 @@ helix_agi/
 │   ├── preconscious.py        #   Concept-based context injection pipeline
 │   ├── unified_retrieval.py   #   mRAG-primary merge + bounded lateral lanes
 │   ├── associative_transitions.py # Directed cluster sequence memory
+│   ├── task_cognition/        #   Intention, tasks, focus, orchestrators, procedures
 │   ├── concept_extractor.py   #   RAKE-style keyphrase extraction
 │   ├── concept_reranker.py    #   Concept salience reranking
 │   ├── physics_engine.py      #   8D manifold orchestrator
@@ -271,9 +257,11 @@ helix_agi/
 │   ├── telegram_bot.py        #   Telegram bot (inbound/outbound messaging)
 │   └── discord_bot.py         #   Discord bot (inbound/outbound messaging)
 │
-├── documents/                 # Architecture documentation
-│   ├── audits/                #   Line-by-line subsystem audits (15 files)
-│   └── *.md                   #   Deep-dive analyses and workflow breakdowns
+├── documents/                 # Architecture and benchmark documentation
+│   ├── README.md              #   Status index: current vs historical
+│   ├── architecture_current.md#   Canonical live architecture
+│   ├── task_cognition_pipeline.md
+│   └── audits/                #   Historical source-level snapshots
 │
 ├── dashboard/                 # Real-time cognitive monitoring
 │   ├── dashboard.py           #   Flask backend (read-only observer)
@@ -292,8 +280,9 @@ helix_agi/
 │
 ├── data/                      # Runtime data (gitignored, created by setup.py)
 │   ├── beliefs/               #   7 category JSON files
-│   ├── memory/                #   JSONL journal and FAISS index
-│   ├── spatial/               #   Manifold state snapshots
+│   ├── memory/                #   Append-only cognitive journal
+│   ├── spatial/               #   8D state, transitions, and 1024D semantic index
+│   ├── tasks/                 #   Tasks, orchestrators, transitions, procedures
 │   └── scratchpad/            #   Working memory file
 │
 ├── journals/                  # Daily journal entries (gitignored)
@@ -352,10 +341,13 @@ export HELIX_TASK_COGNITION=active  # thought-only main + scoped focus threads
 python main.py
 ```
 
-This mode starts one persistent, ephemeral `codex app-server` thread. Codex's
-own workspace is empty and read-only; all actions cross a strict one-tool-per-
-pulse bridge into Helix's existing `ToolExecutor`, so normal safety checks and
-preconscious tool-result injection remain in force. Subconscious jobs also use
+This mode starts one persistent, ephemeral `codex app-server` thread for the
+main consciousness. Codex's own workspace is empty and read-only; all actions
+cross into Helix's existing `ToolExecutor`, so normal safety checks and
+preconscious tool-result injection remain in force. In `off` or `observe`, the
+main pulse accepts at most one host action. In `active`, the main thread is
+thought-only and bounded focus sessions can take the task's learned number of
+steps. Subconscious jobs also use
 isolated Codex sessions when `codex_cli` is the configured provider. These jobs
 count against the signed-in account's usage limits.
 
@@ -456,7 +448,7 @@ The dashboard is read-only for monitoring — the chat channel is the only write
 Before booting your agent, please read carefully:
 
 1. **Watch Your API Spend:** Because the agent operates autonomously in the background and gets "interested" in topics independently, API costs can spike unexpectedly. Set hard limits in your cloud provider billing. The system includes automatic 429 rate-limit fallback (primary model → lite model → cooldown recovery).
-2. **Single Unified Mind:** This is a single persistent consciousness. It does not spawn a new chat instance per user. If multiple people message it at once, it hears them all simultaneously in its event queue.
+2. **Single Unified Identity:** Helix does not create a separate persona per user. Active task cognition may open bounded focus sessions, but they share Helix's identity and memory and return only accepted outcomes to the main event stream.
 3. **Patience is Required:** The agent thinks at the speed of the API calls. Sometimes it will analyze a message, write a journal entry, search the web, and then simply choose *not* to reply to you yet. This is how a continuous cognitive loop operates.
 4. **Belief Crystallization Takes Time:** The Dream Engine runs nightly. New beliefs emerge from journals and internal monologue — the quality of overnight belief formation is directly proportional to the quality of the agent's journaling during the day.
 
@@ -468,7 +460,7 @@ These are the architectural choices that make Helix distinct from a standard pro
 
 1. **Internal/External Information Separation** — The event queue structurally separates external stimuli (user messages, tool returns, sensor data) from internal generation (autonomous thought, journal entries). The preconscious surfaces both to the model, but their origin is always unambiguous. This is an architectural property, not a prompt engineering convention.
 
-2. **Token-Efficient Retrieval** — The gravity-based preconscious pipeline injects only the highest-mass, most relevant beliefs and memories — typically ~30 tokens per turn. Traditional RAG dumps entire retrieved chunks (~1,900 tokens/turn on the same data). This keeps the context window available for reasoning rather than retrieved bulk text.
+2. **Separated Retrieval Roles** — Multi-head 1024D mRAG owns semantic ranking. Raw 8D attention and learned directed transitions may append a tightly bounded lateral complement but never alter that ordering. Context budgets scale with local versus frontier profiles, and weak semantic tails are rejected before rendering.
 
 3. **Adaptive Tool Schemas** — Tool descriptions evolve at runtime. The ToolLessonTracker captures failures → nightly batch service distills lessons → lessons are appended to tool JSON schema descriptions → the model sees improved tool documentation on next use. Successful application of lessons increases their mass and persistence. No human curation required.
 

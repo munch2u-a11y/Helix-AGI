@@ -1,5 +1,8 @@
 # Pulse Loop Audit
 
+> [!WARNING]
+> **Historical code-audit snapshot.** Preserve its observations as recorded; line numbers and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+
 **Scope:** `core/pulse_loop.py`
 
 ## Runtime role
@@ -57,4 +60,3 @@
 
 - `_load_all_tools()` is present but live sessions build tool declarations from the registry or static definitions. `core/pulse_loop.py:1577-1605`
 - The `journal_dir` constructor argument is used to initialize the directory; pulse-time memory writes flow to `MemoryManager`. `core/pulse_loop.py:127-129`, `core/pulse_loop.py:978-1110`
-

@@ -199,14 +199,14 @@ class SensoryCortex:
         Pipeline:
           1. Record video from camera → save .mp4 to disk
           2. Sample ~4 key frames at regular intervals during recording
-          3. Analyze each key frame through Moondream with temporal context
+          3. Analyze each key frame through Gemma3 with temporal context
           4. Build a timestamped narrative of what was observed
           5. Store the narrative in visual memory
           6. Return the narrative + file path
 
         Args:
             duration: Recording length — must be 5, 10, or 15 seconds.
-            focus: Optional focus description for Moondream analysis.
+            focus: Optional focus description for Gemma3 analysis.
 
         Returns:
             Temporal narrative of what was observed + file path.
@@ -225,7 +225,7 @@ class SensoryCortex:
 
         # ── Phase 1: Record video + capture key frames ────────────
         #    We record at 15fps and sample ~4 key frames at even
-        #    intervals for subsequent Moondream analysis.
+        #    intervals for subsequent Gemma3 analysis.
         fps = 15
         num_key_frames = 4
         frame_interval = max(1, (duration * fps) // num_key_frames)
@@ -296,9 +296,9 @@ class SensoryCortex:
             f"{len(key_frames)} key frames, {size_kb}KB → {output_path}"
         )
 
-        # ── Phase 2: Analyze key frames through Moondream ─────────
+        # ── Phase 2: Analyze key frames through Gemma3 ────────────
         #    Each frame gets temporal context from the previous
-        #    frame's description so Moondream reports changes.
+        #    frame's description so Gemma3 reports changes.
         try:
             self._ensure_model()
         except Exception as e:

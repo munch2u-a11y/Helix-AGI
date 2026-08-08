@@ -20,8 +20,10 @@ Algorithm:
 
 Trigger conditions:
   - Primary: prompt_token_count > 50% of context limit
-  - Secondary: focus_drift > 1.5 (replaces hard reset)
   - Emergency: prompt_token_count > 80% of context limit
+
+Attention drift is logged by PulseLoop for diagnostics but no longer triggers
+compression or a context reset.
 """
 
 import json
@@ -88,11 +90,10 @@ def _content_text(content: Any) -> str:
 
 
 class ContextCompressor:
-    """Rolling context compressor for Helix's Gemini chat sessions.
+    """Provider-neutral rolling context compressor for Helix chat sessions.
 
-    Monitors token count and focus drift, triggering compression when
-    thresholds are exceeded. Replaces the hard context reset with
-    smooth rolling summarization.
+    Monitors token pressure and replaces hard context resets with smooth
+    rolling summarization.
     """
 
     def __init__(

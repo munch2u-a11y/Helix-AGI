@@ -1,26 +1,23 @@
-"""Helix — Pulse-Based Consciousness Loop (V10: Event-Driven Architecture)
+"""Helix — event-driven pulse consciousness loop.
 
-The cognitive cycle. Helix runs through a provider-neutral ChatSession with a
-rich system prompt containing identity, beliefs, and action guidance.
-User messages arrive as events within the ongoing internal monologue.
+The main loop owns the persistent provider session, event queue, preconscious
+injection, serial attention trajectory, memory encoding, and post-pulse hooks.
+User messages and accepted tool/task outcomes arrive as events within the
+ongoing internal monologue.
 
 Architecture:
   - Supports persistent Codex App Server, Gemini, Anthropic, and local backends
-  - Exactly one model request and at most one host tool call per pulse
-  - Tool results return through the next preconsciously grounded pulse
-  - System prompt includes ALL beliefs and ALL tools (no mode-switching)
-  - Each pulse sends a message containing:
-      1. Pre-conscious injection (spatial context + recent memory)
-      2. New events since last pulse (user messages, tool returns, etc.)
-      3. Continuation prompt
-  - Communication via structured tools: reply(), send_message(), verbalize()
-  - Meta-actions via text tags: [NOTE:], [REMEMBER:], [JOURNAL:]
+  - Performs one main-model request per pulse
+  - Uses direct host tools in off/observe task mode when the provider supports it
+  - Uses a thought-only main session plus bounded focus work in active task mode
+  - Grounds each pulse with separated mRAG, raw-8D, and associative retrieval
+  - Returns direct tool and focused-task outcomes through the event stream
 
 States:
-  DORMANT    — sleeping (configurable via wizard), auto-wakes at configured time
-  QUIET      — awake, NO pulses, waiting for external event
-  ACTIVE     — 30s pulse cadence, processing conversation + follow-up
-  EMERGENCE  — single autonomous pulse after 120 min inactivity
+  DORMANT — configured sleep window and nightly consolidation
+  RESTING — low-cadence awake pulse, immediately wakeable by events
+  REGULAR — 30-second autonomous follow-through
+  ACTIVE  — 10-second interactive cadence
 """
 
 import json
@@ -110,7 +107,8 @@ class PulseLoop:
         self.channel_router = channel_router
         self.sensory_cortex = sensory_cortex
 
-        # Tool schemas path — all tools loaded into system prompt
+        # Legacy local-text schema catalog. Native providers use ToolRegistry;
+        # active task cognition keeps schemas off the main session entirely.
         self._tool_modes_path = Path(os.path.join("data", "tool_modes.json"))
 
         # LLM provider
@@ -502,9 +500,10 @@ class PulseLoop:
         """Main consciousness thread — event-driven state machine.
 
         States:
-          DORMANT  — Sleep hours (configurable), periodic wake check
-          RESTING  — Awake, 1 pulse per hour (autonomous thought)
-          ACTIVE   — 30s pulses. Drops to RESTING after 2 min no I/O.
+          DORMANT — sleep hours (configurable), periodic wake check
+          RESTING — awake, configurable low-cadence autonomous pulse
+          REGULAR — 30s task-follow-through pulses; rests after 10 min idle
+          ACTIVE  — 10s interactive pulses; becomes REGULAR after 2 min idle
         """
         while self._running:
 
@@ -1703,9 +1702,10 @@ class PulseLoop:
         return "\n".join(parts)
 
     def _load_all_tools(self) -> str:
-        """Load ALL tool schemas from tool_modes.json as a flat reference.
+        """Load the legacy local-text schema catalog as a flat reference.
 
-        No mode-switching — all tools are always available.
+        Native providers use live registry declarations instead. Active task
+        cognition selects scoped declarations only inside focus sessions.
         """
         try:
             with open(self._tool_modes_path, 'r') as f:
