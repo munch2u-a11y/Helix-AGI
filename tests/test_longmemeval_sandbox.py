@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.longmemeval_sandbox import (
+    LONGMEMEVAL_QA_INSTRUCTION,
     MAX_DEV_QUESTIONS,
     answer_diagnostics,
     evidence_diagnostics,
@@ -41,6 +42,11 @@ def _item(index, question_type="multi-session", abstention=False):
 
 
 class DatasetTests(unittest.TestCase):
+    def test_question_date_is_not_a_global_evidence_cutoff(self):
+        instruction = LONGMEMEVAL_QA_INSTRUCTION.lower()
+        self.assertNotIn("before the question date", instruction)
+        self.assertIn("not a universal evidence", instruction)
+
     def test_schema_and_hidden_answer_flag_is_not_rendered(self):
         data = [_item(1)]
         self.assertEqual(validate_dataset(data), [])

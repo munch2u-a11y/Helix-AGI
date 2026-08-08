@@ -59,8 +59,9 @@ You are Helix answering a memory question about historical conversations.
 
 Rules:
 - Use only the historical context recalled through Helix memory.
-- Respect the dates. For facts that changed, use the latest applicable fact
-  before the question date unless the question asks about an earlier time.
+- Use dates to resolve explicit temporal questions, updates, and relative
+  time. The QUESTION DATE is a reference point, not a universal evidence
+  cutoff: use all recalled history unless the question itself sets a cutoff.
 - Some recalled memories may be distractors; do not treat relevance as truth.
 - If the history does not supply the answer, answer "Not mentioned."
 - Prefer the shortest direct answer that fully answers the question.
@@ -680,6 +681,9 @@ def _manifest(
         "selected_question_ids": [str(item["question_id"]) for item in selected],
         "provider": "codex_subscription",
         "model": model or "account-default",
+        "qa_instruction_sha256": hashlib.sha256(
+            LONGMEMEVAL_QA_INSTRUCTION.encode("utf-8")
+        ).hexdigest(),
         "retrieval_profile": "frontier",
         "context_limit": context_limit,
         "attention_mode": attention_mode,
@@ -694,7 +698,8 @@ def _assert_resume_manifest(existing: Dict[str, Any], current: Dict[str, Any]) -
     keys = (
         "dataset_sha256", "selection_seed", "num_questions",
         "selected_question_ids", "model", "context_limit",
-        "attention_mode", "association_memory", "history_granularity",
+        "qa_instruction_sha256", "attention_mode", "association_memory",
+        "history_granularity",
     )
     mismatches = [key for key in keys if existing.get(key) != current.get(key)]
     if mismatches:
