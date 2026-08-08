@@ -4,11 +4,13 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.ragoffice_parity_sandbox import (
     ANSWER_PROMPT,
+    ask_question_with_retries,
     contains_answer,
     is_refusal,
     normalize_answer,
@@ -47,6 +49,15 @@ class RagOfficeAnswerParityTests(unittest.TestCase):
         self.assertTrue(score_answer(item, "NOT IN CONTEXT")["correct"])
         self.assertTrue(is_refusal("Not mentioned."))
         self.assertFalse(score_answer(item, "Seattle")["correct"])
+
+    @patch("tests.ragoffice_parity_sandbox.time.sleep")
+    @patch("tests.ragoffice_parity_sandbox.ask_question")
+    def test_transient_local_reader_failure_retries_full_question(self, ask, sleep):
+        ask.side_effect = [RuntimeError("daemon restarted"), {"prediction": "ready"}]
+        result = ask_question_with_retries({}, object(), "question", max_attempts=3)
+        self.assertEqual(result["prediction"], "ready")
+        self.assertEqual(ask.call_count, 2)
+        sleep.assert_called_once_with(2)
 
 
 class RagOfficeRetrievalParityTests(unittest.TestCase):

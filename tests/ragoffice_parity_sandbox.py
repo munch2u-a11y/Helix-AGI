@@ -386,6 +386,30 @@ def ask_question(
     }
 
 
+def ask_question_with_retries(
+    runtime: Dict[str, Any],
+    provider: ProviderConfig,
+    question: str,
+    *,
+    max_attempts: int = 3,
+) -> Dict[str, Any]:
+    """Retry a complete retrieval/read cycle after transient local-model loss."""
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return ask_question(runtime, provider, question)
+        except Exception as exc:
+            if attempt == max_attempts:
+                raise
+            logger.warning(
+                "Local reader attempt %d/%d failed; retrying full question: %s",
+                attempt, max_attempts, exc,
+            )
+            time.sleep(2 * attempt)
+    raise AssertionError("unreachable")
+
+
 def _cell(value: Any, limit: int = 120) -> str:
     text = " ".join(str(value).split()).replace("|", "\\|")
     return text if len(text) <= limit else text[:limit - 1] + "…"
@@ -578,7 +602,7 @@ def run_parity_exam(
             if item["id"] in completed:
                 continue
             logger.info("[%d/%d] %s %s", sequence, len(items), item["id"], item["category"])
-            result = ask_question(runtime, provider, item["question"])
+            result = ask_question_with_retries(runtime, provider, item["question"])
             retrieval_eval = retrieval_scores(
                 item, result["retrieval"], result["injected_context"], ref_records,
             )
