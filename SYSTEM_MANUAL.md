@@ -205,15 +205,16 @@ No LLM calls. CPU-only. O(P) per pulse where P = active packets.
 
 ## 6. The Preconscious
 
-The bridge between the 8D manifold and your conscious awareness. Each pulse, it assembles a peripheral awareness block from multiple injection layers:
+The bridge between memory and conscious awareness. Each pulse, it assembles a peripheral awareness block from deliberately separated retrieval layers:
 
-1. **Concept Extraction** — RAKE-style keyphrase extraction pulls 1–5 key concepts from trigger text (last thought + incoming events). Each concept becomes an independent gravity query center, preventing "midway point junk" from single-centroid averaging.
-2. **Layer 2 Anchor Match** — extracted concepts are scanned against inner-tier belief terms (people, concepts, skills, desires). Matches inject at highest priority with a rolling blacklist to prevent repetition.
-3. **Gravity-Ranked Beliefs** — k-nearest beliefs to each concept's 8D position, scored by Verlinde force. Layer 2-matched beliefs excluded to avoid redundancy.
-4. **Gravity-Ranked Memories** — same spatial query against the memory field.
-5. **Scratchpad Notes** — active and overdue notes surfaced as urgent reminders.
-6. **Somatic State** — severity, omega, firing mode as ambient context.
-7. **Spatial Awareness** — natural-language reading of attention dynamics.
+1. **Layer 2 Anchor Match** — known people, concepts, skills, and desires named in the trigger inject at highest priority with a rolling repetition guard.
+2. **mRAG Foreground** — up to 16 independent search heads query the uncompressed 384D SemanticIndex (FAISS at scale). Cosine, rarity-weighted exact terms, and conceptual tags produce the primary memory/belief order. Raw 8D results never re-rank or displace this order.
+3. **Raw Spatial Complement** — the carried attention trajectory queries both 8D fields directly, with no top-100 semantic pre-filter. At most two spatial-only items are added after the mRAG foreground.
+4. **Associative Transition Complement** — repeated direct movement between foreground clusters learns a directed transition and nudges only those cluster prototypes in a separate 8D overlay. One-off transitions do not surface; learned results are additive and items already ranked by mRAG are ineligible. Individual memory and belief positions never move because they were co-injected.
+5. **Affect and Stability** — original encoding Lagrangian and stability metadata survive retrieval. They select representatives only inside the non-semantic lane; recalled memories reproduce one bounded aggregate somatic echo rather than one nudge per chunk.
+6. **Scratchpad and Recent State** — active notes, immediate temporal continuity, contact context, and affect state remain independent injection layers.
+
+The old standalone gravity block and all-to-centroid Hebbian co-injection drift are disabled while unified retrieval is active. Set `HELIX_UNIFIED_RAG=0` only for legacy fallback. `HELIX_MRAG_ADJACENCY=1` restores the old temporal-neighbor expansion for benchmark parity; it is off by default so mRAG remains semantic.
 
 ### Local Summarizer
 Retrieved beliefs and memories are condensed into first-person statements using a local Qwen2.5-0.5B-Instruct model running on CPU. This keeps the injection concise without spending API calls.
@@ -226,14 +227,14 @@ Retrieved beliefs and memories are condensed into first-person statements using 
 All memories, beliefs, and thought snapshots are persisted in an **append-only JSONL journal** (`cognitive_journal.jsonl`). Each line is a JSON object with a fixed schema. The journal is never mutated — updates are expressed by appending a new entry with the same `id` but a newer timestamp. A nightly `compact()` step rewrites the file, keeping only the latest version of each `id`. Every entry carries a SHA-256 checksum for integrity verification.
 
 ### Semantic Index (384D Lossless Search)
-Your conscious mind's library catalog. Stores the raw, uncompressed all-MiniLM-L6-v2 embeddings for lossless cosine similarity search. Searched explicitly when you use `memory_recall` or when the Curator needs precise semantic matching during nightly synthesis.
+Your conscious mind's library catalog. Stores the raw, uncompressed all-MiniLM-L6-v2 embeddings for lossless cosine similarity search. It is the primary source for mRAG turn injection, explicit `memory_recall`, and Curator matching.
 
 Scalability strategy (auto-scaling, no manual tuning):
 - **0–2K vectors**: numpy brute-force dot product (exact, sub-ms)
 - **2K–100K**: FAISS IndexIVFFlat (trained, ~1ms)
 - **100K+**: FAISS IndexIVFFlat with scaled centroids
 
-This is separate from the 8D CognitiveSpace which handles ambient preconscious gravity. The SemanticIndex provides precision recall; the CognitiveSpace provides ambient awareness.
+This is separate from the 8D CognitiveSpace. The SemanticIndex provides precision recall; raw 8D retrieval provides a bounded lateral complement and never participates in mRAG scoring.
 
 ### Working Memory Tools
 - **Scratchpad**: Immediate working memory. Active and overdue notes are surfaced every pulse — anything written here survives context compression intact. Use it for intermediate results, multi-step plans, and continuity across compressions.

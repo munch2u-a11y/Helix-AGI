@@ -1248,9 +1248,16 @@ class HelixFullAgent(BenchAgent):
         raw = session.send_message(prompt)
         parsed = parse_agent_turn(raw)
         parsed.raw_response = raw
-        
+
+        incoming_text = "\n".join(events).strip() if events else prompt
+        thought_text = parsed.assistant_response or raw
+        self.adapter.step_physics(
+            thought_text=thought_text,
+            incoming_text=incoming_text,
+        )
+
         # Save monologue / thought for next turn context injection
-        self.last_thought = parsed.assistant_response
+        self.last_thought = thought_text
 
         return parsed
 

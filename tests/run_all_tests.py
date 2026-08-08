@@ -91,6 +91,9 @@ class TestSuiteRunner:
             ("test_belief_operations.py", "Belief Operations Tests"),
             ("test_channel_router.py", "Channel Router Tests"),
             ("test_preconscious_injection.py", "Preconscious Context Builder Tests"),
+            ("test_mrag_semantic_lane.py", "mRAG Multi-Head Semantic Tests"),
+            ("test_unified_retrieval.py", "Unified Retrieval Lane-Separation Tests"),
+            ("test_associative_transitions.py", "Associative Transition Tests"),
             ("test_crash_reporter.py", "Crash Reporter Tests"),
             ("test_emc2_retrieval.py", "E=mc² Retrieval Tests"),
             
@@ -105,7 +108,7 @@ class TestSuiteRunner:
         
         if quick_mode:
             # Run only validation and core tests
-            test_scripts = test_scripts[:8]
+            test_scripts = test_scripts[:11]
         
         passed = 0
         failed = 0

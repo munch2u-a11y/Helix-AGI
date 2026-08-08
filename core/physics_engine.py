@@ -321,6 +321,7 @@ class PhysicsEngine:
         k: int = 8,
         exclude_trails: bool = True,
         attention_relative: bool = False,
+        refresh_access: bool = True,
     ) -> List[Dict[str, Any]]:
         """Query the K most gravitationally relevant points.
 
@@ -380,13 +381,16 @@ class PhysicsEngine:
         # Sort by relevance, return top K
         scored.sort(key=lambda x: x["relevance"], reverse=True)
 
-        # Mark as accessed (route to correct space)
-        for s in scored[:k]:
-            pid = s["point_id"]
-            if s["type"] == "belief":
-                self.spatial_mind.belief_space.update_access(pid)
-            else:
-                self.spatial_mind.memory_space.update_access(pid)
+        # Candidate generation can opt out; unified retrieval refreshes only
+        # the items that actually survive semantic-first selection.  Counting
+        # every raw-8D candidate as a recall would reinforce projection noise.
+        if refresh_access:
+            for s in scored[:k]:
+                pid = s["point_id"]
+                if s["type"] == "belief":
+                    self.spatial_mind.belief_space.update_access(pid)
+                else:
+                    self.spatial_mind.memory_space.update_access(pid)
 
         return scored[:k]
 

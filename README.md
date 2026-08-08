@@ -111,6 +111,13 @@ Most AI applications retrieve context by embedding a user's query and running a 
   | `desires` | "I want to [goal]" | Long-term goals and aspirations |
   | `concepts` | (consolidated summaries) | Dense conceptual understanding |
 
+### Memory Retrieval
+
+- **mRAG Foreground** — The primary turn-injection retriever runs up to 16 independent heads over the uncompressed 384D SemanticIndex. Small stores use exact normalized dot products; larger stores automatically use FAISS IVF. Rarity-weighted terms and conceptual tags supplement vector similarity without mixing in 8D scores.
+- **Raw 8D Complement** — Both spatial fields are queried from Helix's carried attention trajectory without the former top-100 semantic pre-filter. A maximum of two spatial-only memories or beliefs is appended after mRAG and can never reorder its results.
+- **Sequence Associations** — Direct foreground movement between clusters learns durable directed transitions. Repetition nudges cluster prototypes in a separate 8D overlay; it never drags co-injected memory/belief points together. Associated items already ranked by mRAG are excluded, keeping this lane genuinely lateral.
+- **Affect-Preserving Recall** — Stability and encoding Lagrangian metadata remain attached throughout retrieval. They help choose a representative within an associated cluster, and recalled memories reproduce one bounded aggregate somatic echo.
+
 ### Stability & Affect
 
 - **Stability Sentinel** — A background daemon thread that computes a composite Lagrangian stability score from attention entropy H(q) and identity drift D_KL, weighted by hedonic state Ω. Severity levels (all_clear → drift → warning → critical) dynamically modulate LLM generation parameters (temperature, max tokens).
@@ -177,6 +184,8 @@ helix_agi/
 │   ├── pulse_loop.py          #   Three-state consciousness loop
 │   ├── dual_pulse_loop.py     #   Dual-model pulse orchestration
 │   ├── preconscious.py        #   Concept-based context injection pipeline
+│   ├── unified_retrieval.py   #   mRAG-primary merge + bounded lateral lanes
+│   ├── associative_transitions.py # Directed cluster sequence memory
 │   ├── concept_extractor.py   #   RAKE-style keyphrase extraction
 │   ├── concept_reranker.py    #   Concept salience reranking
 │   ├── physics_engine.py      #   8D manifold orchestrator
@@ -214,7 +223,8 @@ helix_agi/
 │   ├── belief_store.py        #   Categorized belief graph (7 JSON files)
 │   ├── memory_manager.py      #   Unified semantic memory and recall hook
 │   ├── cognitive_journal.py   #   Append-only JSONL cognitive journal
-│   └── semantic_index.py      #   Normalized 384D FAISS vector index
+│   ├── semantic_index.py      #   Normalized 384D FAISS vector index
+│   └── mrag/                  #   Multi-head semantic retrieval adapter
 │
 ├── llm/                       # LLM abstraction layer
 │   ├── orchestrator.py        #   Thin wrapper for external message injection

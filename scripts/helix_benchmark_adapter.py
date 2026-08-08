@@ -144,11 +144,21 @@ class HelixBenchmarkAdapter(BenchmarkAdapter):
 
     def inject_context(self, previous_thought, events, trigger_type):
         self._ensure_initialized()
-        return self._preconscious.inject(
+        annotations, ambient, surfaced_ids, centroid = self._preconscious.inject(
             previous_thought=previous_thought,
             incoming_events=events,
             trigger_type=trigger_type,
         )
+        parts = [str(item).strip() for item in annotations if str(item).strip()]
+        if ambient and str(ambient).strip():
+            parts.append(str(ambient).strip())
+        context_string = "\n\n".join(parts).strip()
+        extra = {
+            "annotations": annotations,
+            "ambient": ambient,
+            "centroid": centroid,
+        }
+        return context_string, surfaced_ids, extra
 
     def reset_context(self):
         self._ensure_initialized()

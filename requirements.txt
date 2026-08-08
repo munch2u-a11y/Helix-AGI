@@ -10,6 +10,17 @@ numpy>=1.24.0
 scipy>=1.10.0
 umap-learn>=0.5.0
 hdbscan>=0.8.0
+# mRAG foreground vector search. SemanticIndex stays exact-numpy for small
+# stores and automatically upgrades to FAISS IVF once the corpus reaches its
+# configured threshold.
+faiss-cpu>=1.8.0
+# Unified retrieval — semantic lane. spaCy drives conceptual tagging and
+# noun-chunk extraction. The lane has a regex fallback, but best precision
+# uses:  python -m spacy download en_core_web_sm
+spacy>=3.7.0
+# Optional but recommended: without tiktoken the injection token budget falls
+# back to a chars/4 heuristic.
+tiktoken>=0.5.0
 
 # Tools & APIs
 python-telegram-bot>=21.0

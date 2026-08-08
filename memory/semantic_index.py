@@ -142,10 +142,16 @@ class SemanticIndex:
         meta = metadata or {}
 
         with self._lock:
-            if id in self._id_to_idx:
+            is_update = id in self._id_to_idx
+            vector_changed = False
+            if is_update:
                 # Upsert: update in place
                 idx = self._id_to_idx[id]
-                self._embeddings[idx] = emb
+                vector_changed = not np.allclose(
+                    self._embeddings[idx], emb, rtol=1e-5, atol=1e-6,
+                )
+                if vector_changed:
+                    self._embeddings[idx] = emb
                 self._metadata[id] = meta
             else:
                 # New entry
@@ -160,13 +166,29 @@ class SemanticIndex:
                 self._metadata[id] = meta
 
             self._dirty = True
-            self._additions_since_rebuild += 1
+            if not is_update:
+                self._additions_since_rebuild += 1
 
             # Auto-upgrade to FAISS when threshold is reached
             if self.count >= self.faiss_threshold:
                 if self._faiss_available:
-                    # Rebuild periodically (every ~5% growth or 100 adds)
-                    if (self._faiss_index is None
+                    # New memories must be visible immediately. The previous
+                    # deferred rebuild policy left up to 99 freshly written
+                    # vectors absent from FAISS even though they were present
+                    # in numpy storage. IVF supports incremental append; an
+                    # vector-changing upsert still requires a rebuild because
+                    # row replacement is not supported by this index shape.
+                    if self._faiss_index is not None and not is_update:
+                        try:
+                            self._faiss_index.add(emb.reshape(1, -1).astype(np.float32))
+                        except Exception as e:
+                            logger.warning("FAISS incremental add failed: %s", e)
+                            self._faiss_index = None
+
+                    # Rebuild periodically (every ~5% growth or 100 adds) to
+                    # retrain centroids, and immediately for a vector-changing
+                    # upsert. Metadata-only touches require no FAISS write.
+                    if (self._faiss_index is None or vector_changed
                             or self._additions_since_rebuild >= max(100, self.count // 20)):
                         self._rebuild_faiss_index()
                 elif not self._faiss_warning_emitted:
