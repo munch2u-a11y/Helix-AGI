@@ -97,6 +97,7 @@ class TestSuiteRunner:
             ("test_associative_transitions.py", "Associative Transition Tests"),
             ("test_deep_memory_benchmark.py", "Progressive Deep-Memory Benchmark Tests"),
             ("test_longmemeval_sandbox.py", "LongMemEval Sandbox Tests"),
+            ("test_ragoffice_parity_sandbox.py", "RAGOffice Parity Sandbox Tests"),
             ("test_codex_cli_provider.py", "Codex App Server Provider Tests"),
             ("test_task_cognition.py", "Event-Driven Task Cognition Tests"),
             ("test_crash_reporter.py", "Crash Reporter Tests"),
@@ -113,7 +114,7 @@ class TestSuiteRunner:
         
         if quick_mode:
             # Run only validation and core tests
-            test_scripts = test_scripts[:15]
+            test_scripts = test_scripts[:16]
         
         passed = 0
         failed = 0

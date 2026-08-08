@@ -661,6 +661,7 @@ def _manifest(
     selected: Sequence[Dict[str, Any]],
     quotas: Dict[str, int],
     seed: int,
+    backend: str,
     model: str,
     context_limit: int,
     attention_mode: str,
@@ -679,8 +680,8 @@ def _manifest(
         "num_questions": len(selected),
         "hard_dev_limit": MAX_DEV_QUESTIONS,
         "selected_question_ids": [str(item["question_id"]) for item in selected],
-        "provider": "codex_subscription",
-        "model": model or "account-default",
+        "provider": backend.replace("-", "_"),
+        "model": model,
         "qa_instruction_sha256": hashlib.sha256(
             LONGMEMEVAL_QA_INSTRUCTION.encode("utf-8")
         ).hexdigest(),
@@ -697,7 +698,7 @@ def _manifest(
 def _assert_resume_manifest(existing: Dict[str, Any], current: Dict[str, Any]) -> None:
     keys = (
         "dataset_sha256", "selection_seed", "num_questions",
-        "selected_question_ids", "model", "context_limit",
+        "selected_question_ids", "provider", "model", "context_limit",
         "qa_instruction_sha256", "attention_mode", "association_memory",
         "history_granularity",
     )
@@ -706,12 +707,47 @@ def _assert_resume_manifest(existing: Dict[str, Any], current: Dict[str, Any]) -
         raise ValueError(f"resume manifest differs in: {', '.join(mismatches)}")
 
 
+def provider_for_backend(
+    backend: str,
+    model: str,
+    context_limit: int,
+) -> Tuple[ProviderConfig, str]:
+    """Build an explicit benchmark reader without auto-detecting providers."""
+    if backend == "ollama":
+        reader_model = model or "granite4.1:8b"
+        return ProviderConfig(
+            provider_type="ollama",
+            model=reader_model,
+            context_window=context_limit,
+            temperature=0.0,
+            max_output_tokens=512,
+            options={
+                "num_ctx": context_limit,
+                "num_predict": 512,
+                "temperature": 0.0,
+                "seed": 7,
+            },
+        ), reader_model
+    if backend == "codex-subscription":
+        reader_model = model or "account-default"
+        return ProviderConfig(
+            provider_type="codex_subscription",
+            model=model,
+            context_window=context_limit,
+            temperature=0.2,
+            max_output_tokens=512,
+            options={"timeout": int(os.environ.get("HELIX_CODEX_TIMEOUT", "600"))},
+        ), reader_model
+    raise ValueError(f"unknown reader backend: {backend}")
+
+
 def run_dev_evaluation(
     *,
     dataset_path: str,
     output_dir: str,
     num_questions: int = MAX_DEV_QUESTIONS,
     seed: int = 42,
+    backend: str = "codex-subscription",
     model: str = "",
     context_limit: int = 128_000,
     attention_mode: str = "warm",
@@ -749,14 +785,7 @@ def run_dev_evaluation(
 
     configure_retrieval("frontier", association_memory, context_limit)
     os.environ["HELIX_MRAG_RENDER_MODE"] = "verbatim"
-    provider = ProviderConfig(
-        provider_type="codex_subscription",
-        model=model,
-        context_window=context_limit,
-        temperature=0.2,
-        max_output_tokens=512,
-        options={"timeout": int(os.environ.get("HELIX_CODEX_TIMEOUT", "600"))},
-    )
+    provider, reader_model = provider_for_backend(backend, model, context_limit)
 
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -766,7 +795,8 @@ def run_dev_evaluation(
         selected=selected,
         quotas=quotas,
         seed=seed,
-        model=model,
+        backend=backend,
+        model=reader_model,
         context_limit=context_limit,
         attention_mode=attention_mode,
         association_memory=association_memory,
@@ -833,6 +863,10 @@ def run_dev_evaluation(
                         system_instruction=LONGMEMEVAL_QA_INSTRUCTION,
                         learn=False,
                     )
+                    if result["pulses"][-1]["raw_response"].lstrip().startswith(
+                        "[internal error:"
+                    ):
+                        raise RuntimeError(result["pulses"][-1]["raw_response"])
                     error = None
                     break
                 except Exception as exc:
@@ -911,7 +945,14 @@ def main() -> None:
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--num-questions", type=int, default=MAX_DEV_QUESTIONS)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--model", default="", help="Empty uses the subscription account default")
+    parser.add_argument(
+        "--backend", choices=("codex-subscription", "ollama"),
+        default="codex-subscription",
+    )
+    parser.add_argument(
+        "--model", default="",
+        help="Empty uses the account default for Codex or granite4.1:8b for Ollama",
+    )
     parser.add_argument("--context-limit", type=int, default=128_000)
     parser.add_argument("--attention-mode", choices=("warm", "cold"), default="warm")
     parser.add_argument("--association-memory", choices=("on", "off"), default="on")
@@ -925,6 +966,7 @@ def main() -> None:
             output_dir=args.output_dir,
             num_questions=args.num_questions,
             seed=args.seed,
+            backend=args.backend,
             model=args.model,
             context_limit=max(1024, args.context_limit),
             attention_mode=args.attention_mode,

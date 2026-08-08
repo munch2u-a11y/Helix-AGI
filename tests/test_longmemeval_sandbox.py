@@ -15,6 +15,7 @@ from tests.longmemeval_sandbox import (
     answer_diagnostics,
     evidence_diagnostics,
     format_session,
+    provider_for_backend,
     rebuild_reports,
     retrieval_record,
     stratified_selection,
@@ -46,6 +47,13 @@ class DatasetTests(unittest.TestCase):
         instruction = LONGMEMEVAL_QA_INSTRUCTION.lower()
         self.assertNotIn("before the question date", instruction)
         self.assertIn("not a universal evidence", instruction)
+
+    def test_dev_runner_offers_subscription_free_reader(self):
+        provider, label = provider_for_backend("ollama", "", 128_000)
+        self.assertEqual(provider.provider_type, "ollama")
+        self.assertEqual(provider.model, "granite4.1:8b")
+        self.assertEqual(provider.options["num_ctx"], 128_000)
+        self.assertEqual(label, "granite4.1:8b")
 
     def test_schema_and_hidden_answer_flag_is_not_rendered(self):
         data = [_item(1)]

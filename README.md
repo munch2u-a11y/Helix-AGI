@@ -413,8 +413,8 @@ venv/bin/python tests/locomo_deep_memory_sandbox.py \
 `scripted` ingestion is the diagnostic default: it stores the observed dialogue events but does not let a conscious model paraphrase adjacent arbitrary events into a semantic relation. Use `--ingest-mode connector` for a costlier end-to-end replay. Compare `--association-memory on` and `off` to distinguish transition learning from mRAG/base-model performance. This benchmark transport is deliberately distinct from the full `codex_cli` App Server mode: it invokes `codex exec` in an isolated read-only workspace and does not read `OPENAI_API_KEY`.
 
 For broader factual, temporal, preference, and knowledge-update memory testing,
-`tests/longmemeval_sandbox.py` adapts the cleaned LongMemEval-S dataset to the
-same isolated transport. It creates a new temporary Helix memory system per
+`tests/longmemeval_sandbox.py` adapts the cleaned LongMemEval-S dataset to an
+isolated Codex-subscription or local Ollama reader. It creates a new temporary Helix memory system per
 question, indexes historical sessions into both 1024D semantic and 8D spatial
 stores, records chronological coarse-cluster transitions, and keeps the exam
 retrieval-only. The development runner is hard-limited to 100 fixed-seed
@@ -422,6 +422,13 @@ stratified questions and produces per-question
 manual review pages rather than treating its simple string metrics as an
 authoritative judge. See `benchmark_results/README.md` for commands and output
 layout.
+
+For a controlled head-to-head with the deterministic RAGOffice engine,
+`tests/ragoffice_parity_sandbox.py` snapshots RAGOffice's exact generated
+110-item exam and runs the same conversations, questions, local Granite reader,
+and answer rules through Helix retrieval. This separates system differences
+from the much larger difficulty difference between that synthetic suite and
+LongMemEval-S.
 
 ### Communication Channels
 

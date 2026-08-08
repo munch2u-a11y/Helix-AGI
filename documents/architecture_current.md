@@ -174,6 +174,12 @@ Its generated EM, token-F1, and evidence-session recall fields are diagnostic
 review aids, while the retained prediction, evidence transcript, and injected
 context are the auditable record.
 
+The RAGOffice parity sandbox is a separate controlled comparison. It snapshots
+RAGOffice's generated 110-item exam, ingests all 220 source turns into one
+temporary Helix mind, and uses the same local Granite reader prompt and answer
+rules. Its manifest records the snapshot hash, RAGOffice commit, and dirty
+source paths so the phrase “same exam” remains auditable.
+
 ## Persistence Map
 
 | Data | Location | Update model |

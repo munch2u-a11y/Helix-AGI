@@ -38,9 +38,37 @@ venv/bin/python tests/longmemeval_sandbox.py \
   --resume
 ```
 
+To avoid subscription use—and to compare with RAGOffice using its default
+reader—run the same exam locally:
+
+```bash
+venv/bin/python tests/longmemeval_sandbox.py \
+  --dataset /path/to/longmemeval_s_cleaned.json \
+  --backend ollama \
+  --model granite4.1:8b \
+  --num-questions 100 \
+  --resume
+```
+
+The provider and exact reader model are part of the resume manifest, so local
+and subscription answers cannot be mixed in one result directory.
+
 The automated fields are review aids, not a final grade. The runner never
 sends scorer-only `has_answer` flags into Helix, and each question gets a
 fresh temporary memory system so histories cannot leak across examples.
 When associative memory is enabled, chronological history ingestion teaches
 only direct coarse-cluster transitions; the question itself remains
 retrieval-only and cannot reinforce the graph.
+
+For a same-exam RAGOffice comparison, run:
+
+```bash
+venv/bin/python tests/ragoffice_parity_sandbox.py \
+  --ragoffice-root /home/nemo/RAGOffice \
+  --model granite4.1:8b \
+  --resume
+```
+
+This snapshots RAGOffice's exact 110-item generated exam, ingests its 220 turns
+into one Helix sandbox, and applies the same reader prompt and answer rules.
+Outputs are written under `benchmark_results/ragoffice_parity_110/`.

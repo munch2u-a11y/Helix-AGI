@@ -50,6 +50,7 @@ commands as equivalent coverage or release criteria.
 | Directed non-semantic associations | `test_associative_transitions.py` |
 | Progressive learned-memory benchmark | `test_deep_memory_benchmark.py` |
 | Sandboxed LongMemEval ingestion, selection, and review artifacts | `test_longmemeval_sandbox.py` |
+| Exact RAGOffice exam parity and scoring | `test_ragoffice_parity_sandbox.py` |
 | Codex App Server provider and host tools | `test_codex_cli_provider.py` |
 | Event-driven tasks, orchestrators, focus, and procedures | `test_task_cognition.py` |
 | Preconscious context assembly | `test_preconscious_injection.py` |
@@ -104,6 +105,29 @@ venv/bin/python tests/longmemeval_sandbox.py \
 The run is resumable and saves a manual review page per answer. Automated
 exact match, token overlap, and evidence-session recall remain diagnostics;
 the review pages preserve the gold evidence and actual injected context.
+Use `--backend ollama --model granite4.1:8b` for a subscription-free run or a
+same-reader comparison with RAGOffice. Reader backend and model are locked into
+the resume manifest.
+
+## RAGOffice Exact-Exam Parity
+
+`ragoffice_parity_sandbox.py` executes RAGOffice's current 110-item generator,
+freezes the resulting 100 answerable questions plus ten negative controls, and
+ingests the exact 220 source turns into one isolated Helix mind. It uses
+RAGOffice's answer prompt, local Granite reader, accepted-answer alternatives,
+required-span rules, and refusal scoring. The snapshot hash, RAGOffice commit,
+and dirty source paths are recorded before the run.
+
+```bash
+venv/bin/python tests/ragoffice_parity_sandbox.py \
+  --ragoffice-root /home/nemo/RAGOffice \
+  --model granite4.1:8b \
+  --resume
+```
+
+This is the appropriate same-exam comparison. LongMemEval remains the broader,
+much longer natural-dialogue evaluation rather than a directly comparable
+replacement for RAGOffice's synthetic suite.
 
 ## Test Classes
 
