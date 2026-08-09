@@ -61,7 +61,11 @@ def _load_helix_credentials(target_env: Optional[Dict[str, str]] = None) -> Opti
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, value = line.split("=", 1)
-                env[key] = value
+                # A saved default must never override an explicit runtime
+                # selection such as HELIX_PROVIDER=ollama. Besides violating
+                # normal environment precedence, that could silently route a
+                # local-only benchmark to a metered provider.
+                env.setdefault(key, value)
     return creds_path
 
 

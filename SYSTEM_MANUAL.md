@@ -254,6 +254,11 @@ The old standalone gravity block and all-to-centroid Hebbian co-injection drift 
 
 The `codex_subscription` provider is an explicit evaluation transport. It runs the locally authenticated Codex CLI in an isolated read-only directory, allowing a ChatGPT-authenticated Codex session to serve as the conscious answer model without an OpenAI API key. It is never part of provider auto-detection. The 1024D Qwen3 encoder remains local and independent of that transport.
 
+Saved benchmark credentials are defaults only: explicit environment variables
+take precedence. Memory-suite runs that must remain local should also pass
+`--backend ollama --model <local-model>`; this bypasses credential loading and
+prevents accidental fallback to a metered provider.
+
 ### Full Codex CLI Consciousness Mode
 
 Set `HELIX_PROVIDER=codex_cli` (or `codex`) to run the continuous Helix agent
