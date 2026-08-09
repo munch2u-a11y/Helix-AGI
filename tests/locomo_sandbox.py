@@ -161,7 +161,11 @@ def is_abstention(text: Any) -> bool:
 
 def compute_answer_metrics(prediction: str, ground_truth: str, category: int) -> Tuple[float, float]:
     """Compute exact match and F1 with adversarial abstention handling."""
-    if category == 5 and is_abstention(ground_truth):
+    # LoCoMo category 5 stores an ``adversarial_answer`` containing the
+    # tempting answer implied by the question's false premise. The official
+    # evaluator grades these items by whether the model refuses that premise,
+    # not by matching the stored distractor text.
+    if category == 5:
         pred_abstains = is_abstention(prediction)
         return (1.0 if pred_abstains else 0.0, 1.0 if pred_abstains else 0.0)
 
@@ -263,9 +267,22 @@ def extract_answer(raw_text: str) -> str:
     return first_line or cleaned.strip()
 
 
-def load_provider_config():
-    from llm.providers.base import detect_available_provider
+def load_provider_config(backend: str = "auto", model: str = ""):
+    from llm.providers.base import ProviderConfig, detect_available_provider
     from scripts.cli_benchmark_adapter import _load_helix_credentials
+
+    if backend == "ollama":
+        return ProviderConfig(
+            provider_type="ollama",
+            model=model or "granite4.1:8b",
+            context_window=64_000,
+            temperature=0.2,
+            max_output_tokens=512,
+            options={
+                "num_ctx": 64_000,
+                "url": os.environ.get("OLLAMA_URL", "http://localhost:11434"),
+            },
+        )
 
     _load_helix_credentials()
     provider_config = detect_available_provider()
@@ -778,6 +795,10 @@ def run_evaluation(
     num_dialogues: int,
     max_pulses: int = 2,
     ingest_batch_size: int = 1,
+    dialogue_index: int = 0,
+    max_questions: Optional[int] = None,
+    backend: str = "auto",
+    model: str = "",
     dry_run: bool = False,
     save_path: Optional[str] = None,
     details_path: Optional[str] = None,
@@ -791,11 +812,23 @@ def run_evaluation(
         data = json.load(handle)
 
     total_dialogues = len(data)
-    num_to_eval = min(num_dialogues, total_dialogues)
-    logger.info("Dataset contains %d dialogues. Evaluating %d.", total_dialogues, num_to_eval)
+    if dialogue_index < 0 or dialogue_index >= total_dialogues:
+        logger.error(
+            "Dialogue index %d is outside the dataset range 0..%d.",
+            dialogue_index,
+            total_dialogues - 1,
+        )
+        return False
+    num_to_eval = min(num_dialogues, total_dialogues - dialogue_index)
+    logger.info(
+        "Dataset contains %d dialogues. Evaluating %d starting at index %d.",
+        total_dialogues,
+        num_to_eval,
+        dialogue_index,
+    )
 
     if dry_run:
-        sample = data[0]
+        sample = data[dialogue_index]
         session_count = sum(
             1
             for key in sample["conversation"].keys()
@@ -804,11 +837,14 @@ def run_evaluation(
         logger.info("=== DRY RUN MODE ===")
         logger.info("Sample ID: %s", sample["sample_id"])
         logger.info("Conversation sessions: %d", session_count)
-        logger.info("QA Pairs: %d", len(sample["qa"]))
+        selected_questions = len(sample["qa"])
+        if max_questions is not None:
+            selected_questions = min(selected_questions, max_questions)
+        logger.info("QA Pairs selected: %d/%d", selected_questions, len(sample["qa"]))
         logger.info("Dry run check passed successfully.")
         return True
 
-    provider_config = load_provider_config()
+    provider_config = load_provider_config(backend=backend, model=model)
     if provider_config is None:
         logger.error("No Helix provider detected. Configure Gemini, Anthropic, Ollama, or llama.cpp first.")
         return False
@@ -835,7 +871,7 @@ def run_evaluation(
     details: List[Dict[str, Any]] = []
 
     for d_idx in range(num_to_eval):
-        dialogue = data[d_idx]
+        dialogue = data[dialogue_index + d_idx]
         sample_id = dialogue["sample_id"]
         logger.info("[%d/%d] Evaluating dialogue %s", d_idx + 1, num_to_eval, sample_id)
 
@@ -853,17 +889,21 @@ def run_evaluation(
                 replay["pulse_count"],
             )
 
-            for qa_idx, qa in enumerate(dialogue["qa"], start=1):
+            qa_items = dialogue["qa"]
+            if max_questions is not None:
+                qa_items = qa_items[:max_questions]
+            for qa_idx, qa in enumerate(qa_items, start=1):
                 question = qa["question"]
                 category = int(qa["category"])
                 evidence = list(qa.get("evidence", []))
-                answer = qa.get("answer") or qa.get("adversarial_answer") or ""
+                adversarial_answer = qa.get("adversarial_answer") if category == 5 else None
+                answer = "Not mentioned." if category == 5 else (qa.get("answer") or "")
                 answer_target = answer.split(";")[0].strip() if category == 3 else answer
 
                 logger.info(
                     "  QA %d/%d | category=%d | %s",
                     qa_idx,
-                    len(dialogue["qa"]),
+                    len(qa_items),
                     category,
                     question[:120],
                 )
@@ -895,6 +935,7 @@ def run_evaluation(
                         "category": category,
                         "question": question,
                         "gold_answer": answer_target,
+                        "adversarial_answer": adversarial_answer,
                         "prediction": agent_result["answer"],
                         "answer_em": answer_em,
                         "answer_f1": answer_f1,
@@ -915,12 +956,17 @@ def run_evaluation(
     report_lines.append("# Helix LoCoMo Agent Benchmark Report")
     report_lines.append(f"**Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     report_lines.append(f"**Dialogues Evaluated**: {num_to_eval}")
+    report_lines.append(f"**Starting Dialogue Index**: {dialogue_index}")
+    report_lines.append(f"**Questions Evaluated**: {len(global_answer['f1'])}")
     report_lines.append(f"**Question Pulses**: {max_pulses}")
     report_lines.append(f"**Replay Batch Size**: {ingest_batch_size}")
     report_lines.append(f"**Provider**: {provider_config.provider_type} / {provider_config.model}")
     report_lines.append("")
     report_lines.append(
         "This run scores Helix's generated answers. Retrieval scores below are diagnostic provenance checks, not the primary grade."
+    )
+    report_lines.append(
+        "LoCoMo Category 5 is scored as adversarial-premise rejection: an abstention is correct; the stored adversarial answer is a distractor."
     )
     report_lines.append("")
 
@@ -1019,6 +1065,29 @@ def main() -> None:
         help="Number of dialogues to evaluate",
     )
     parser.add_argument(
+        "--dialogue-index",
+        type=int,
+        default=0,
+        help="Zero-based index of the first dialogue to evaluate",
+    )
+    parser.add_argument(
+        "--max-questions",
+        type=int,
+        default=None,
+        help="Optional per-dialogue question cap",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=("auto", "ollama"),
+        default="auto",
+        help="Reader backend; choose ollama to bypass stored API credentials",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Optional reader model override",
+    )
+    parser.add_argument(
         "--max-pulses",
         type=int,
         default=2,
@@ -1054,6 +1123,10 @@ def main() -> None:
         num_dialogues=args.num_dialogues,
         max_pulses=max(1, args.max_pulses),
         ingest_batch_size=max(1, args.ingest_batch_size),
+        dialogue_index=args.dialogue_index,
+        max_questions=max(1, args.max_questions) if args.max_questions is not None else None,
+        backend=args.backend,
+        model=args.model,
         dry_run=args.dry_run,
         save_path=args.save_results,
         details_path=args.save_details,
