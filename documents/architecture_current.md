@@ -1,6 +1,6 @@
 # Helix Current Technical Architecture
 
-**Status:** canonical current architecture · **Last verified against source:** 2026-08-08 · **Applies to:** `feature/mrag-spatial-associative-memory`
+**Status:** canonical current architecture · **Last verified against source:** 2026-08-09 · **Applies to:** `experiment/ragoffice-context-office`
 
 This document is the shortest authoritative description of the live Helix
 runtime. Historical audits and benchmark reports are intentionally not updated
@@ -20,7 +20,11 @@ flowchart TD
     R --> M[mRAG semantic foreground<br/>native 1024D Qwen3]
     R --> S[Raw 8D spatial complement<br/>carried attention state]
     R --> A[Learned directed cluster transitions<br/>separate 8D overlay]
-    M --> I[Bounded injection]
+    M --> O[Context Office desk bids]
+    O -. insufficient slice .-> B[On-demand office board]
+    B -. bounded candidates .-> O
+    O --> V[Shared bid arbitration]
+    V --> I[Bounded exact injection]
     S --> I
     A --> I
     I --> C[Main consciousness<br/>persistent provider session]
@@ -79,10 +83,10 @@ from these representations are never blended into one pseudo-distance.
 |---:|---|---|---|
 | 1 | Layer-2 anchors | Named people, concepts, skills, desires | Exact high-priority anchors with repetition guard |
 | 2 | mRAG semantic advisor | Native normalized 1024D Qwen3 embeddings | Full-trigger, sentence, RAKE, entity, concept, and relation heads plus exact-term/tag evidence advise office routing and remain the fallback |
-| 3 | Context Office | Transient term, episode, turn, and task indexes over the canonical corpus | Facts, State, Relations, Catalog, Beliefs, and Causality desks build one verified brief; no duplicated markdown/database memory |
+| 3 | Context Office | Transient term, episode, turn, and task indexes over the canonical corpus | Facts, State, Relations, Catalog, Beliefs, Causality, Affect, and conditionally routed Identity desks submit bids for one shared budget; no duplicated markdown/database memory |
 | 4 | Raw spatial / Lateral desk | MiniLM 384D projected through a fixed matrix to 8D | At most two spatial-only items; append-only, explicitly non-evidentiary, and unable to reorder the office brief |
 | 5 | Associative transition | Directed cluster prototypes in a separate 8D overlay | Repeated A→B attention transitions surface lateral follow-ons; individual memories and beliefs do not move |
-| 6 | Metadata and working state | Affect, stability, Lagrangian snapshot, scratchpad, recent/contact state | Preserved for rendering, representative choice, and one bounded somatic echo |
+| 6 | Metadata and working state | Stability, Lagrangian snapshot, scratchpad, recent/contact state | Preserved for rendering, representative choice, and one bounded somatic echo; response-relevant current affect competes through the Affect desk |
 
 The semantic index defaults to exact normalized dot-product search: NumPy for
 small stores and FAISS `IndexFlatIP` after the automatic threshold. Optional
@@ -99,13 +103,33 @@ Profiles control search and rendering budgets, not the representation:
 
 | Profile | Heads | Candidate ceiling | Injection ceiling | Default rendering |
 |---|---:|---:|---:|---|
-| `local` | 16 | 60 | 20 items | Local summary |
+| `local` | 16 | 60 | 20 items | Exact office-selected records |
 | `frontier` | 32 | 160 | 32 items | Verbatim evidence |
 
 The effective token budget also depends on average corpus item length and a
 bounded fraction of the configured context window. Environment overrides are
 documented near the relevant code in `core/unified_retrieval.py` and
 `memory/mrag/semantic_lane.py`.
+
+### Context Office budget and board
+
+Desks do not receive fixed prompt sections. Each candidate carries a bid based
+on task fit, retrieval relevance, confidence, stability, importance, affective
+salience, and text cost. Facts, preferences, learned traits, opinions,
+relationships, and affect therefore compete for the same slots. A complete
+calculation or relation chain is an atomic proof bid so arbitration cannot
+save space by returning an unusable half-proof.
+
+The semantic retrieval slice is each desk's normal working set. The coordinator
+authorizes a bounded canonical “office board” lookup only when that slice has
+insufficient term coverage or the task requires state history, enumeration, a
+join, or a causal check. The office board is backend evidence access, not a
+standing prompt copied into every worker call.
+
+Worker contracts contain one direct task sentence and a capped candidate list;
+they contain no examples and no repeated identity preamble. The deterministic
+workers are the default. These same contracts are the extension boundary for
+optional local desk models without exposing an oversized schema bundle.
 
 ## Learned Relations and New Concepts
 
@@ -139,9 +163,12 @@ intentions. The controller then:
 2. Applies a separate directed 8D habit-transition nudge.
 3. Computes focus depth from novelty, uncertainty, stakes, failure history,
    confidence, and habit strength.
-4. Reverse-searches the live capability registry and exposes at most a small,
-   authorized schema subset to the focus session.
-5. Runs bounded identity-shared work through the central `ToolExecutor`.
+4. Reverse-searches the live capability registry and exposes at most four
+   authorized schemas to a local-context focus session or eight to a
+   100k+-context session.
+5. Runs bounded work through the central `ToolExecutor`. Identity state is
+   shared, but identity text is injected only for selfhood-, value-, history-,
+   relationship-, preference-, or characteristic-behavior-dependent tasks.
 6. Returns the accepted outcome as a first-person `task_result` event and
    learns orchestrator reliability and contextual procedures.
 
@@ -206,7 +233,7 @@ of truth for on-disk details.
 | `HELIX_TASK_COGNITION` | config value (`observe`) | `off`, `observe`, or `active` |
 | `HELIX_UNIFIED_RAG` | enabled | Disable only for legacy retrieval fallback |
 | `HELIX_MRAG_PROFILE` | `local` | `local` or `frontier` search/render budget |
-| `HELIX_MRAG_RENDER_MODE` | profile default | Force `summary` or `verbatim` |
+| `HELIX_MRAG_RENDER_MODE` | `verbatim` | Preserve exact selected records; `summary` remains a legacy explicit override |
 | `HELIX_CONTEXT_OFFICE` | enabled | Read-only specialist evidence desks over canonical memory |
 | `HELIX_ASSOCIATIVE_MEMORY` | enabled | Disable sequential association learning/recall for ablation |
 | `HELIX_MRAG_ADJACENCY` | disabled | Restore old temporal-neighbor expansion for benchmark parity |

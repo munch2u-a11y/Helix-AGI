@@ -162,6 +162,36 @@ class NonTeachingExamTests(unittest.TestCase):
         self.assertIn("[learned follow-on association]", annotation)
         self.assertEqual(surfaced, [])
 
+    def test_local_renderer_preserves_exact_office_evidence(self):
+        preconscious = Preconscious.__new__(Preconscious)
+        preconscious._unified = object()
+        preconscious._last_surfaced_memory_ids = []
+        preconscious._last_cluster_centroid = None
+        preconscious._is_repetitive = lambda _content: False
+        selection = [{
+            "id": "mem_release",
+            "content": "Mara scheduled the release for August 14, 2032.",
+            "category": "memory",
+            "tier": 0,
+            "lane": "semantic",
+            "office_role": "direct_fact",
+            "office_verified": True,
+            "position_8d": None,
+            "gravity": 1.0,
+        }]
+        with patch.dict(os.environ, {
+            "HELIX_MRAG_PROFILE": "local",
+            "HELIX_MRAG_RENDER_MODE": "",
+        }, clear=False):
+            # An empty override is not a supported mode; remove it so the
+            # local profile exercises its exact default.
+            os.environ.pop("HELIX_MRAG_RENDER_MODE", None)
+            annotation, _ = preconscious._render_selection(
+                selection, ["release"], budget=1, learn=False,
+            )
+        self.assertIn("August 14, 2032", annotation)
+        self.assertIn("FACTS DESK", annotation)
+
 
 class CodexTransportParsingTests(unittest.TestCase):
     def test_codex_jsonl_parser_extracts_thread_and_message(self):

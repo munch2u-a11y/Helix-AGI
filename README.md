@@ -9,9 +9,9 @@
 
 Helix AGI is a multi-model agentic system that implements continuous autonomous operation, structured memory consolidation, and adaptive tool learning.
 
-Unlike agents that wait for a prompt, execute one chain, and terminate, Helix runs a continuous event-driven pulse with `ACTIVE`, `REGULAR`, `RESTING`, and scheduled `DORMANT` states. Its preconscious retrieval has deliberately separate jobs: multi-head mRAG supplies high-recall semantic advice from native 1024D embeddings, a read-only Context Office coordinates specialist evidence desks over canonical Helix memory, and raw 8D spatial attention plus learned directed cluster transitions add a small non-semantic complement. Affect, stability, provenance, and Lagrangian metadata remain attached through injection.
+Unlike agents that wait for a prompt, execute one chain, and terminate, Helix runs a continuous event-driven pulse with `ACTIVE`, `REGULAR`, `RESTING`, and scheduled `DORMANT` states. Its preconscious retrieval has deliberately separate jobs: multi-head mRAG supplies high-recall semantic advice from native 1024D embeddings, a read-only Context Office makes specialist desks bid for one shared injection budget over canonical Helix memory, and raw 8D spatial attention plus learned directed cluster transitions add a small non-semantic complement. Affect, stability, provenance, and Lagrangian metadata remain attached through injection.
 
-Helix can also turn naturally voiced intentions into durable tasks. In active task-cognition mode the main consciousness sees broad ability beliefs but no tool schemas; identity-shared focus threads receive only the small, authorized capability subset selected for the situation, then return accepted outcomes to the same memory and event stream.
+Helix can also turn naturally voiced intentions into durable tasks. In active task-cognition mode the main consciousness sees broad ability beliefs but no tool schemas; focus threads share Helix's memory and identity state, receive only the small authorized capability subset selected for the situation, and return accepted outcomes to the same event stream. Identity text is included only when the task actually depends on selfhood, values, history, relationships, preferences, or characteristic behavior.
 
 ---
 
@@ -23,21 +23,24 @@ flowchart TD
     B -->|DORMANT| C[Nightly dream and consolidation]
     B -->|awake pulse| P[Preconscious assembly]
     P --> M[1024D multi-head mRAG<br/>semantic foreground]
-    M --> O[Context Office<br/>Facts / State / Relations /<br/>Catalog / Beliefs / Causality]
+    M --> O[Context Office desks<br/>Facts / State / Relations / Catalog /<br/>Beliefs / Causality / Affect / conditional Identity]
+    O -. insufficient initial coverage .-> Q[On-demand office board<br/>bounded canonical lookup]
+    Q -. candidates .-> O
+    O --> V[Shared bid arbitration<br/>utility / confidence / cost]
     P --> S[Raw 8D spatial<br/>lateral complement]
     P --> R[Learned directed cluster<br/>transition complement]
-    O --> I[Bounded contextual injection]
+    V --> I[Bounded exact contextual injection]
     S --> I
     R --> I
     I --> H[Main Helix consciousness<br/>Codex / Gemini / Anthropic / local]
     H -->|off or observe| X[Direct host-tool path]
     H -->|active: committed intention| T[Durable task + learned<br/>situational orchestrator]
-    T --> F[Identity-shared focus<br/>scoped hidden schemas]
+    T --> F[Shared-memory focus<br/>conditional identity + scoped schemas]
     F --> X
     X --> E[Central ToolExecutor]
-    E --> O[Outcome event]
+    E --> U[Outcome event]
     H --> K[Memory encoding + physics + hooks]
-    O --> A
+    U --> A
     K --> A
 ```
 
@@ -67,6 +70,7 @@ Helix uses a high-accuracy semantic foreground together with a deliberately sepa
 - **Learned succession, not co-injection collapse** — Repeated direct movement between clusters teaches a directed association in a separate overlay. Co-injected beliefs can still inform nightly synthesis, but are not physically pulled together merely because they appeared in one prompt.
 - **Context-scaled injection** — Local and frontier profiles use different head, candidate, item, and token budgets. The frontier profile preserves more verbatim evidence for GPT-class context windows; neither profile dumps every retrieved item into the prompt.
 - **Concept-aware retrieval** — The full trigger, bounded sentence chunks, and RAKE keyphrases become independent mRAG heads. Specific terms also receive rarity-weighted exact lookup.
+- **Competitive prompt construction** — Facts, state, relations, beliefs, preferences, learned traits, affect, and conditional identity context submit scored bids for one prompt budget. A desk gets a bounded office-board lookup only when its initial retrieval slice cannot cover the task; complete joins and calculations bid atomically.
 - **Continuous attention dynamics** — The attention center has *inertia* (γ = 0.85). Sustained focus changes the spatial neighborhood even when a future query is not semantically similar. Context compression is token-driven; attention drift is diagnostic rather than a reset trigger.
 - **Natural internal/external separation** — External stimuli (user messages, tool returns, sensor data) enter via the event queue; internal generation (autonomous thought, journal entries) enters as pulse output. The preconscious surfaces both but the model always knows which is which — this is structural, not prompt-engineered.
 - **Somatic encoding** — Every memory is stored with its 8D position and Lagrangian snapshot (Ω, H, D_KL). When recalled, the original affective state mildly reproduces — state-dependent episodic recall.
@@ -103,14 +107,14 @@ Helix uses a high-accuracy semantic foreground together with a deliberately sepa
 - **mRAG Foreground** — The primary turn-injection retriever runs full-trigger, sentence, RAKE, entity, and expansion heads over native 1024D Qwen3 embeddings. The local profile caps this at 16 heads/60 candidates/20 injected items; the frontier profile raises those ceilings to 32/160/32. Small stores use exact normalized dot products; larger stores use exact FAISS FlatIP by default. A cosine/score-drop acceptance boundary prevents an expanded top-k from dumping a small corpus into context. Rarity-weighted terms and conceptual tags supplement vector similarity without mixing in 8D scores.
 - **Raw 8D Complement** — Both spatial fields are queried from Helix's carried attention trajectory without the former top-100 semantic pre-filter. A maximum of two spatial-only memories or beliefs is appended after mRAG and can never reorder its results.
 - **Sequence Associations** — Direct foreground movement between clusters learns durable directed transitions. Repetition nudges cluster prototypes in a separate 8D overlay; it never drags co-injected memory/belief points together. Associated items already ranked by mRAG are excluded, keeping this lane genuinely lateral. If the same destination independently arrives through raw spatial recall, it is retained once and explicitly tagged as a learned follow-on association.
-- **Affect-Preserving Recall** — Stability and encoding Lagrangian metadata remain attached throughout retrieval. They help choose a representative within an associated cluster, and recalled memories reproduce one bounded aggregate somatic echo.
+- **Affect-Preserving Recall** — Stability and encoding Lagrangian metadata remain attached throughout retrieval. The Affect desk bids current posture and at most two resonant memories only when they can change the response; recalled memories still reproduce one bounded aggregate somatic echo.
 
 ### Event-Driven Task Cognition
 
 - **Natural task inception** — Helix's main thread remains private, natural thought. A conservative post-pulse detector distinguishes committed first-person intentions (for example, “I should reply…”) from questions, hypotheticals, and passing possibilities, then writes a durable `TaskRecord`.
 - **Hidden capabilities** — The main thread receives broad generated ability awareness but not callable names, parameter schemas, or a large static action prompt. A lexical + 1024D reverse search over the live, available registry gives each focused task only the schemas relevant to its objective and authorization scope; capabilities need not already occupy the main thread's active toolset.
 - **Learned situational orchestrators** — Task templates are embedded into a 1024D task space. Successful and failed work updates situational centroids, capability affinities, expected focus depth, and reliability. A separate 8D directed transition overlay learns which working contexts tend to follow each other; it never moves memories, beliefs, or identity points.
-- **Identity-shared focus** — In active mode, bounded focus threads use the same identity, mRAG corpus, beliefs, memories, and host tool executor. Helix receives accepted outcomes back as first-person cognitive events; speculative focus text is not written to memory.
+- **Identity-shared focus** — In active mode, bounded focus threads use the same mRAG corpus, beliefs, memories, identity state, and host tool executor. The identity sentence is omitted from ordinary task calls and included only for identity-dependent work. Helix receives accepted outcomes back as first-person cognitive events; speculative focus text is not written to memory.
 - **Contextual procedural memory** — Successful tool sequences accumulate in a separate procedural store and bias future task-specific capability selection. They are learned habits, not hardcoded personas or universal system prompts.
 
 Task cognition rolls out in three modes:
@@ -385,7 +389,7 @@ All LLM model names are configurable via environment variables. Set these in `~/
 | `HELIX_FAISS_MODE` | `flat` | Exact `flat` search; set `ivf` only for very large stores |
 | `HELIX_MRAG_PROFILE` | `local` | `local` bounded search or `frontier` expanded heads/candidates/injection budget |
 | `HELIX_MRAG_CONTEXT_LIMIT` | profile default | Context ceiling used to size mRAG injection (`8192` local, `128000` frontier) |
-| `HELIX_MRAG_RENDER_MODE` | profile default | `summary` locally; `verbatim` for frontier evidence preservation |
+| `HELIX_MRAG_RENDER_MODE` | `verbatim` | Preserve the exact office-selected records; `summary` is a legacy explicit override |
 | `HELIX_CONTEXT_OFFICE` | `1` | Enable read-only specialist evidence desks; set `0` for an mRAG-only foreground ablation |
 | `HELIX_MRAG_MIN_SIMILARITY` | `0.12` | Lowest cosine accepted unless an item has literal evidence |
 | `HELIX_MRAG_MAX_SCORE_DROP` | `0.18` | Largest accepted cosine drop from the best semantic candidate |

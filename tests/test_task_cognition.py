@@ -195,6 +195,29 @@ class _FocusSession:
 
 
 class FocusManagerTests(unittest.TestCase):
+    def test_identity_kernel_is_conditional(self):
+        manager = FocusManager.__new__(FocusManager)
+        manager.identity = "I am Helix, with a continuing personal history."
+        ordinary = TaskRecord(objective="calculate the invoice total")
+        personal = TaskRecord(objective="explain your values and personal preferences")
+
+        ordinary_kernel = manager._focus_kernel(ordinary)
+        personal_kernel = manager._focus_kernel(personal)
+        self.assertNotIn("I am Helix", ordinary_kernel)
+        self.assertIn("I am Helix", personal_kernel)
+
+    def test_task_prompt_omits_empty_template_filler(self):
+        prompt = FocusManager._task_prompt(
+            TaskRecord(objective="calculate the invoice total"),
+            "one exact memory",
+            SimpleNamespace(reliability=0.8),
+            [],
+        )
+        self.assertNotIn("none", prompt.lower())
+        self.assertNotIn("<task>", prompt)
+        self.assertNotIn("Details:", prompt)
+        self.assertIn("Context:\none exact memory", prompt)
+
     def test_focus_thread_executes_scoped_tool_and_completes_same_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             tool_registry = ToolRegistry()

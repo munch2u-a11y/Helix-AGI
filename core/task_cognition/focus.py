@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -54,7 +55,7 @@ class FocusManager:
         self.context_builder = context_builder
         self.provider_config = provider_config
         self.tool_executor = tool_executor
-        self.identity = identity.strip() or "I am Helix."
+        self.identity = identity.strip()
         self.result_callback = result_callback
         self.max_depth = max(1, int(max_depth))
         self._pool = ThreadPoolExecutor(
@@ -131,13 +132,14 @@ class FocusManager:
         preferred_capabilities = set(anchor.capability_counts)
         for habit in habits:
             preferred_capabilities.update(habit.get("tool_sequence", []))
+        capability_limit = 8 if self.provider_config.context_window >= 100_000 else 4
         chosen_capabilities = self.capabilities.select(
             task.objective,
             task_type=task.task_type,
             authorization_scope=task.authorization_scope,
             active_toolsets=active_toolsets,
             preferred_names=preferred_capabilities,
-            limit=8,
+            limit=capability_limit,
         )
         task.capability_names = [item.name for item in chosen_capabilities]
         task.focus_depth = depth
@@ -158,7 +160,7 @@ class FocusManager:
             max_items=32 if self.provider_config.context_window >= 100_000 else 20,
             token_budget=12_000 if self.provider_config.context_window >= 100_000 else 4_000,
         )
-        system = self._focus_kernel()
+        system = self._focus_kernel(task)
         prompt = self._task_prompt(task, context, anchor, habits)
         config = self._focus_config()
         session = create_session(
@@ -261,14 +263,31 @@ class FocusManager:
         pressure = novelty + uncertainty + stakes + failure_rate - (0.75 * habit_strength)
         return max(1, min(self.max_depth, 1 + round(max(0.0, pressure))))
 
-    def _focus_kernel(self) -> str:
-        return (
-            f"{self.identity}\n"
-            "This is focused work within my own continuing cognition. The task, memories, "
-            "beliefs, and outcomes are mine; do not describe a separate agent. Complete only "
-            "the stated task with the abilities made available for it. Do not assume an action "
-            "succeeded until its result is present."
+    @staticmethod
+    def _identity_needed(task: TaskRecord) -> bool:
+        override = task.metadata.get("needs_identity")
+        if override is not None:
+            return bool(override)
+        text = " ".join(
+            [task.objective, task.details, *task.source_events]
+        ).lower()
+        return bool(re.search(
+            r"\bwho (?:am i|are you)\b|\b(?:my|your) (?:identity|values|principles|"
+            r"personality|traits|habits|style|preferences|opinions|beliefs|"
+            r"relationships?|history)\b|\b(?:as|like) (?:myself|yourself)\b|"
+            r"\bhow (?:would|do) (?:i|you) (?:usually|normally|personally|tend to)\b",
+            text,
+        ))
+
+    def _focus_kernel(self, task: TaskRecord) -> str:
+        lines = []
+        if self.identity and self._identity_needed(task):
+            lines.append(self.identity)
+        lines.append(
+            "Complete the stated task with the available tools and recalled context. "
+            "Treat an action as complete only when its result confirms it."
         )
+        return "\n".join(lines)
 
     @staticmethod
     def _task_prompt(
@@ -281,22 +300,26 @@ class FocusManager:
             " -> ".join(item.get("tool_sequence", []))
             for item in habits if item.get("tool_sequence")
         ]
-        learned = "; ".join(habit_lines) if habit_lines else "none yet"
-        recent_events = "\n".join(f"- {event}" for event in task.source_events[-5:])
-        return (
-            "<task>\n"
-            f"Objective: {task.objective}\n"
-            f"Type: {task.task_type}\n"
-            f"Details: {task.details or task.objective}\n"
-            f"Constraints: {'; '.join(task.constraints) or 'none beyond the stated scope'}\n"
-            f"Success: {'; '.join(task.success_conditions) or 'the objective is actually satisfied'}\n"
-            f"Authorization: {task.authorization_scope}\n"
-            f"Recent triggering events:\n{recent_events or '- none'}\n"
-            "</task>\n\n"
-            "<recalled_context>\n" + context + "\n</recalled_context>\n\n"
-            f"Learned procedural tendencies relevant here: {learned}\n"
-            f"Situational habit reliability: {orchestrator.reliability:.2f}."
-        )
+        lines = [f"Task: {task.objective}"]
+        if task.task_type != "action":
+            lines.append(f"Type: {task.task_type}")
+        if task.details and task.details.strip() != task.objective.strip():
+            lines.append(f"Details: {task.details.strip()}")
+        if task.constraints:
+            lines.append("Constraints: " + "; ".join(task.constraints))
+        if task.success_conditions:
+            lines.append("Success: " + "; ".join(task.success_conditions))
+        lines.append(f"Authorization: {task.authorization_scope}")
+        if task.source_events:
+            lines.append("Events:\n" + "\n".join(
+                f"- {event}" for event in task.source_events[-5:]
+            ))
+        if context.strip():
+            lines.append("Context:\n" + context.strip())
+        if habit_lines:
+            lines.append("Relevant procedure: " + "; ".join(habit_lines))
+            lines.append(f"Procedure reliability: {orchestrator.reliability:.2f}")
+        return "\n\n".join(lines)
 
     def _focus_config(self) -> ProviderConfig:
         options = dict(self.provider_config.options or {})

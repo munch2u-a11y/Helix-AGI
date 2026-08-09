@@ -9,6 +9,7 @@ databases.  Every desk is a read-only projection over ``HelixCorpus``:
 * Relations closes joins, aggregations, and enumerations inside one episode.
 * Beliefs connects paraphrased stance questions to stored policy/preferences.
 * Causality refuses to substitute event status for a missing reason.
+* Affect and Identity participate only when the present turn calls for them.
 
 The semantic lane advises the desks and remains the fallback.  The 8D spatial
 and learned-transition lanes stay outside the office proof brief so Helix can
@@ -23,6 +24,9 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+from core.affect_office import AffectOffice
+from core.office_workflows import OfficeArbiter
 
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
@@ -155,15 +159,36 @@ def plan_office(query: str) -> OfficePlan:
     if re.search(r"\bstance\b|\bopinion\b|\bbelie(?:f|ve)\b|\bprefer(?:s|ence)?\b", lowered):
         intents.append("belief_state")
         desks.append("beliefs")
+    if re.search(
+        r"\bwho are you\b|\byour (?:identity|values|principles|personality|traits|"
+        r"habits|style|preferences|opinions|beliefs|relationships?|history)\b|"
+        r"\bwhat do you (?:believe|prefer|value|think about)\b|"
+        r"\bhow (?:would|do) you (?:usually|normally|personally|tend to)\b",
+        lowered,
+    ):
+        intents.append("identity_context")
+        desks.extend(("identity", "beliefs"))
+    if re.search(
+        r"\b(?:feel|feeling|emotion|mood|afraid|fear|angry|anger|sad|sadness|"
+        r"happy|joy|guilt|guilty|love|trust|worry|worried|upset|comfort|"
+        r"apolog(?:y|ize)|relationship)\b",
+        lowered,
+    ):
+        intents.append("affective_context")
+        desks.append("affect")
     if re.search(r"\bwhy\b|\bwhat (?:was|is) the reason\b|\bwhat caused\b", lowered):
         intents.append("causal_explanation")
         desks.append("causality")
-    if not intents:
+    # Affect is a modifier, not an answer strategy. If it is the only routed
+    # concern, the Facts desk still supplies whatever the message is about.
+    if not any(intent != "affective_context" for intent in intents):
         intents.append("direct_fact")
         desks.append("facts")
 
     terms = tuple(dict.fromkeys(_terms(query, drop_stopwords=True)))
-    structured = any(intent != "direct_fact" for intent in intents)
+    structured = any(
+        intent not in {"direct_fact", "affective_context"} for intent in intents
+    )
     expand_scope = any(intent in {
         "aggregation", "relation_path", "enumeration", "current_state",
         "causal_explanation",
@@ -219,6 +244,8 @@ class ContextOffice:
 
     def __init__(self, corpus):
         self.corpus = corpus
+        self.arbiter = OfficeArbiter()
+        self.affect = AffectOffice()
         self._version: Optional[int] = None
         self._items: List[Dict[str, Any]] = []
         self._by_id: Dict[str, Dict[str, Any]] = {}
@@ -269,13 +296,26 @@ class ContextOffice:
         self.sync()
         plan = plan_office(query)
         semantic = [dict(item) for item in semantic_items]
-        if not plan.terms:
+        if not plan.terms and not ({"affect", "identity"} & set(plan.desks)):
             return OfficeResult(
                 items=semantic,
                 diagnostics=self._diagnostics(plan, False, "no_query_terms"),
             )
 
-        direct_scores = self._score_items(plan.terms)
+        semantic_ids = {
+            str(item.get("id")) for item in semantic
+            if str(item.get("id", "")) in self._by_id
+        }
+        _semantic_matches, semantic_coverage = self._coverage(plan.terms, semantic_ids)
+        board_consulted = bool(
+            plan.expand_scope
+            or not semantic_ids
+            or semantic_coverage < self.MIN_SCOPE_COVERAGE
+        )
+        direct_scores = self._score_items(
+            plan.terms,
+            allowed_ids=None if board_consulted else semantic_ids,
+        )
         score_map = dict(direct_scores)
         scope: Optional[str] = None
         coverage = 0.0
@@ -309,7 +349,9 @@ class ContextOffice:
         # subject binding. It then returns that complete canonical episode,
         # rather than turning semantic neighbors into multiple opinions.
         if (
-            not evidence and "belief_state" in plan.intents and semantic
+            not evidence
+            and ({"belief_state", "identity_context"} & set(plan.intents))
+            and semantic
             and semantic[0].get("tier") == 0
         ):
             anchor = semantic[0]
@@ -324,6 +366,29 @@ class ContextOffice:
                     )
                     evidence.append(item)
                 binding = "semantic_belief_episode"
+
+        # Canonical belief records are direct evidence of a learned opinion,
+        # preference, trait, or behavior. Several may bid, but none receives a
+        # fixed prompt section merely for being identity-related.
+        if (
+            not evidence
+            and ({"belief_state", "identity_context"} & set(plan.intents))
+        ):
+            role = (
+                "identity_source"
+                if "identity_context" in plan.intents
+                else "belief_source"
+            )
+            for original in semantic:
+                if original.get("tier") not in (1, 2):
+                    continue
+                item = dict(original)
+                self._mark(item, role, "beliefs", None, 0.0, plan, True)
+                evidence.append(item)
+                if len(evidence) >= 4:
+                    break
+            if evidence:
+                binding = "canonical_belief_records"
 
         # The Causality desk treats an unexplained event as an absent relation,
         # not as weak evidence for a reason.
@@ -373,7 +438,19 @@ class ContextOffice:
                 selected.append(item)
                 selected_ids.add(item_id)
 
-        selected = selected[:max_items]
+        # Affect is another bidder, not an ambient block guaranteed space on
+        # every turn. It sees only the current field and explicitly surfaced
+        # records; it cannot assert facts or request a permanent identity
+        # preamble.
+        selected.extend(self.affect.propose(query, self._by_id, selected))
+        proof_ids = [str(item.get("id", "")) for item in evidence]
+        bid_count = len(selected)
+        selected = self.arbiter.allocate(
+            selected,
+            active_desks=plan.desks,
+            max_items=max_items,
+            proof_ids=proof_ids,
+        )
         return OfficeResult(
             items=selected,
             diagnostics=self._diagnostics(
@@ -381,6 +458,8 @@ class ContextOffice:
                 binding=binding, scope=scope, coverage=coverage, score=scope_score,
                 evidence_selected=len(evidence),
                 semantic_retained=max(0, len(selected) - len(evidence)),
+                board_consulted=board_consulted,
+                bids_considered=bid_count,
             ),
         )
 
@@ -405,6 +484,8 @@ class ContextOffice:
                 role, desk = "catalog_member", "catalog"
             elif "belief_state" in plan.intents:
                 role, desk = "belief_source", "beliefs"
+            elif "identity_context" in plan.intents:
+                role, desk = "identity_source", "beliefs"
             elif "causal_explanation" in plan.intents:
                 role, desk = "causal_member", "causality"
             else:
@@ -416,7 +497,11 @@ class ContextOffice:
             result.append(item)
         return result
 
-    def _score_items(self, query_terms: Sequence[str]) -> List[Tuple[str, float]]:
+    def _score_items(
+        self,
+        query_terms: Sequence[str],
+        allowed_ids: Optional[Set[str]] = None,
+    ) -> List[Tuple[str, float]]:
         total_docs = max(1, len(self._counts))
         weights = {
             term: 1.0 + math.log((1.0 + total_docs) / (1.0 + len(self._docs.get(term, ()))))
@@ -426,6 +511,8 @@ class ContextOffice:
         candidates: Set[str] = set()
         for term in query_terms:
             candidates |= self._docs.get(term, set())
+        if allowed_ids is not None:
+            candidates &= set(allowed_ids)
         scored: List[Tuple[str, float]] = []
         for item_id in candidates:
             counts = self._counts.get(item_id, Counter())
@@ -522,6 +609,8 @@ class ContextOffice:
         score: float = 0.0,
         evidence_selected: int = 0,
         semantic_retained: int = 0,
+        board_consulted: bool = False,
+        bids_considered: int = 0,
     ) -> Dict[str, Any]:
         return {
             "enabled": True,
@@ -535,4 +624,6 @@ class ContextOffice:
             "scope_score": round(float(score), 6),
             "evidence_selected": int(evidence_selected),
             "semantic_retained": int(semantic_retained),
+            "office_board_consulted": bool(board_consulted),
+            "bids_considered": int(bids_considered),
         }

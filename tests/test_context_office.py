@@ -9,6 +9,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.context_office import ContextOffice, plan_office
+from core.office_workflows import DESK_CONTRACTS, OfficeArbiter, worker_request
 from core.unified_retrieval import UnifiedRetrieval
 from memory.mrag.corpus import _structured_position
 
@@ -51,6 +52,28 @@ class OfficeRoutingTests(unittest.TestCase):
         self.assertEqual(stance.subject, "vector embedding stores")
         self.assertNotIn("s", stance.terms)
 
+    def test_identity_and_affect_are_narrowly_routed(self):
+        ordinary = plan_office("Can you tell me the launch date?")
+        self.assertNotIn("identity", ordinary.desks)
+        self.assertNotIn("affect", ordinary.desks)
+
+        identity = plan_office("How do you normally handle conflict with friends?")
+        self.assertIn("identity", identity.desks)
+        self.assertIn("beliefs", identity.desks)
+
+        affect = plan_office("Do you feel worried about that relationship?")
+        self.assertIn("affect", affect.desks)
+
+    def test_worker_contracts_are_small_and_identity_free(self):
+        records = [
+            _item(str(index), "scope", index, f"record {index}")
+            for index in range(1, 20)
+        ]
+        request = worker_request("beliefs", "What do you prefer?", records)
+        self.assertEqual(len(request["candidates"]), DESK_CONTRACTS["beliefs"].max_candidates)
+        self.assertNotIn("example", request["task"].lower())
+        self.assertNotIn("you are helix", str(request).lower())
+
     def test_import_tags_preserve_office_episode_identity(self):
         position = _structured_position(
             "[BENCHMARK ITEM: fallback] [TURN: 9] body",
@@ -61,6 +84,38 @@ class OfficeRoutingTests(unittest.TestCase):
 
 
 class OfficeBriefTests(unittest.TestCase):
+    def test_board_is_consulted_only_when_initial_slice_is_insufficient(self):
+        exact = _item("exact", "release", 1, "The launch date is August 14.")
+        other = _item("other", "other", 1, "Mara likes tea.")
+        direct = ContextOffice(_Corpus([exact, other])).prepare(
+            "What is the launch date?", [exact], max_items=4,
+        )
+        self.assertFalse(direct.diagnostics["office_board_consulted"])
+
+        expanded = ContextOffice(_Corpus([exact, other])).prepare(
+            "What is the current launch date?", [other], max_items=4,
+        )
+        self.assertTrue(expanded.diagnostics["office_board_consulted"])
+
+    def test_all_unprotected_desks_compete_for_shared_slots(self):
+        candidates = [
+            {
+                "id": "preference", "content": "Prefers direct explanations.",
+                "office_desk": "beliefs", "relevance": 0.95,
+                "confidence": 0.9, "stability_index": 0.9,
+            },
+            {
+                "id": "fact", "content": "A distant unrelated fact.",
+                "office_desk": "facts", "relevance": 0.2,
+                "confidence": 0.9, "stability_index": 0.9,
+            },
+        ]
+        selected = OfficeArbiter().allocate(
+            candidates, active_desks={"beliefs"}, max_items=1,
+        )
+        self.assertEqual(selected[0]["id"], "preference")
+        self.assertIn("task-fit", selected[0]["office_bid_reason"])
+
     def test_state_desk_places_current_before_history(self):
         old = _item("old", "staging", 1, "The retired staging domain was old.internal.")
         new = _item("new", "staging", 2, "The staging domain is staging.internal.")
@@ -171,6 +226,21 @@ class OfficeBriefTests(unittest.TestCase):
         kept, purged = retriever._purge_near_duplicates(records)
         self.assertEqual([item["id"] for item in kept], ["a", "b"])
         self.assertEqual(purged, set())
+
+    def test_downstream_token_guard_does_not_split_atomic_proof(self):
+        retriever = UnifiedRetrieval.__new__(UnifiedRetrieval)
+        records = [
+            {
+                "id": "a", "content": "The first necessary proof record is long.",
+                "lane": "semantic", "office_bid_atomic": True,
+            },
+            {
+                "id": "b", "content": "The second necessary proof record is also long.",
+                "lane": "semantic", "office_bid_atomic": True,
+            },
+        ]
+        selected = retriever._fill_budget(records, max_items=2, token_budget=1)
+        self.assertEqual([item["id"] for item in selected], ["a", "b"])
 
 
 if __name__ == "__main__":

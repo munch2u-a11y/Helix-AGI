@@ -617,7 +617,9 @@ class UnifiedRetrieval:
         for item in candidates:
             content = item.get("content", "")
             words = set(content.lower().split())
-            emb = self.corpus.embedding(item)
+            # Transient office-state bids are already typed. They should not
+            # trigger an embedding call merely to pass duplicate suppression.
+            emb = None if item.get("tier") == -1 else self.corpus.embedding(item)
 
             duplicate = False
             for idx, prior_words in enumerate(kept_words):
@@ -718,7 +720,11 @@ class UnifiedRetrieval:
             if len(selected) >= base_items:
                 overflow.append(item)
                 continue
-            if base_tokens is not None and tokens + item_tokens > base_tokens:
+            if (
+                base_tokens is not None
+                and tokens + item_tokens > base_tokens
+                and not item.get("office_bid_atomic")
+            ):
                 overflow.append(item)
                 continue
             selected.append(item)

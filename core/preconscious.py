@@ -552,10 +552,15 @@ class Preconscious:
             if contact_ctx:
                 annotations.append(contact_ctx)
 
-        # ── 6. Affect (ambient only) ──────────────────────────────────
-        affect_block = self._pull_affect_state()
-        if affect_block:
-            ambient_parts.append(affect_block)
+        # ── 6. Affect compatibility path ──────────────────────────────
+        # With Context Office enabled, affect already competed for the same
+        # retrieval budget as facts, beliefs, traits, and memories. Preserve
+        # the legacy ambient renderer only without that coordinator.
+        context_office = getattr(getattr(self, "_unified", None), "context_office", None)
+        if context_office is None:
+            affect_block = self._pull_affect_state()
+            if affect_block:
+                ambient_parts.append(affect_block)
 
         if learn:
             self._save_injection_state()
@@ -777,7 +782,8 @@ class Preconscious:
         if self.memory:
             try:
                 entries = self.memory.journal.latest_by_id()
-                mem = entries.get(memory_id)
+                journal_id = memory_id[4:] if memory_id.startswith("mem_") else memory_id
+                mem = entries.get(journal_id) or entries.get(memory_id)
                 if mem:
                     return mem.get("content", "")[:100]
             except Exception:
@@ -2262,10 +2268,13 @@ class Preconscious:
                 "relation_member": "RELATIONS DESK — verified path member",
                 "catalog_member": "CATALOG DESK — verified set member/counterevidence",
                 "belief_source": "BELIEFS DESK — verified stance source",
+                "identity_source": "IDENTITY DESK — relevant learned trait, value, or behavior",
                 "causal_member": "CAUSALITY DESK — verified reason evidence",
                 "direct_fact": "FACTS DESK — verified direct fact",
                 "episode_support": "EPISODE DESK — verified supporting memory",
                 "supporting_belief": "BELIEFS DESK — supporting structured belief",
+                "affect_state": "AFFECT DESK — current response-relevant posture",
+                "affective_resonance": "AFFECT DESK — emotionally resonant memory, not factual proof",
                 "unverified_semantic": "SEMANTIC ADVISOR — unverified candidate",
                 "semantic_recall": "SEMANTIC ADVISOR — recall",
             }
@@ -2340,7 +2349,10 @@ class Preconscious:
         # Co-injected item positions are intentionally immutable. Sequence-
         # sensitive plasticity has already been applied to cluster prototypes
         # in `_unified_select`, based only on foreground movement.
-        all_ids = [b.get("id", "") for b in rendered_selection if b.get("id")]
+        all_ids = [
+            b.get("id", "") for b in rendered_selection
+            if b.get("id") and b.get("tier", 0) != -1
+        ]
 
         # Tier-0 memory ids are kept out of the returned provenance list.
         # Callers thread it into memory metadata as `belief_ids`, which the
@@ -2366,12 +2378,14 @@ class Preconscious:
         if not belief_texts:
             return "", []
 
-        profile = os.environ.get("HELIX_MRAG_PROFILE", "local").strip().lower()
-        default_render_mode = "verbatim" if profile in ("frontier", "gpt") else "summary"
+        # Query-time summaries can erase exactly retrieved names, dates, and
+        # arbitrary relations. Maintained session/topic summaries remain
+        # corpus items; the final office brief itself stays exact.
+        default_render_mode = "verbatim"
         render_mode = os.environ.get(
             "HELIX_MRAG_RENDER_MODE", default_render_mode,
         ).strip().lower()
-        if unified is not None and render_mode == "verbatim":
+        if unified is not None and render_mode in ("verbatim", "structured"):
             lines = ["Recalled context (historical memory, possibly with distractors):"]
             lines.extend(f"- {text}" for text in belief_texts)
             annotation = "*(" + "\n".join(lines) + ")*"

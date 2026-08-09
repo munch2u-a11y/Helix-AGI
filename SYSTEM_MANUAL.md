@@ -211,10 +211,18 @@ The bridge between memory and conscious awareness. Each pulse, it assembles a pe
 
 1. **Layer 2 Anchor Match** — known people, concepts, skills, and desires named in the trigger inject at highest priority with a rolling repetition guard.
 2. **mRAG Foreground** — the full trigger is always searched, with bounded sentence, RAKE keyphrase, entity, and concept-expansion heads. The `local` profile permits 16 heads and a 60-candidate pool; `frontier` permits 32 heads and 160 candidates, with a larger injection budget for a large-context conscious model. They query native 1024D Qwen3 embeddings using exact numpy or FAISS FlatIP. A semantic acceptance boundary rejects weak tail candidates even when the store is smaller than top-k. Rarity-weighted exact terms and conceptual tags supplement cosine ranking. Raw 8D results never re-rank or displace this order.
-3. **Raw Spatial Complement** — the carried attention trajectory queries both 8D fields directly, with no top-100 semantic pre-filter. At most two spatial-only items are added after the mRAG foreground.
-4. **Associative Transition Complement** — repeated direct movement between foreground clusters learns a directed transition and nudges only those cluster prototypes in a separate 8D overlay. One-off transitions do not surface; learned results are additive and items already ranked by mRAG are ineligible. If raw spatial recall has independently selected the learned destination, the item is deduplicated and labeled as a learned follow-on association so the conscious model receives the relation's provenance. Individual memory and belief positions never move because they were co-injected.
-5. **Affect and Stability** — original encoding Lagrangian and stability metadata survive retrieval. They select representatives only inside the non-semantic lane; recalled memories reproduce one bounded aggregate somatic echo rather than one nudge per chunk.
-6. **Scratchpad and Recent State** — active notes, immediate temporal continuity, contact context, and affect state remain independent injection layers.
+3. **Context Office Arbitration** — Facts, State, Relations, Catalog, Beliefs, Causality, Affect, and conditionally routed Identity desks bid for one shared prompt budget. Each bid considers task fit, relevance, confidence, stability, importance, affective salience, and text cost. Complete joins and calculations are atomic. A bounded canonical office-board lookup occurs only when the initial semantic slice is insufficient. Worker contracts are direct, example-free, and candidate-capped.
+4. **Raw Spatial Complement** — the carried attention trajectory queries both 8D fields directly, with no top-100 semantic pre-filter. At most two spatial-only items are added after the mRAG foreground.
+5. **Associative Transition Complement** — repeated direct movement between foreground clusters learns a directed transition and nudges only those cluster prototypes in a separate 8D overlay. One-off transitions do not surface; learned results are additive and items already ranked by mRAG are ineligible. If raw spatial recall has independently selected the learned destination, the item is deduplicated and labeled as a learned follow-on association so the conscious model receives the relation's provenance. Individual memory and belief positions never move because they were co-injected.
+6. **Affect and Stability** — original encoding Lagrangian and stability metadata survive retrieval. The Affect desk submits current posture and no more than two resonant memories when they can change the response; recalled memories reproduce one bounded aggregate somatic echo rather than one nudge per chunk.
+7. **Scratchpad and Recent State** — active notes, immediate temporal continuity, and contact context remain independent injection layers.
+
+The final Context Office selection is rendered exactly for both local and
+frontier profiles. Query-time summarization is no longer the default because
+it can erase retrieved names, dates, and arbitrary relations. Maintained
+session/topic summaries remain ordinary corpus candidates and compete for
+space. `HELIX_MRAG_RENDER_MODE=summary` is retained only as an explicit legacy
+override.
 
 The old standalone gravity block and all-to-centroid Hebbian co-injection drift are disabled while unified retrieval is active. Set `HELIX_UNIFIED_RAG=0` only for legacy fallback. `HELIX_MRAG_ADJACENCY=1` restores the old temporal-neighbor expansion for benchmark parity; it is off by default so mRAG remains semantic. `HELIX_ASSOCIATIVE_MEMORY=0` disables only transition learning/recall for an ablation. `HELIX_SEMANTIC_MODEL` defaults to `qwen3-embedding:0.6b`, `HELIX_SEMANTIC_DIM` to `1024`, `HELIX_FAISS_MODE` to exact `flat`, and `HELIX_MRAG_PROFILE` to `local`.
 
@@ -252,7 +260,11 @@ The local 1024D Qwen3 encoder remains the semantic retriever in either mode.
 
 ### Retrieval Rendering
 
-The `local` retrieval profile condenses recalled beliefs and memories with a local Qwen2.5-0.5B-Instruct model to conserve a small context window. The `frontier` profile defaults to verbatim evidence because a second lossy inference pass can erase names, dates, arbitrary pairings, and association provenance after retrieval found them. `HELIX_MRAG_RENDER_MODE=summary|verbatim` overrides either default.
+Both retrieval profiles render the Context Office's selected records exactly.
+The profiles still differ in heads, candidate count, item count, and token
+budget, but the local path no longer applies a second model summary that can
+erase names, dates, arbitrary pairings, or association provenance.
+`HELIX_MRAG_RENDER_MODE=summary` remains an explicit legacy override.
 
 ---
 
@@ -274,11 +286,19 @@ A task may instead become `BLOCKED`, `FAILED`, or `CANCELLED`. Open work interru
 
 Task templates are embedded in the same native 1024D semantic representation used for precise retrieval, but are stored as their own learned orchestrator centroids. A separate 8D directed transition overlay tracks which working contexts tend to follow each other. This task-habit space never moves memory, belief, or identity points.
 
-The controller estimates focus depth from novelty, uncertainty, stakes, failure history, and habit strength. It reverse-searches the live capability registry, applies authorization and availability gates, and exposes at most a small schema subset to the focus session. Successful and failed outcomes update reliability, capability affinities, expected depth, and contextual procedural sequences.
+The controller estimates focus depth from novelty, uncertainty, stakes, failure history, and habit strength. It reverse-searches the live capability registry, applies authorization and availability gates, and exposes at most four schemas to a local-context focus session or eight to a 100k+-context session. Successful and failed outcomes update reliability, capability affinities, expected depth, and contextual procedural sequences.
 
 ### Identity and Concurrency Boundary
 
-Focus sessions are bounded expressions of the same Helix identity, not separate personas. They read the shared mRAG corpus and beliefs. Their retrieval is semantic-only: raw 8D attention movement and associative transition learning remain serialized on the main pulse so parallel task work cannot create false autobiographical associations or race the attention trajectory. Speculative focus thoughts are not stored; accepted outcomes return as first-person `task_result` events, and successful outcomes may become task memories.
+Focus sessions share Helix's identity state, mRAG corpus, and beliefs; they do
+not receive an identity preamble by default. The identity text is added only
+when the specific task depends on selfhood, values, personal history,
+relationships, preferences, or characteristic behavior. Their retrieval is
+semantic-only: raw 8D attention movement and associative transition learning
+remain serialized on the main pulse so parallel task work cannot create false
+autobiographical associations or race the attention trajectory. Speculative
+focus thoughts are not stored; accepted outcomes return as first-person
+`task_result` events, and successful outcomes may become task memories.
 
 Task cognition supports `off`, `observe` (default), and `active`. `observe` records and audits natural intentions while preserving direct action behavior. `active` makes the main provider thought-only and runs committed work in focused sessions. Active mode requires the standard pulse loop and a tool-capable Codex CLI, Gemini, or Anthropic provider; unsupported combinations safely fall back to `observe`.
 

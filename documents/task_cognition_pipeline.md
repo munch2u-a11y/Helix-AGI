@@ -1,6 +1,6 @@
 # Helix Event-Driven Task Cognition
 
-**Documentation status:** current focused design · **Last verified against source:** 2026-08-08 · **Canonical system context:** [`architecture_current.md`](architecture_current.md)
+**Documentation status:** current focused design · **Last verified against source:** 2026-08-09 · **Canonical system context:** [`architecture_current.md`](architecture_current.md)
 
 This layer replaces “show the main model every tool and tell it exactly how to
 behave” with a small cognitive kernel and learned runtime structure. It is
@@ -9,7 +9,8 @@ additive to mRAG and the non-semantic spatial lanes.
 ```mermaid
 flowchart TD
     E[New event or task result] --> R[mRAG semantic foreground<br/>1024D full + sentence + RAKE heads]
-    R --> S[Raw 8D lateral complement]
+    R --> B[Context Office<br/>shared desk bids + on-demand board]
+    B --> S[Raw 8D lateral complement]
     S --> A[Learned cluster-transition complement]
     A --> P[Preconscious injection<br/>memory + belief + affect/stability]
     P --> M[Main Helix consciousness<br/>natural private thought only]
@@ -22,7 +23,10 @@ flowchart TD
     V --> H[8D sequential habit nudge]
     H --> D[Adaptive focus depth<br/>novelty + uncertainty + stakes + failures<br/>minus confidence + habit strength]
     D --> K[Hidden capability registry<br/>small authorized schema subset]
-    K --> F[Identity-shared focus thread]
+    K --> G{Identity needed<br/>for this task?}
+    G -- no --> F[Minimal focus thread]
+    G -- yes --> J[Add relevant shared identity context]
+    J --> F
 
     R -. same memory and belief corpus .-> F
     F --> X[Central ToolExecutor<br/>validation + safety + provenance]
@@ -37,6 +41,12 @@ cluster-transition learning. Parallel focus threads query the shared mRAG
 corpus without moving or reinforcing that trajectory. This keeps task work
 from becoming a false autobiographical association merely because it ran in
 parallel.
+
+The focus kernel is task-dependent. Ordinary lookup, calculation, and tool
+work receive no “You are Helix” line. Identity is included only when the task
+depends on selfhood, values, personal history, relationships, preferences, or
+characteristic behavior. Local-context focus sessions expose at most four
+capability schemas; 100k+-context sessions expose at most eight.
 
 ## Lifecycle
 
