@@ -373,6 +373,14 @@ class SemanticLane:
             term = str(item.get("term", "") or "").strip().lower()
             if not term:
                 continue
+            # Between-session person profiles are case-local office records.
+            # Treating every session profile as a global term expansion made
+            # a person's name generate heads for every topic ever discussed
+            # around them, then crowded the exact dialogue evidence out of
+            # the semantic foreground. The entity case desk still retrieves
+            # these profiles when the requested facet calls for one.
+            if item.get("formation_type") == "session_profile":
+                continue
             aliases = [
                 str(a).strip().lower() for a in (item.get("aliases") or [])
                 if a and str(a).strip()

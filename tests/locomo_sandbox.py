@@ -100,8 +100,9 @@ MAINTENANCE_SYSTEM_INSTRUCTION = """\
 Extract durable person-specific context from one completed conversation session.
 Return one JSON object with a `people` list. Each person may contain: name,
 facts, preferences, opinions, traits, communication_style, and affect.
-Every facet is a list of short strings. Use explicit support only, keep people
-separate, and return at most two items per facet. No markdown or explanation.
+Every facet is a list of short strings. Each person must also contain source_ids
+listing only record IDs specifically about that person. Use explicit support,
+keep people separate, and return at most two items per facet. No explanation.
 """
 
 
@@ -201,6 +202,15 @@ def extract_dialogue_id(item: Dict[str, Any]) -> Optional[str]:
             return tag
     content = item.get("content", "")
     return parse_dia_id(content) if isinstance(content, str) else None
+
+
+def extract_injected_dialogue_ids(context_strings: Sequence[str]) -> List[str]:
+    """Recover exact event IDs from the context the answering model saw."""
+    return list(dict.fromkeys(
+        match
+        for context in context_strings
+        for match in re.findall(r"\[(D\d+:\d+)\]", str(context or ""))
+    ))
 
 
 def mean(values: List[float]) -> float:
@@ -341,9 +351,9 @@ def reset_question_state(preconscious, physics) -> None:
     np = require_numpy()
     preconscious._prev_pulse_beliefs = []
     preconscious._prev_pulse_belief_ids = []
-    preconscious._belief_cache = []
-    preconscious._belief_cache_count = 0
-    preconscious._belief_cache_mass = 0.0
+    # The corpus is immutable during the exam. Keep its canonical belief
+    # cache warm between independent questions; clearing it forced every QA
+    # to re-embed the same maintenance profiles without changing retrieval.
     preconscious._concept_blacklist = {}
     preconscious._memory_blacklist = {}
     preconscious._tool_belief_blacklist = {}
@@ -732,7 +742,10 @@ def run_session_maintenance(
                 close = getattr(session, "close", None)
                 if callable(close):
                     close()
-            return extract_json_object(response) or {}
+            parsed = extract_json_object(response)
+            if parsed is None:
+                raise ValueError("Maintenance worker returned malformed JSON.")
+            return parsed
 
     stats = SessionMemoryMaintenance(
         cases=office.cases,
@@ -822,7 +835,7 @@ def run_agent_question(
 
 
 def collect_retrieval_diagnostics(runtime: Dict[str, Any], question: str) -> Dict[str, Any]:
-    """Collect provenance/evidence diagnostics from Helix's retrieval APIs."""
+    """Collect independent baseline-lane diagnostics without re-running Helix."""
     memory_manager = runtime["memory_manager"]
     physics = runtime["physics"]
 
@@ -830,14 +843,15 @@ def collect_retrieval_diagnostics(runtime: Dict[str, Any], question: str) -> Dic
     semantic = memory_manager.search_semantic(question, limit=5)
     spatial = physics.query_neighborhood(question, k=5, attention_relative=True)
 
-    unified_ids, unified_stats = collect_unified_diagnostics(runtime, question)
-
     return {
         "contextual_ids": [extract_dialogue_id(item) for item in contextual if extract_dialogue_id(item)],
         "semantic_ids": [extract_dialogue_id(item) for item in semantic if extract_dialogue_id(item)],
         "spatial_ids": [parse_dia_id(item.get("content", "")) for item in spatial if parse_dia_id(item.get("content", ""))],
-        "unified_ids": unified_ids,
-        "unified_stats": unified_stats,
+        # Filled from the actual pulse context after the answer. A second
+        # unified retrieval is stateful and can disagree item-by-item with
+        # the context that was really injected.
+        "unified_ids": [],
+        "unified_stats": {},
     }
 
 
@@ -1075,8 +1089,15 @@ def run_evaluation(
                 )
 
                 reset_question_state(runtime["preconscious"], runtime["physics"])
-                retrieval = collect_retrieval_diagnostics(runtime, question)
                 agent_result = run_agent_question(runtime, provider_config, question, max_pulses=max_pulses)
+                retrieval = collect_retrieval_diagnostics(runtime, question)
+                retrieval["unified_ids"] = extract_injected_dialogue_ids(
+                    [pulse.get("context_string", "") for pulse in agent_result["pulses"]]
+                )
+                retrieval["unified_stats"] = (
+                    dict(agent_result["pulses"][0].get("retrieval_stats") or {})
+                    if agent_result["pulses"] else {}
+                )
                 answer_em, answer_f1 = compute_answer_metrics(agent_result["answer"], answer_target, category)
 
                 global_answer["em"].append(answer_em)

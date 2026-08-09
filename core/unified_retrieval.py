@@ -49,6 +49,7 @@ from memory.mrag.corpus import HelixCorpus, normalize_ref
 from memory.mrag.semantic_lane import SemanticLane, estimate_tokens
 from memory.mrag.vector_store import HelixVectorStore
 from core.context_office import ContextOffice, is_enabled as office_enabled
+from core.memory_intake_office import MemoryIntakeOffice
 
 logger = logging.getLogger("helix.core.unified_retrieval")
 
@@ -128,6 +129,8 @@ class UnifiedRetrieval:
         self.vector_store = HelixVectorStore(physics_engine)
         self.lane_a = SemanticLane(self.corpus, self.vector_store)
         self.context_office = ContextOffice(self.corpus) if office_enabled() else None
+        self.intake = MemoryIntakeOffice()
+        self.last_work_order = None
         self.enable_mrag_adjacency = os.environ.get(
             "HELIX_MRAG_ADJACENCY", "0"
         ).strip().lower() in ("1", "true", "yes", "on")
@@ -192,16 +195,28 @@ class UnifiedRetrieval:
 
         exclude = exclude or set()
 
+        known_entities = (
+            self.context_office.cases.known_names()
+            if self.context_office is not None and self.context_office.cases is not None
+            else ()
+        )
+        work_order = self.intake.review(
+            trigger_text, known_entities=known_entities,
+        )
+        self.last_work_order = work_order
+        search_query = work_order.search_query or trigger_text
+
         semantic_lane_a = [
-            item for item in self.lane_a.retrieve(trigger_text)
+            item for item in self.lane_a.retrieve(search_query)
             if item["id"] not in exclude
         ]
         office_stats: Dict[str, Any] = {"enabled": False}
         if self.context_office is not None:
             brief = self.context_office.prepare(
-                trigger_text,
+                search_query,
                 semantic_lane_a,
                 max_items=max_items,
+                work_order=work_order,
             )
             lane_a = [
                 item for item in brief.items
@@ -249,6 +264,7 @@ class UnifiedRetrieval:
             "lexicon_hits": sorted(self.lane_a.last_lexicon_matches),
             "semantic_heads": list(self.lane_a.last_search_heads),
             "retrieval_profile": self.profile,
+            "memory_work_order": work_order.to_dict(),
             "context_office": office_stats,
         }
 

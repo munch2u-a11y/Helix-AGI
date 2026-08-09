@@ -242,6 +242,7 @@ class Preconscious:
                     "category": cat,
                     "aliases": b.get("aliases", []),
                     "mass": b.get("mass", 1.0),
+                    "formation_type": b.get("formation_type", ""),
                 }
                 # A term can have MULTIPLE Layer 2 entries (e.g. six
                 # 'Antigravity' profiles across people + concepts).
@@ -594,6 +595,20 @@ class Preconscious:
             return "", set(), []
 
         trigger_lower = trigger_text.lower()
+        suppress_session_profiles = False
+        unified = getattr(self, "_unified", None)
+        if unified is not None:
+            office = getattr(unified, "context_office", None)
+            cases = getattr(office, "cases", None)
+            known_entities = cases.known_names() if cases is not None else ()
+            work_order = unified.intake.review(
+                trigger_text, known_entities=known_entities,
+            )
+            suppress_session_profiles = bool(
+                work_order.is_question
+                and work_order.requires_exact
+                and not work_order.profile_allowed
+            )
         matched_terms = {}  # term_lower → list of candidate entries
 
         for key, entries in self._lexicon_lookup.items():
@@ -601,6 +616,11 @@ class Preconscious:
             # e.g. "sam" shouldn't match inside "sample"
             if re.search(r'\b' + re.escape(key) + r'\b', trigger_lower):
                 for entry in entries:
+                    if (
+                        suppress_session_profiles
+                        and entry.get("formation_type") == "session_profile"
+                    ):
+                        continue
                     term_key = entry.get("term", key).lower()
                     matched_terms.setdefault(term_key, [])
                     if entry["id"] not in {

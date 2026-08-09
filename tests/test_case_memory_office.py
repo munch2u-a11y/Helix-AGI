@@ -91,6 +91,7 @@ class CaseMemoryOfficeTests(unittest.TestCase):
                 worker=lambda _request: {
                     "people": [{
                         "name": "Bob",
+                        "source_ids": ["mem_1"],
                         "preferences": ["enjoys quiet Sunday walks"],
                         "communication_style": ["speaks plainly about routines"],
                     }],
@@ -117,6 +118,7 @@ class CaseMemoryOfficeTests(unittest.TestCase):
                 worker=lambda _request: {
                     "people": [{
                         "name": "Bob",
+                        "source_ids": ["mem_1"],
                         "preferences": ["orders pistachio ice cream"],
                     }],
                 },
@@ -130,6 +132,37 @@ class CaseMemoryOfficeTests(unittest.TestCase):
             self.assertEqual(case["memory_refs"], ["mem_1"])
             self.assertEqual(case["session_refs"]["s1"], ["mem_1"])
             self.assertEqual(profile["memory_refs"], ["mem_1"])
+
+    def test_vocative_is_not_filed_as_a_fact_about_addressee(self):
+        records = [
+            _record("gina_fact", "s1", "Gina: I chose oak flooring for my studio."),
+            _record("jon_fact", "s1", "Jon: Thanks, Gina! Marley is my favorite dog."),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = CaseMemoryOffice(Path(tmp) / "cases", _Corpus(records))
+            cases.register_records(records, session_id="s1")
+            gina = cases.get_case("Gina")
+            result = cases.route(
+                "What flooring did Gina choose?",
+                subjects=["Gina"],
+                include_profiles=False,
+            )
+
+        self.assertEqual(gina["memory_refs"], ["gina_fact"])
+        self.assertIn("jon_fact", gina["role_refs"]["addressee"])
+        self.assertEqual([item["id"] for item in result["items"]], ["gina_fact"])
+
+    def test_malformed_worker_output_is_reported_without_losing_exact_records(self):
+        record = _record("mem_1", "s1", "Bob: I enjoy quiet Sunday walks.")
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = CaseMemoryOffice(Path(tmp) / "cases", _Corpus([record]))
+            store = BeliefStore(str(Path(tmp) / "beliefs"))
+            result = SessionMemoryMaintenance(
+                cases=cases, belief_store=store, worker=lambda _request: {},
+            ).run("s1", [record])
+
+        self.assertIn("no valid people list", result["worker_error"].lower())
+        self.assertEqual(result["references_linked"], 1)
 
 
 if __name__ == "__main__":

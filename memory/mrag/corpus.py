@@ -226,6 +226,8 @@ class HelixCorpus:
                 "component_ids": b.get("component_ids", []) or [],
                 "relations": b.get("relations", []) or [],
                 "belief_ids": [],
+                "formation_type": b.get("formation_type", ""),
+                "maintenance_session": b.get("maintenance_session", ""),
                 "position_8d": b.get("position_8d") or [],
                 "created_at": b.get("created_at", ""),
                 "source": b.get("source", ""),

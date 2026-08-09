@@ -50,3 +50,18 @@ tests deterministic scope closure but does not establish that learned 8D
 associations, affect, or user mannerisms improve behavior. The 74.2% non-gold
 ratio is mostly the deliberately retained lateral/recent context and should be
 evaluated for usefulness, not optimized away from this score alone.
+
+## Natural-dialogue diagnostic protocol
+
+Long-dialogue retries use a fixed conversation and question slice. Retrieval
+recall is computed from exact event IDs parsed from the context actually sent
+to the answering model. The harness no longer performs a second stateful
+unified retrieval and calls that diagnostic result “injected context.” Direct
+contextual, semantic, and spatial searches remain separate diagnostics.
+
+Between-session maintenance is evaluated as a reusable workflow rather than a
+test-key patch: typed entity roles prevent vocatives from becoming facts,
+workers must return source IDs, malformed output is surfaced, and person
+profiles are case-local. Question-time intake generates the same subject,
+facet, exactness, chronology, and relational work order for arbitrary runtime
+messages and benchmark probes.

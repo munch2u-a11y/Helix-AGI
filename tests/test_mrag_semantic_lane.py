@@ -131,6 +131,23 @@ class TestMultiHeadScoring(unittest.TestCase):
         self.assertIn("rake", kinds)
         self.assertLessEqual(len(heads), 16)
 
+    def test_session_profiles_do_not_expand_person_name_globally(self):
+        profile = _item("profile", "Jon likes dance, tattoos, and Marley", [1.0, 0.0])
+        profile.update({
+            "tier": 2,
+            "term": "Jon",
+            "formation_type": "session_profile",
+        })
+        raw = np.array([1.0, 0.0], dtype=np.float32)
+        lane = SemanticLane(_Corpus([profile]), _VectorStore(raw, raw))
+        lane.sync()
+        heads = lane._generate_search_heads("What tattoo did Jon get?")
+
+        self.assertNotIn("jon", lane._lexicon_terms)
+        self.assertNotIn("jon", lane._lexicon_concept_expansions)
+        self.assertNotIn("dance", heads)
+        self.assertNotIn("marley", heads)
+
 
 class TestFaissFreshness(unittest.TestCase):
     def test_new_vector_is_incrementally_added_to_live_faiss_index(self):

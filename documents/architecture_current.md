@@ -17,13 +17,14 @@ flowchart TD
     P -->|RESTING configured interval| R
     P -->|DORMANT sleep window| D[Dream and consolidation]
 
-    R --> M[mRAG semantic foreground<br/>native 1024D Qwen3]
+    R --> W[Memory intake work order<br/>subject / facet / exactness / time / relation]
+    W --> M[mRAG semantic foreground<br/>native 1024D Qwen3]
     R --> S[Raw 8D spatial complement<br/>carried attention state]
     R --> A[Learned directed cluster transitions<br/>separate 8D overlay]
-    M --> O[Context Office desk bids]
-    O -. insufficient slice .-> B[On-demand office board]
-    B -. bounded candidates .-> O
-    O --> K[Named-entity case route<br/>exact refs + source-linked facets]
+    M --> CO[Context Office desk bids]
+    CO -. insufficient slice .-> B[On-demand office board]
+    B -. bounded candidates .-> CO
+    CO --> K[Named-entity case route<br/>typed exact refs + source-linked facets]
     K --> V[Shared bid arbitration]
     V --> I[Bounded exact injection]
     S --> I
@@ -32,8 +33,8 @@ flowchart TD
 
     C -->|off / observe| X[Direct host-tool path]
     C -->|active: committed intention| T[Durable TaskRecord]
-    T --> O[1024D orchestrator search<br/>plus 8D habit transition]
-    O --> F[Identity-shared focus thread<br/>scoped hidden schemas]
+    T --> TO[1024D orchestrator search<br/>plus 8D habit transition]
+    TO --> F[Identity-shared focus thread<br/>scoped hidden schemas]
     F --> X
     X --> Q[Central ToolExecutor<br/>validation and safety]
     Q --> E
@@ -82,12 +83,13 @@ from these representations are never blended into one pseudo-distance.
 
 | Order | Lane | Representation | Contract |
 |---:|---|---|---|
-| 1 | Layer-2 anchors | Named people, concepts, skills, desires | Exact high-priority anchors with repetition guard |
-| 2 | mRAG semantic advisor | Native normalized 1024D Qwen3 embeddings | Full-trigger, sentence, RAKE, entity, concept, and relation heads plus exact-term/tag evidence advise office routing and remain the fallback |
-| 3 | Context Office | Transient term, episode, turn, task, and entity-case indexes over the canonical corpus | Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, and conditionally routed Identity desks submit bids for one shared budget; no duplicated canonical memory |
-| 4 | Raw spatial / Lateral desk | MiniLM 384D projected through a fixed matrix to 8D | At most two spatial-only items; append-only, explicitly non-evidentiary, and unable to reorder the office brief |
-| 5 | Associative transition | Directed cluster prototypes in a separate 8D overlay | Repeated A→B attention transitions surface lateral follow-ons; individual memories and beliefs do not move |
-| 6 | Metadata and working state | Stability, Lagrangian snapshot, scratchpad, recent/contact state | Preserved for rendering, representative choice, and one bounded somatic echo; response-relevant current affect competes through the Affect desk |
+| 1 | Memory intake | Deterministic query work order | Removes transport framing and identifies named subjects, requested facets, exactness, chronology, and relational scope before any search |
+| 2 | Layer-2 anchors | Named people, concepts, skills, desires | Exact high-priority anchors with repetition guard; session profiles are omitted from exact factual questions unless a profile facet is requested |
+| 3 | mRAG semantic advisor | Native normalized 1024D Qwen3 embeddings | Full-trigger, sentence, RAKE, entity, concept, and relation heads plus exact-term/tag evidence advise office routing and remain the fallback |
+| 4 | Context Office | Transient term, episode, turn, task, and typed entity-case indexes over the canonical corpus | Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, and conditionally routed Identity desks submit bids for one shared budget; no duplicated canonical memory |
+| 5 | Raw spatial / Lateral desk | MiniLM 384D projected through a fixed matrix to 8D | At most two spatial-only items; append-only, explicitly non-evidentiary, and unable to reorder the office brief |
+| 6 | Associative transition | Directed cluster prototypes in a separate 8D overlay | Repeated A→B attention transitions surface lateral follow-ons; individual memories and beliefs do not move |
+| 7 | Metadata and working state | Stability, Lagrangian snapshot, scratchpad, recent/contact state | Preserved for rendering, representative choice, and one bounded somatic echo; response-relevant current affect competes through the Affect desk |
 
 The semantic index defaults to exact normalized dot-product search: NumPy for
 small stores and FAISS `IndexFlatIP` after the automatic threshold. Optional
@@ -132,11 +134,21 @@ they contain no examples and no repeated identity preamble. The deterministic
 workers are the default. These same contracts are the extension boundary for
 optional local desk models without exposing an oversized schema bundle.
 
+`MemoryIntakeOffice` is the front desk for this process. It emits a reusable
+work order rather than an answer: cleaned search text, explicit/possessive
+subjects, question type, requested profile facets, exact/chronological needs,
+and whether weak relational links are allowed. Exact factual work orders
+reserve a small Tier-0 foreground before ordinary belief/profile competition;
+the remaining slots still use the shared arbitration budget.
+
 ### Session maintenance and entity cases
 
 Exact incoming records always remain in the central append-only journal. An
-entity case stores bounded memory and belief references, aliases, and session
-membership; it does not move or rewrite those records. Questions that
+entity case stores bounded typed references (`speaker`, explicit `subject`,
+weak `mention`, and `addressee`), belief references, aliases, and session
+membership; it does not move or rewrite those records. Only speaker and
+explicit-subject links can answer a direct fact question. Weak links are
+available only to relational work orders. Questions that
 explicitly name a known person are routed to a lexical search over that case
 before its candidates enter ordinary bid arbitration. This gives a mature
 agent a small “Bob desk” without giving that desk guaranteed prompt space.
@@ -146,7 +158,11 @@ are grouped by session and filed deterministically. One optional bounded worker
 per session may form a source-linked person profile containing supported facts,
 preferences, opinions, traits, communication style, and affect. Exact filing
 commits independently, so a local-model timeout or malformed profile cannot
-lose the underlying memories. The same provider-neutral workflow is available
+lose the underlying memories. The worker must return person-profile source IDs;
+missing or malformed output is reported as a worker failure rather than
+silently treated as an empty profile. Maintained session profiles remain
+case-local and do not expand a person's name into global semantic search heads.
+The same provider-neutral workflow is available
 to sandboxes and future event-defined rest boundaries.
 
 ## Learned Relations and New Concepts

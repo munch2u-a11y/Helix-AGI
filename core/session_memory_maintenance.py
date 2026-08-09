@@ -48,7 +48,9 @@ class SessionMemoryMaintenance:
         request = {
             "task": (
                 "Extract durable person-specific facts, preferences, opinions, traits, "
-                "communication style, and affect. Use only explicit support."
+                "communication style, and affect. Keep people separate. For each person, "
+                "include source_ids containing only records specifically about that person. "
+                "Use only explicit support."
             ),
             "session_id": session_id,
             "records": [
@@ -63,10 +65,17 @@ class SessionMemoryMaintenance:
         except Exception as exc:
             stats["worker_error"] = str(exc)[:500]
             return stats
-        people = response.get("people", []) if isinstance(response, Mapping) else []
+        if not isinstance(response, Mapping) or "people" not in response:
+            stats["worker_error"] = "Maintenance worker returned no valid people list."
+            return stats
+        people = response.get("people", [])
         if not isinstance(people, list):
+            stats["worker_error"] = "Maintenance worker people field was not a list."
             return stats
 
+        record_by_id = {
+            str(item.get("id")): item for item in records if item.get("id")
+        }
         existing = {
             self._signature(item.get("term", ""), item.get("content", "")): item
             for item in self.beliefs.get_category("people", limit=100_000)
@@ -77,14 +86,21 @@ class SessionMemoryMaintenance:
             name = " ".join(str(person.get("name") or "").split())[:80]
             if not name:
                 continue
+            raw_source_ids = person.get("source_ids", [])
+            if isinstance(raw_source_ids, str):
+                raw_source_ids = [raw_source_ids]
+            source_ids = list(dict.fromkeys(
+                str(item_id) for item_id in raw_source_ids
+                if str(item_id) in record_by_id
+            )) if isinstance(raw_source_ids, list) else []
             if self.cases.get_case(name) is None:
-                # A person can be discussed without speaking. Build that case
-                # only from exact records which literally name the person.
-                pattern = re.compile(r"\b" + re.escape(name) + r"\b", re.IGNORECASE)
+                # A person can be discussed without speaking. The maintenance
+                # worker must bind that person to explicit source IDs; a bare
+                # name mention or vocative is only a weak relation.
                 explicit_subjects = {
                     str(item.get("id")): [name]
                     for item in records
-                    if item.get("id") and pattern.search(str(item.get("content") or ""))
+                    if str(item.get("id")) in source_ids
                 }
                 if explicit_subjects:
                     additional = self.cases.register_records(
@@ -102,6 +118,14 @@ class SessionMemoryMaintenance:
                     stats["cases_touched"] = len(stats["case_names"])
             if self.cases.get_case(name) is None:
                 continue
+            elif source_ids:
+                # Source IDs are claim-level attribution supplied by the
+                # worker even when the case already exists as a speaker.
+                self.cases.register_records(
+                    [record_by_id[item_id] for item_id in source_ids],
+                    session_id=session_id,
+                    explicit_subjects={item_id: [name] for item_id in source_ids},
+                )
             clauses: List[str] = []
             for facet in FACETS:
                 values = person.get(facet, [])
@@ -121,7 +145,7 @@ class SessionMemoryMaintenance:
             content = (f"{name} — " + " | ".join(clauses))[:500].rstrip(" |")
             signature = self._signature(name, content)
             prior = existing.get(signature)
-            memory_refs = self.cases.session_memory_refs(name, session_id)
+            memory_refs = source_ids or self.cases.session_memory_refs(name, session_id)
             if prior:
                 merged_refs = list(dict.fromkeys(
                     list(prior.get("memory_refs") or []) + memory_refs

@@ -8,7 +8,8 @@ additive to mRAG and the non-semantic spatial lanes.
 
 ```mermaid
 flowchart TD
-    E[New event or task result] --> R[mRAG semantic foreground<br/>1024D full + sentence + RAKE heads]
+    E[New event or task result] --> W[Memory intake work order<br/>subject + facet + exact/time/relation constraints]
+    W --> R[mRAG semantic foreground<br/>1024D full + sentence + RAKE heads]
     R --> B[Context Office<br/>shared desk bids + on-demand board]
     B --> S[Raw 8D lateral complement]
     S --> A[Learned cluster-transition complement]

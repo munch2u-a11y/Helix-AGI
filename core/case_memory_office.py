@@ -84,7 +84,7 @@ def _stem(token: str) -> str:
 class CaseMemoryOffice:
     """Maintain and query source-referenced entity case files."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self, data_dir: str, corpus):
         self.data_dir = Path(data_dir)
@@ -118,13 +118,24 @@ class CaseMemoryOffice:
         session_id: str = "",
         explicit_subjects: Optional[Mapping[str, Sequence[str]]] = None,
     ) -> Dict[str, Any]:
-        """Copy exact-record references into all applicable entity cases."""
+        """Copy exact-record references into typed entity case views.
+
+        Speaker and explicit-subject links are factual. A name merely used as
+        a vocative/addressee or mentioned inside somebody else's statement is
+        retained as a weak relational link, but cannot answer a direct fact
+        question about that person.
+        """
         with self._lock:
             board = self._load()
             cases = board["cases"]
             speakers = {_speaker(item.get("content")) for item in records}
             speakers.discard("")
-            for name in sorted(speakers):
+            supplied_names = {
+                str(name)
+                for names in (explicit_subjects or {}).values()
+                for name in names if str(name).strip()
+            }
+            for name in sorted(speakers | supplied_names):
                 key = _case_key(name)
                 cases.setdefault(key, self._new_case(key, name))
 
@@ -134,54 +145,84 @@ class CaseMemoryOffice:
                 if case.get("name")
             }
             linked = 0
+            weak_linked = 0
             touched: Set[str] = set()
             for item in records:
                 item_id = str(item.get("id") or "")
                 if not item_id:
                     continue
                 content = str(item.get("content") or "")
-                subjects: Set[str] = set()
+                roles_by_name: Dict[str, Set[str]] = {}
                 speaker = _speaker(content)
                 if speaker:
-                    subjects.add(speaker)
+                    roles_by_name.setdefault(speaker, set()).add("speaker")
                 for supplied in (explicit_subjects or {}).get(item_id, ()):
                     if supplied:
-                        subjects.add(str(supplied))
+                        roles_by_name.setdefault(str(supplied), set()).add("subject")
                 lowered = content.lower()
-                for case_key, name in known_names.items():
+                for _case_key_value, name in known_names.items():
                     if re.search(r"\b" + re.escape(name.lower()) + r"\b", lowered):
-                        subjects.add(name)
-                for name in subjects:
+                        if name == speaker:
+                            continue
+                        role = "addressee" if self._is_addressee(content, name) else "mention"
+                        roles_by_name.setdefault(name, set()).add(role)
+                for name, roles in roles_by_name.items():
                     key = _case_key(name)
                     if not key:
                         continue
                     case = cases.setdefault(key, self._new_case(key, name))
-                    refs = list(case.get("memory_refs") or [])
-                    if item_id not in refs:
-                        refs.append(item_id)
-                        linked += 1
-                    case["memory_refs"] = refs[-20_000:]
+                    role_refs = dict(case.get("role_refs") or {})
+                    for role in roles:
+                        refs = list(role_refs.get(role) or [])
+                        if item_id not in refs:
+                            refs.append(item_id)
+                            if role in {"speaker", "subject"}:
+                                linked += 1
+                            else:
+                                weak_linked += 1
+                        role_refs[role] = refs[-20_000:]
+                    case["role_refs"] = role_refs
+
+                    factual = bool(roles & {"speaker", "subject"})
+                    if factual:
+                        refs = list(case.get("memory_refs") or [])
+                        if item_id not in refs:
+                            refs.append(item_id)
+                        case["memory_refs"] = refs[-20_000:]
                     if session_id:
                         sessions = list(case.get("sessions") or [])
                         if session_id not in sessions:
                             sessions.append(session_id)
                         case["sessions"] = sessions[-2_000:]
-                        session_refs = dict(case.get("session_refs") or {})
-                        scoped_refs = list(session_refs.get(session_id) or [])
-                        if item_id not in scoped_refs:
-                            scoped_refs.append(item_id)
-                        session_refs[session_id] = scoped_refs[-5_000:]
-                        # Keep the most recent bounded set of session indexes.
-                        case["session_refs"] = {
-                            key: session_refs[key]
-                            for key in list(session_refs)[-2_000:]
+                        session_roles = dict(case.get("session_role_refs") or {})
+                        scoped_roles = dict(session_roles.get(session_id) or {})
+                        for role in roles:
+                            scoped = list(scoped_roles.get(role) or [])
+                            if item_id not in scoped:
+                                scoped.append(item_id)
+                            scoped_roles[role] = scoped[-5_000:]
+                        session_roles[session_id] = scoped_roles
+                        case["session_role_refs"] = {
+                            scoped_id: session_roles[scoped_id]
+                            for scoped_id in list(session_roles)[-2_000:]
                         }
+                        if factual:
+                            session_refs = dict(case.get("session_refs") or {})
+                            scoped_refs = list(session_refs.get(session_id) or [])
+                            if item_id not in scoped_refs:
+                                scoped_refs.append(item_id)
+                            session_refs[session_id] = scoped_refs[-5_000:]
+                            case["session_refs"] = {
+                                scoped_id: session_refs[scoped_id]
+                                for scoped_id in list(session_refs)[-2_000:]
+                            }
                     case["updated_at"] = _now_iso()
                     touched.add(key)
             self._save(board)
             return {
                 "cases_touched": len(touched),
                 "references_linked": linked,
+                "weak_references_linked": weak_linked,
                 "case_names": [cases[key]["name"] for key in sorted(touched)],
             }
 
@@ -229,6 +270,15 @@ class CaseMemoryOffice:
             case = self._load()["cases"].get(_case_key(name))
             return dict(case) if case else None
 
+    def known_names(self) -> List[str]:
+        """Return canonical case names for the intake router."""
+        with self._lock:
+            cases = self._load()["cases"].values()
+        return sorted(
+            [str(case.get("name") or "") for case in cases if case.get("name")],
+            key=lambda value: value.lower(),
+        )
+
     def summary(self) -> List[Dict[str, Any]]:
         """Return non-content case counts for maintenance audits."""
         with self._lock:
@@ -248,15 +298,24 @@ class CaseMemoryOffice:
             key=lambda case: str(case.get("name", "")).lower(),
         )
 
-    def route(self, query: str, *, max_items: int = 8) -> Dict[str, Any]:
+    def route(
+        self,
+        query: str,
+        *,
+        max_items: int = 8,
+        subjects: Sequence[str] = (),
+        include_relations: bool = False,
+        include_profiles: bool = True,
+    ) -> Dict[str, Any]:
         """Route an entity-specific question to matching case-local search."""
         with self._lock:
             board = self._load()
         lowered = str(query or "").lower()
         matches = []
+        requested = {_case_key(name) for name in subjects if _case_key(name)}
         for case in board["cases"].values():
             names = [case.get("name", ""), *(case.get("aliases") or [])]
-            if any(
+            if str(case.get("case_id") or "") in requested or any(
                 name and re.search(r"\b" + re.escape(str(name).lower()) + r"\b", lowered)
                 for name in names
             ):
@@ -270,8 +329,17 @@ class CaseMemoryOffice:
         query_terms = [term for term in _terms(query) if term not in case_name_terms]
         candidates: List[Dict[str, Any]] = []
         seen: Set[str] = set()
+        factual_ref_ids: Set[str] = set()
         for case in matches:
-            refs = list(case.get("memory_refs") or []) + list(case.get("belief_refs") or [])
+            factual_refs = list(case.get("memory_refs") or [])
+            factual_ref_ids.update(str(item_id) for item_id in factual_refs)
+            refs = list(factual_refs)
+            role_refs = dict(case.get("role_refs") or {})
+            if include_relations:
+                refs.extend(role_refs.get("mention") or [])
+                refs.extend(role_refs.get("addressee") or [])
+            if include_profiles:
+                refs.extend(case.get("belief_refs") or [])
             for ordinal, item_id in enumerate(reversed(refs)):
                 item_id = str(item_id)
                 if item_id in seen:
@@ -294,6 +362,12 @@ class CaseMemoryOffice:
                 item["office_desk"] = "case"
                 item["office_verified"] = False
                 item["case_name"] = case.get("name", "")
+                if item_id in {str(value) for value in factual_refs}:
+                    item["case_reference_role"] = "factual"
+                elif item_id in {str(value) for value in case.get("belief_refs") or []}:
+                    item["case_reference_role"] = "profile"
+                else:
+                    item["case_reference_role"] = "relational"
                 item["case_route_score"] = round(score, 6)
                 item["relevance"] = max(float(item.get("relevance") or 0.0), score)
                 candidates.append(item)
@@ -304,7 +378,21 @@ class CaseMemoryOffice:
             "case_names": [str(case.get("name", "")) for case in matches],
             "items": candidates[:max(0, int(max_items))],
             "candidates": len(candidates),
+            "factual_ref_ids": sorted(factual_ref_ids),
         }
+
+    @staticmethod
+    def _is_addressee(content: Any, name: str) -> bool:
+        payload = _ENVELOPE_RE.sub("", str(content or "").strip())
+        payload = _SPEAKER_RE.sub("", payload)
+        payload = re.sub(
+            r"^(?:thanks?|thank you|hey|hi|hello|wow|yeah|yes|no|sure|okay|ok|oh|well)\b[\s,!.-]*",
+            "", payload, flags=re.IGNORECASE,
+        )
+        return bool(re.match(
+            r"^" + re.escape(str(name)) + r"\s*[,!?:]",
+            payload, re.IGNORECASE,
+        ))
 
     @staticmethod
     def _new_case(key: str, name: str) -> Dict[str, Any]:
@@ -315,8 +403,12 @@ class CaseMemoryOffice:
             "aliases": [],
             "memory_refs": [],
             "belief_refs": [],
+            "role_refs": {
+                "speaker": [], "subject": [], "mention": [], "addressee": [],
+            },
             "sessions": [],
             "session_refs": {},
+            "session_role_refs": {},
             "created_at": now,
             "updated_at": now,
         }

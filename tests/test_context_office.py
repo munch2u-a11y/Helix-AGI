@@ -116,6 +116,29 @@ class OfficeBriefTests(unittest.TestCase):
         self.assertEqual(selected[0]["id"], "preference")
         self.assertIn("task-fit", selected[0]["office_bid_reason"])
 
+    def test_exact_foreground_reservation_precedes_profile_competition(self):
+        candidates = [
+            {
+                "id": "profile", "content": "A polished but broad person profile.",
+                "office_desk": "case", "relevance": 1.0,
+                "confidence": 0.95, "formation_type": "session_profile",
+            },
+            {
+                "id": "exact", "content": "Bob: Pistachio is my favorite flavor.",
+                "office_desk": "semantic_advisor", "relevance": 0.45,
+                "tier": 0,
+            },
+        ]
+        selected = OfficeArbiter().allocate(
+            candidates,
+            active_desks={"facts"},
+            max_items=1,
+            reserve_ids=["exact"],
+            max_profile_items=0,
+        )
+        self.assertEqual([item["id"] for item in selected], ["exact"])
+        self.assertTrue(selected[0]["office_bid_reserved"])
+
     def test_state_desk_places_current_before_history(self):
         old = _item("old", "staging", 1, "The retired staging domain was old.internal.")
         new = _item("new", "staging", 2, "The staging domain is staging.internal.")

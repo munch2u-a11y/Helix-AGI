@@ -27,6 +27,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from core.affect_office import AffectOffice
 from core.case_memory_office import CaseMemoryOffice
+from core.memory_intake_office import MemoryWorkOrder
 from core.office_workflows import OfficeArbiter
 
 
@@ -301,6 +302,7 @@ class ContextOffice:
         semantic_items: Sequence[Dict[str, Any]],
         *,
         max_items: int,
+        work_order: Optional[MemoryWorkOrder] = None,
     ) -> OfficeResult:
         self.sync()
         plan = plan_office(query)
@@ -451,9 +453,22 @@ class ContextOffice:
         # results are still bids: the case owns a small search space, not a
         # permanent prompt section.
         case_result = (
-            self.cases.route(query, max_items=min(10, max_items))
+            self.cases.route(
+                query,
+                max_items=min(10, max_items),
+                subjects=work_order.subjects if work_order is not None else (),
+                include_relations=(
+                    work_order.relation_requested if work_order is not None else False
+                ),
+                include_profiles=(
+                    work_order.profile_allowed if work_order is not None else True
+                ),
+            )
             if self.cases is not None
-            else {"case_names": [], "items": [], "candidates": 0}
+            else {
+                "case_names": [], "items": [], "candidates": 0,
+                "factual_ref_ids": [],
+            }
         )
         selected_by_id = {
             str(item.get("id", "")): index for index, item in enumerate(selected)
@@ -478,6 +493,19 @@ class ContextOffice:
         # preamble.
         selected.extend(self.affect.propose(query, self._by_id, selected))
         proof_ids = [str(item.get("id", "")) for item in evidence]
+        reserve_ids: List[str] = []
+        if work_order is not None and work_order.requires_exact:
+            factual_case_ids = set(case_result.get("factual_ref_ids") or [])
+            for item in selected:
+                item_id = str(item.get("id", ""))
+                if not item_id or item.get("tier") != 0:
+                    continue
+                if work_order.subjects and item_id not in factual_case_ids:
+                    continue
+                if item_id not in reserve_ids:
+                    reserve_ids.append(item_id)
+                if len(reserve_ids) >= 3:
+                    break
         bid_count = len(selected)
         selected = self.arbiter.allocate(
             selected,
@@ -486,6 +514,10 @@ class ContextOffice:
             ),
             max_items=max_items,
             proof_ids=proof_ids,
+            reserve_ids=reserve_ids,
+            max_profile_items=(
+                4 if work_order is not None and work_order.profile_allowed else 0
+            ),
         )
         return OfficeResult(
             items=selected,
@@ -498,6 +530,8 @@ class ContextOffice:
                 bids_considered=bid_count,
                 case_names=case_result["case_names"],
                 case_candidates=case_result["candidates"],
+                work_order=work_order,
+                exact_reserved=len(reserve_ids),
             ),
         )
 
@@ -651,6 +685,8 @@ class ContextOffice:
         bids_considered: int = 0,
         case_names: Optional[Sequence[str]] = None,
         case_candidates: int = 0,
+        work_order: Optional[MemoryWorkOrder] = None,
+        exact_reserved: int = 0,
     ) -> Dict[str, Any]:
         return {
             "enabled": True,
@@ -668,4 +704,6 @@ class ContextOffice:
             "bids_considered": int(bids_considered),
             "case_names": list(case_names or []),
             "case_candidates": int(case_candidates),
+            "exact_reserved": int(exact_reserved),
+            "memory_work_order": work_order.to_dict() if work_order is not None else {},
         }

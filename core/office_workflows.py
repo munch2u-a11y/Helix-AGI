@@ -97,12 +97,16 @@ class OfficeArbiter:
         active_desks: Iterable[str],
         max_items: int,
         proof_ids: Iterable[str] = (),
+        reserve_ids: Iterable[str] = (),
+        max_profile_items: int = 2,
     ) -> List[Dict[str, Any]]:
         limit = max(0, int(max_items))
         if not limit:
             return []
         active = set(active_desks)
         protected = {str(item_id) for item_id in proof_ids if item_id}
+        reserved_order = [str(item_id) for item_id in reserve_ids if item_id]
+        reserved = set(reserved_order) - protected
         prepared: List[Dict[str, Any]] = []
         desk_candidates: Dict[str, int] = {}
         for rank, source in enumerate(items):
@@ -112,7 +116,7 @@ class OfficeArbiter:
             desk_candidates[desk] = desk_candidates.get(desk, 0) + 1
             if (
                 desk_candidates[desk] > contract.max_candidates
-                and str(item.get("id", "")) not in protected
+                and str(item.get("id", "")) not in protected | reserved
             ):
                 continue
             score, cost, reason = self._bid(item, rank, active)
@@ -120,18 +124,40 @@ class OfficeArbiter:
             item["office_bid_cost"] = round(cost, 3)
             item["office_bid_reason"] = reason
             item["office_bid_atomic"] = str(item.get("id", "")) in protected
+            item["office_bid_reserved"] = str(item.get("id", "")) in reserved
             prepared.append(item)
 
         # Proof members compete as one bundle. Their internal chronology is
         # preserved, while the remaining slots are shared by all other desks.
         proof = [item for item in prepared if str(item.get("id", "")) in protected]
-        others = [item for item in prepared if str(item.get("id", "")) not in protected]
+        prepared_by_id = {
+            str(item.get("id", "")): item for item in prepared if item.get("id")
+        }
+        reserve = [
+            prepared_by_id[item_id] for item_id in reserved_order
+            if item_id in prepared_by_id and item_id not in protected
+        ]
+        others = [
+            item for item in prepared
+            if str(item.get("id", "")) not in protected | reserved
+        ]
         chosen = proof[:limit]
+        chosen.extend(reserve[:max(0, limit - len(chosen))])
         slots = limit - len(chosen)
         desk_counts: Dict[str, int] = {}
+        profile_count = sum(
+            1 for item in chosen if item.get("formation_type") == "session_profile"
+        )
         while slots > 0 and others:
+            eligible = [
+                index for index, item in enumerate(others)
+                if item.get("formation_type") != "session_profile"
+                or profile_count < max(0, int(max_profile_items))
+            ]
+            if not eligible:
+                break
             best_index = max(
-                range(len(others)),
+                eligible,
                 key=lambda index: (
                     others[index]["office_bid_score"]
                     - (0.035 * desk_counts.get(str(others[index].get("office_desk", "")), 0))
@@ -141,6 +167,8 @@ class OfficeArbiter:
             chosen.append(winner)
             desk = str(winner.get("office_desk", ""))
             desk_counts[desk] = desk_counts.get(desk, 0) + 1
+            if winner.get("formation_type") == "session_profile":
+                profile_count += 1
             slots -= 1
         return chosen
 
