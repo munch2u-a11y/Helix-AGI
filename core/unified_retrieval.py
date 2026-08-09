@@ -48,6 +48,7 @@ import numpy as np
 from memory.mrag.corpus import HelixCorpus, normalize_ref
 from memory.mrag.semantic_lane import SemanticLane, estimate_tokens
 from memory.mrag.vector_store import HelixVectorStore
+from core.context_office import ContextOffice, is_enabled as office_enabled
 
 logger = logging.getLogger("helix.core.unified_retrieval")
 
@@ -126,6 +127,7 @@ class UnifiedRetrieval:
         )
         self.vector_store = HelixVectorStore(physics_engine)
         self.lane_a = SemanticLane(self.corpus, self.vector_store)
+        self.context_office = ContextOffice(self.corpus) if office_enabled() else None
         self.enable_mrag_adjacency = os.environ.get(
             "HELIX_MRAG_ADJACENCY", "0"
         ).strip().lower() in ("1", "true", "yes", "on")
@@ -190,10 +192,24 @@ class UnifiedRetrieval:
 
         exclude = exclude or set()
 
-        lane_a = [
+        semantic_lane_a = [
             item for item in self.lane_a.retrieve(trigger_text)
             if item["id"] not in exclude
         ]
+        office_stats: Dict[str, Any] = {"enabled": False}
+        if self.context_office is not None:
+            brief = self.context_office.prepare(
+                trigger_text,
+                semantic_lane_a,
+                max_items=max_items,
+            )
+            lane_a = [
+                item for item in brief.items
+                if item.get("office_verified") or item.get("id") not in exclude
+            ]
+            office_stats = brief.diagnostics
+        else:
+            lane_a = semantic_lane_a
         lane_b_ranked = self._prepare_spatial(spatial_candidates or [], exclude)
         self.last_lane_a_ids = {item["id"] for item in lane_a}
 
@@ -233,6 +249,7 @@ class UnifiedRetrieval:
             "lexicon_hits": sorted(self.lane_a.last_lexicon_matches),
             "semantic_heads": list(self.lane_a.last_search_heads),
             "retrieval_profile": self.profile,
+            "context_office": office_stats,
         }
 
         logger.debug(
@@ -604,6 +621,22 @@ class UnifiedRetrieval:
 
             duplicate = False
             for idx, prior_words in enumerate(kept_words):
+                prior = kept[idx]
+                protected_roles = {
+                    "current_state", "state_history", "calculation_member",
+                    "relation_member", "catalog_member", "causal_member",
+                }
+                if (
+                    item.get("office_verified")
+                    and prior.get("office_verified")
+                    and item.get("office_scope")
+                    and item.get("office_scope") == prior.get("office_scope")
+                    and (
+                        item.get("office_role") in protected_roles
+                        or prior.get("office_role") in protected_roles
+                    )
+                ):
+                    continue
                 if words and prior_words:
                     overlap = len(words & prior_words) / min(len(words), len(prior_words))
                     if overlap > WORD_OVERLAP_THRESHOLD:

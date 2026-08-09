@@ -12,10 +12,12 @@ from tests.ragoffice_parity_sandbox import (
     ANSWER_PROMPT,
     ask_question_with_retries,
     contains_answer,
+    contains_refusal_marker,
     is_refusal,
     normalize_answer,
     retrieval_scores,
     score_answer,
+    select_exam_items,
 )
 
 
@@ -35,6 +37,10 @@ class RagOfficeAnswerParityTests(unittest.TestCase):
             "accepted_answers": ["prefers non-vector", "negative"],
         }
         self.assertTrue(score_answer(accepted, "negative")["correct"])
+        mixed = score_answer(accepted, "negative\nNOT IN CONTEXT")
+        self.assertTrue(mixed["correct"])
+        self.assertTrue(mixed["format_violation"])
+        self.assertTrue(contains_refusal_marker("negative\nNOT IN CONTEXT"))
 
         compound = {
             "answerable": True,
@@ -61,6 +67,13 @@ class RagOfficeAnswerParityTests(unittest.TestCase):
 
 
 class RagOfficeRetrievalParityTests(unittest.TestCase):
+    def test_explicit_subset_preserves_requested_order(self):
+        exam = {"items": [{"id": "q1"}, {"id": "q2"}, {"id": "n1"}]}
+        self.assertEqual(
+            [item["id"] for item in select_exam_items(exam, 3, ["n1", "q1"])],
+            ["n1", "q1"],
+        )
+
     def test_support_hit_and_non_gold_are_kept_separate(self):
         item = {
             "support": [{"speaker": "User", "text": "The answer is cobalt."}],

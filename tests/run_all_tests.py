@@ -94,6 +94,7 @@ class TestSuiteRunner:
             ("test_mrag_semantic_lane.py", "mRAG Multi-Head Semantic Tests"),
             ("test_semantic_encoder.py", "1024D Semantic Encoder Tests"),
             ("test_unified_retrieval.py", "Unified Retrieval Lane-Separation Tests"),
+            ("test_context_office.py", "Context Office Specialist Tests"),
             ("test_associative_transitions.py", "Associative Transition Tests"),
             ("test_deep_memory_benchmark.py", "Progressive Deep-Memory Benchmark Tests"),
             ("test_longmemeval_sandbox.py", "LongMemEval Sandbox Tests"),
@@ -114,7 +115,7 @@ class TestSuiteRunner:
         
         if quick_mode:
             # Run only validation and core tests
-            test_scripts = test_scripts[:16]
+            test_scripts = test_scripts[:17]
         
         passed = 0
         failed = 0

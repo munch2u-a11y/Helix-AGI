@@ -9,7 +9,7 @@
 
 Helix AGI is a multi-model agentic system that implements continuous autonomous operation, structured memory consolidation, and adaptive tool learning.
 
-Unlike agents that wait for a prompt, execute one chain, and terminate, Helix runs a continuous event-driven pulse with `ACTIVE`, `REGULAR`, `RESTING`, and scheduled `DORMANT` states. Its preconscious retrieval has deliberately separate jobs: multi-head mRAG supplies high-accuracy semantic recall from native 1024D embeddings, while raw 8D spatial attention and learned directed cluster transitions add a small non-semantic complement. Affect, stability, provenance, and Lagrangian metadata remain attached through injection.
+Unlike agents that wait for a prompt, execute one chain, and terminate, Helix runs a continuous event-driven pulse with `ACTIVE`, `REGULAR`, `RESTING`, and scheduled `DORMANT` states. Its preconscious retrieval has deliberately separate jobs: multi-head mRAG supplies high-recall semantic advice from native 1024D embeddings, a read-only Context Office coordinates specialist evidence desks over canonical Helix memory, and raw 8D spatial attention plus learned directed cluster transitions add a small non-semantic complement. Affect, stability, provenance, and Lagrangian metadata remain attached through injection.
 
 Helix can also turn naturally voiced intentions into durable tasks. In active task-cognition mode the main consciousness sees broad ability beliefs but no tool schemas; identity-shared focus threads receive only the small, authorized capability subset selected for the situation, then return accepted outcomes to the same memory and event stream.
 
@@ -23,9 +23,10 @@ flowchart TD
     B -->|DORMANT| C[Nightly dream and consolidation]
     B -->|awake pulse| P[Preconscious assembly]
     P --> M[1024D multi-head mRAG<br/>semantic foreground]
+    M --> O[Context Office<br/>Facts / State / Relations /<br/>Catalog / Beliefs / Causality]
     P --> S[Raw 8D spatial<br/>lateral complement]
     P --> R[Learned directed cluster<br/>transition complement]
-    M --> I[Bounded contextual injection]
+    O --> I[Bounded contextual injection]
     S --> I
     R --> I
     I --> H[Main Helix consciousness<br/>Codex / Gemini / Anthropic / local]
@@ -384,6 +385,7 @@ All LLM model names are configurable via environment variables. Set these in `~/
 | `HELIX_MRAG_PROFILE` | `local` | `local` bounded search or `frontier` expanded heads/candidates/injection budget |
 | `HELIX_MRAG_CONTEXT_LIMIT` | profile default | Context ceiling used to size mRAG injection (`8192` local, `128000` frontier) |
 | `HELIX_MRAG_RENDER_MODE` | profile default | `summary` locally; `verbatim` for frontier evidence preservation |
+| `HELIX_CONTEXT_OFFICE` | `1` | Enable read-only specialist evidence desks; set `0` for an mRAG-only foreground ablation |
 | `HELIX_MRAG_MIN_SIMILARITY` | `0.12` | Lowest cosine accepted unless an item has literal evidence |
 | `HELIX_MRAG_MAX_SCORE_DROP` | `0.18` | Largest accepted cosine drop from the best semantic candidate |
 | `HELIX_ASSOCIATIVE_MEMORY` | `1` | Enable directed cluster-transition learning/recall; set `0` for benchmark ablation |

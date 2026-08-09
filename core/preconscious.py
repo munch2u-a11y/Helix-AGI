@@ -2008,6 +2008,14 @@ class Preconscious:
                 "association_score": item.get("association_score", 0.0),
                 "association_linked": item.get("association_linked", lane == "associative"),
                 "association_hops": item.get("association_hops"),
+                "office_role": item.get("office_role"),
+                "office_desk": item.get("office_desk"),
+                "office_scope": item.get("office_scope"),
+                "office_score": item.get("office_score", 0.0),
+                "office_intents": item.get("office_intents", []),
+                "office_verified": item.get("office_verified", False),
+                "office_subject": item.get("office_subject", ""),
+                "office_implication": item.get("office_implication", ""),
             })
 
         return selection
@@ -2238,7 +2246,7 @@ class Preconscious:
 
         for b in final_selection:
             content = b["content"]
-            if self._is_repetitive(content):
+            if self._is_repetitive(content) and not b.get("office_verified"):
                 logger.warning(f"Skipping repetitive belief from injection: {content[:100]}...")
                 continue
             
@@ -2246,8 +2254,39 @@ class Preconscious:
             if token_budget is not None and token_count + est_tokens > token_budget:
                 break # Hard cut-off to stay under token cap
                 
-            if b.get("association_linked") or b.get("lane") == "associative":
+            office_role = b.get("office_role")
+            office_labels = {
+                "current_state": "STATE DESK — verified current state",
+                "state_history": "STATE DESK — historical, possibly superseded",
+                "calculation_member": "RELATIONS DESK — verified calculation member",
+                "relation_member": "RELATIONS DESK — verified path member",
+                "catalog_member": "CATALOG DESK — verified set member/counterevidence",
+                "belief_source": "BELIEFS DESK — verified stance source",
+                "causal_member": "CAUSALITY DESK — verified reason evidence",
+                "direct_fact": "FACTS DESK — verified direct fact",
+                "episode_support": "EPISODE DESK — verified supporting memory",
+                "supporting_belief": "BELIEFS DESK — supporting structured belief",
+                "unverified_semantic": "SEMANTIC ADVISOR — unverified candidate",
+                "semantic_recall": "SEMANTIC ADVISOR — recall",
+            }
+            if office_role in office_labels:
+                implication = str(b.get("office_implication") or "").strip()
+                if implication:
+                    belief_texts.append(
+                        "[CONTEXT OFFICE — verified task proposition] "
+                        f"The stored belief indicates a {implication}."
+                    )
+                subject = str(b.get("office_subject") or "").strip()
+                label = office_labels[office_role]
+                if subject and office_role in {"belief_source", "supporting_belief"}:
+                    label += f'; answer-bearing relation for "{subject}"'
+                belief_texts.append(f"[{label}] {content}")
+            elif b.get("association_linked") or b.get("lane") == "associative":
                 belief_texts.append(f"[learned follow-on association] {content}")
+            elif b.get("lane") == "spatial":
+                belief_texts.append(
+                    f"[LATERAL DESK — spatial association, not verified evidence] {content}"
+                )
             else:
                 belief_texts.append(content)
             rendered_selection.append(b)

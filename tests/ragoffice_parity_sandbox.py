@@ -108,6 +108,12 @@ def is_refusal(prediction: str) -> bool:
     return any(marker in first_line for marker in REFUSAL_MARKERS)
 
 
+def contains_refusal_marker(prediction: str) -> bool:
+    """Detect refusal language anywhere for answer-format auditing."""
+    lowered = str(prediction or "").lower()
+    return any(marker in lowered for marker in REFUSAL_MARKERS)
+
+
 def score_answer(item: Dict[str, Any], prediction: str) -> Dict[str, Any]:
     answerable = bool(item.get("answerable", True))
     if not answerable:
@@ -115,6 +121,7 @@ def score_answer(item: Dict[str, Any], prediction: str) -> Dict[str, Any]:
         return {
             "correct": refused,
             "refused": refused,
+            "format_violation": False,
             "exact_match": False,
             "contains_answer": False,
             "token_f1": 0.0,
@@ -128,10 +135,12 @@ def score_answer(item: Dict[str, Any], prediction: str) -> Dict[str, Any]:
         all(contains_answer(prediction, span) for span in required)
         if required else any(contains_answer(prediction, gold) for gold in golds)
     )
-    refused = is_refusal(prediction) and not span_match
+    refusal_present = is_refusal(prediction)
+    refused = refusal_present and not span_match
     return {
         "correct": bool(span_match and not refused),
         "refused": refused,
+        "format_violation": bool(contains_refusal_marker(prediction) and span_match),
         "exact_match": any(normalize_answer(prediction) == normalize_answer(gold) for gold in golds),
         "contains_answer": span_match,
         "token_f1": round(max(token_f1(prediction, gold) for gold in golds), 6),
@@ -208,6 +217,23 @@ def validate_exam(exam: Any) -> None:
             raise ValueError(f"exam item {item.get('id')} lacks question/category")
         if item.get("answerable", True) and not item.get("ground_truth"):
             raise ValueError(f"answerable item {item.get('id')} lacks ground_truth")
+
+
+def select_exam_items(
+    exam: Dict[str, Any],
+    max_questions: int,
+    question_ids: Optional[Sequence[str]] = None,
+) -> List[Dict[str, Any]]:
+    if question_ids:
+        selected_ids = [str(value).strip() for value in question_ids if str(value).strip()]
+        if len(selected_ids) != len(set(selected_ids)):
+            raise ValueError("question_ids contains duplicates")
+        by_id = {str(item["id"]): item for item in exam["items"]}
+        missing = [item_id for item_id in selected_ids if item_id not in by_id]
+        if missing:
+            raise ValueError(f"unknown question_ids: {', '.join(missing)}")
+        return [by_id[item_id] for item_id in selected_ids]
+    return list(exam["items"][:max_questions])
 
 
 def _memory_content(item_id: str, turn_index: int, turn: Dict[str, Any]) -> str:
@@ -420,6 +446,31 @@ def _review_name(sequence: int, item_id: str) -> str:
     return f"{sequence:03d}_{safe}.md"
 
 
+def refresh_stored_scores(
+    details_path: Path,
+    rows: List[Dict[str, Any]],
+    items: Sequence[Dict[str, Any]],
+) -> bool:
+    by_id = {str(item["id"]): item for item in items}
+    changed = False
+    for row in rows:
+        item = by_id.get(str(row.get("id", "")))
+        if item is None:
+            continue
+        answer = score_answer(item, str(row.get("prediction", "")))
+        if row.get("answer") != answer:
+            row["answer"] = answer
+            changed = True
+    if not changed:
+        return False
+    temporary = details_path.with_suffix(details_path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(_json_safe(row)) + "\n")
+    os.replace(temporary, details_path)
+    return True
+
+
 def write_review(output: Path, row: Dict[str, Any]) -> None:
     lines = [
         f"# {row['sequence']:03d} — {row['id']}", "",
@@ -455,6 +506,12 @@ def rebuild_reports(output: Path, manifest: Dict[str, Any], rows: Sequence[Dict[
     for row in rows:
         by_category[row["category"]].append(row)
 
+    def office_verified(row: Dict[str, Any]) -> bool:
+        return bool(
+            row.get("retrieval", {}).get("stats", {})
+            .get("context_office", {}).get("verified", False)
+        )
+
     summary = {
         "status": "complete" if len(rows) == manifest["items"] else "incomplete",
         "completed": len(rows),
@@ -464,6 +521,9 @@ def rebuild_reports(output: Path, manifest: Dict[str, Any], rows: Sequence[Dict[
         "answer_accuracy": round(_mean(float(row["answer"]["correct"]) for row in answerable), 6),
         "negative_controls_correct": sum(row["answer"]["correct"] for row in controls),
         "negative_controls_total": len(controls),
+        "answer_format_violations": sum(
+            bool(row["answer"].get("format_violation", False)) for row in answerable
+        ),
         "support_hit_rate": round(_mean(
             float(row["retrieval_scores"]["support_hit_rate"])
             for row in answerable if row["retrieval_scores"]["support_hit_rate"] is not None
@@ -471,6 +531,11 @@ def rebuild_reports(output: Path, manifest: Dict[str, Any], rows: Sequence[Dict[
         "mean_non_gold_ratio": round(_mean(
             float(row["retrieval_scores"]["non_gold_ratio"])
             for row in rows if row["retrieval_scores"]["non_gold_ratio"] is not None
+        ), 6),
+        "context_office_verified": sum(office_verified(row) for row in rows),
+        "context_office_total": len(rows),
+        "context_office_verified_rate": round(_mean(
+            float(office_verified(row)) for row in rows
         ), 6),
         "by_category": {
             category: {
@@ -481,6 +546,9 @@ def rebuild_reports(output: Path, manifest: Dict[str, Any], rows: Sequence[Dict[
                     for row in category_rows
                     if row["retrieval_scores"]["support_hit_rate"] is not None
                 ), 6),
+                "context_office_verified": sum(
+                    office_verified(row) for row in category_rows
+                ),
             }
             for category, category_rows in sorted(by_category.items())
         },
@@ -496,16 +564,20 @@ def rebuild_reports(output: Path, manifest: Dict[str, Any], rows: Sequence[Dict[
         f"- Answerable accuracy: **{summary['answerable_correct']}/{summary['answerable_total']} "
         f"({summary['answer_accuracy']:.1%})**",
         f"- Negative controls: **{summary['negative_controls_correct']}/{summary['negative_controls_total']}**",
+        f"- Answer/refusal format violations: **{summary['answer_format_violations']}**",
         f"- Gold-support hit rate: **{summary['support_hit_rate']:.1%}**",
         f"- Mean non-gold ratio: **{summary['mean_non_gold_ratio']:.1%}**", "",
+        f"- Context Office verified briefs: **{summary['context_office_verified']}/"
+        f"{summary['context_office_total']} ({summary['context_office_verified_rate']:.1%})**", "",
         "The answer score uses the same accepted-answer/span/refusal rules as RAGOffice. "
         "The memory and injected context are Helix's.", "",
-        "## Categories", "", "| Category | Correct | Questions | Support hit |",
-        "|---|---:|---:|---:|",
+        "## Categories", "", "| Category | Correct | Questions | Support hit | Office brief |",
+        "|---|---:|---:|---:|---:|",
     ]
     for category, stats in summary["by_category"].items():
         report.append(
-            f"| {category} | {stats['correct']} | {stats['questions']} | {stats['support_hit_rate']:.1%} |"
+            f"| {category} | {stats['correct']} | {stats['questions']} | "
+            f"{stats['support_hit_rate']:.1%} | {stats['context_office_verified']} |"
         )
     report.extend([
         "", "## Manual review", "",
@@ -529,7 +601,9 @@ def run_parity_exam(
     output_dir: str,
     model: str = "granite4.1:8b",
     context_limit: int = 128_000,
+    context_office: bool = True,
     max_questions: int = EXPECTED_ITEMS,
+    question_ids: Optional[Sequence[str]] = None,
     resume: bool = False,
     dry_run: bool = False,
 ) -> bool:
@@ -538,7 +612,7 @@ def run_parity_exam(
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     exam, source = capture_exam(Path(ragoffice_root), output)
-    items = exam["items"][:max_questions]
+    items = select_exam_items(exam, max_questions, question_ids)
 
     if dry_run:
         print(
@@ -549,6 +623,7 @@ def run_parity_exam(
         )
         return True
 
+    os.environ["HELIX_CONTEXT_OFFICE"] = "1" if context_office else "0"
     configure_retrieval("frontier", True, context_limit)
     os.environ["HELIX_MRAG_RENDER_MODE"] = "verbatim"
     provider = local_reader_provider(model, context_limit)
@@ -562,6 +637,7 @@ def run_parity_exam(
         "reader_model": model,
         "reader_prompt_sha256": hashlib.sha256(ANSWER_PROMPT.encode()).hexdigest(),
         "context_limit": context_limit,
+        "context_office": "on" if context_office else "off",
         "history_scope": "one shared isolated Helix mind",
         "exam_learns": False,
     }
@@ -574,6 +650,7 @@ def run_parity_exam(
         guarded = (
             "exam_sha256", "items", "selected_ids", "reader_backend",
             "reader_model", "reader_prompt_sha256", "context_limit",
+            "context_office",
         )
         mismatch = [key for key in guarded if existing.get(key) != manifest.get(key)]
         if mismatch:
@@ -583,6 +660,7 @@ def run_parity_exam(
         _atomic_json(manifest_path, manifest)
 
     rows = _read_jsonl(details_path)
+    refresh_stored_scores(details_path, rows, items)
     completed = {row["id"] for row in rows}
     for row in rows:
         write_review(output, row)
@@ -656,7 +734,9 @@ def main() -> None:
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--model", default="granite4.1:8b")
     parser.add_argument("--context-limit", type=int, default=128_000)
+    parser.add_argument("--context-office", choices=("on", "off"), default="on")
     parser.add_argument("--max-questions", type=int, default=EXPECTED_ITEMS)
+    parser.add_argument("--question-ids", default="")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -666,7 +746,9 @@ def main() -> None:
             output_dir=args.output_dir,
             model=args.model,
             context_limit=max(1024, args.context_limit),
+            context_office=args.context_office == "on",
             max_questions=args.max_questions,
+            question_ids=[value.strip() for value in args.question_ids.split(",") if value.strip()],
             resume=args.resume,
             dry_run=args.dry_run,
         )

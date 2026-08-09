@@ -122,8 +122,13 @@ and dirty source paths are recorded before the run.
 venv/bin/python tests/ragoffice_parity_sandbox.py \
   --ragoffice-root /home/nemo/RAGOffice \
   --model granite4.1:8b \
+  --context-office on \
   --resume
 ```
+
+Use `--context-office off` with a different output directory for the semantic
+advisor ablation. `--question-ids q_1,q_11,q_50,n_7` performs a cheap targeted
+audit without changing the frozen exam or indexing scope.
 
 This is the appropriate same-exam comparison. LongMemEval remains the broader,
 much longer natural-dialogue evaluation rather than a directly comparable

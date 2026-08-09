@@ -66,9 +66,13 @@ For a same-exam RAGOffice comparison, run:
 venv/bin/python tests/ragoffice_parity_sandbox.py \
   --ragoffice-root /home/nemo/RAGOffice \
   --model granite4.1:8b \
+  --context-office on \
+  --output-dir benchmark_results/ragoffice_parity_context_office_110 \
   --resume
 ```
 
 This snapshots RAGOffice's exact 110-item generated exam, ingests its 220 turns
 into one Helix sandbox, and applies the same reader prompt and answer rules.
-Outputs are written under `benchmark_results/ragoffice_parity_110/`.
+The example writes to `benchmark_results/ragoffice_parity_context_office_110/`.
+Use `--context-office off` with a distinct directory for a clean ablation, or
+`--question-ids q_1,q_11,q_50,n_7` for a local-reader audit subset.

@@ -71,17 +71,18 @@ are completed by focused task sessions.
 
 ## Preconscious Retrieval Contract
 
-Retrieval is deliberately separated into a precise semantic foreground and
-bounded non-semantic complements. Scores from these representations are never
-blended into one pseudo-distance.
+Retrieval is deliberately separated into semantic advice, a deterministic
+Context Office evidence brief, and bounded non-semantic complements. Scores
+from these representations are never blended into one pseudo-distance.
 
 | Order | Lane | Representation | Contract |
 |---:|---|---|---|
 | 1 | Layer-2 anchors | Named people, concepts, skills, desires | Exact high-priority anchors with repetition guard |
-| 2 | mRAG foreground | Native normalized 1024D Qwen3 embeddings | Primary rank; full-trigger, sentence, RAKE, entity, concept, and relation heads plus exact-term/tag evidence |
-| 3 | Raw spatial | MiniLM 384D projected through a fixed matrix to 8D | At most two spatial-only items; append-only and unable to reorder mRAG |
-| 4 | Associative transition | Directed cluster prototypes in a separate 8D overlay | Repeated A→B attention transitions surface lateral follow-ons; individual memories and beliefs do not move |
-| 5 | Metadata and working state | Affect, stability, Lagrangian snapshot, scratchpad, recent/contact state | Preserved for rendering, representative choice, and one bounded somatic echo |
+| 2 | mRAG semantic advisor | Native normalized 1024D Qwen3 embeddings | Full-trigger, sentence, RAKE, entity, concept, and relation heads plus exact-term/tag evidence advise office routing and remain the fallback |
+| 3 | Context Office | Transient term, episode, turn, and task indexes over the canonical corpus | Facts, State, Relations, Catalog, Beliefs, and Causality desks build one verified brief; no duplicated markdown/database memory |
+| 4 | Raw spatial / Lateral desk | MiniLM 384D projected through a fixed matrix to 8D | At most two spatial-only items; append-only, explicitly non-evidentiary, and unable to reorder the office brief |
+| 5 | Associative transition | Directed cluster prototypes in a separate 8D overlay | Repeated A→B attention transitions surface lateral follow-ons; individual memories and beliefs do not move |
+| 6 | Metadata and working state | Affect, stability, Lagrangian snapshot, scratchpad, recent/contact state | Preserved for rendering, representative choice, and one bounded somatic echo |
 
 The semantic index defaults to exact normalized dot-product search: NumPy for
 small stores and FAISS `IndexFlatIP` after the automatic threshold. Optional
@@ -179,6 +180,9 @@ RAGOffice's generated 110-item exam, ingests all 220 source turns into one
 temporary Helix mind, and uses the same local Granite reader prompt and answer
 rules. Its manifest records the snapshot hash, RAGOffice commit, and dirty
 source paths so the phrase “same exam” remains auditable.
+On the Context Office branch, `--context-office on|off` records the condition
+in that manifest. `--question-ids` runs a targeted ordered audit while still
+indexing the complete frozen memory.
 
 ## Persistence Map
 
@@ -203,6 +207,7 @@ of truth for on-disk details.
 | `HELIX_UNIFIED_RAG` | enabled | Disable only for legacy retrieval fallback |
 | `HELIX_MRAG_PROFILE` | `local` | `local` or `frontier` search/render budget |
 | `HELIX_MRAG_RENDER_MODE` | profile default | Force `summary` or `verbatim` |
+| `HELIX_CONTEXT_OFFICE` | enabled | Read-only specialist evidence desks over canonical memory |
 | `HELIX_ASSOCIATIVE_MEMORY` | enabled | Disable sequential association learning/recall for ablation |
 | `HELIX_MRAG_ADJACENCY` | disabled | Restore old temporal-neighbor expansion for benchmark parity |
 | `HELIX_SEMANTIC_MODEL` | `qwen3-embedding:0.6b` | Local semantic encoder |

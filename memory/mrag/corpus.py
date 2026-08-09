@@ -41,6 +41,57 @@ logger = logging.getLogger("helix.memory.mrag.corpus")
 _TIER2_CATEGORIES = {"people", "skills", "desires", "concepts"}
 
 _BARE_NUMBER_RE = re.compile(r'^\d+$')
+_BENCHMARK_SCOPE_RE = re.compile(r"\[BENCHMARK ITEM:\s*([^\]]+)\]", re.IGNORECASE)
+_TURN_RE = re.compile(r"\[TURN:\s*([^\]]+)\]", re.IGNORECASE)
+_SESSION_RE = re.compile(r"\[SESSION:\s*([^\]]+)\]", re.IGNORECASE)
+
+
+def _tag_value(tags: List[Any], *prefixes: str) -> Optional[str]:
+    """Return the first non-empty value for a namespaced metadata tag."""
+    for prefix in prefixes:
+        marker = prefix.lower() + ":"
+        for tag in tags or []:
+            value = str(tag or "").strip()
+            if value.lower().startswith(marker):
+                result = value[len(marker):].strip()
+                if result:
+                    return result
+    return None
+
+
+def _structured_position(content: str, tags: List[Any], created_at: str, pulse_id: Any):
+    """Resolve canonical scope and chronology for read-only office projections."""
+    scope_id = _tag_value(tags, "item", "conversation", "thread", "session")
+    if not scope_id:
+        match = _BENCHMARK_SCOPE_RE.search(content or "")
+        scope_id = match.group(1).strip() if match else None
+
+    raw_turn = _tag_value(tags, "turn")
+    if raw_turn is None:
+        match = _TURN_RE.search(content or "")
+        raw_turn = match.group(1).strip() if match else None
+    try:
+        turn_id: Any = int(raw_turn) if raw_turn is not None else int(pulse_id)
+    except (TypeError, ValueError):
+        turn_id = raw_turn if raw_turn is not None else pulse_id
+
+    event_id = _tag_value(tags, "event")
+    if not event_id:
+        session_ref = _tag_value(tags, "session")
+        if session_ref and session_ref != scope_id:
+            event_id = session_ref
+    if not event_id:
+        match = _SESSION_RE.search(content or "")
+        event_id = match.group(1).strip() if match else None
+
+    if not scope_id:
+        scope_id = created_at[:10] if created_at else None
+    raw_chunk = _tag_value(tags, "chunk")
+    try:
+        chunk_index = int(raw_chunk) if raw_chunk is not None else None
+    except (TypeError, ValueError):
+        chunk_index = None
+    return scope_id, turn_id, event_id, chunk_index
 
 
 def normalize_ref(ref: Any) -> Optional[str]:
@@ -170,6 +221,7 @@ class HelixCorpus:
                 "relevance": b.get("mass", 1.0),
                 "term": term,
                 "aliases": b.get("aliases", []) or [],
+                "tags": b.get("tags", []) or [],
                 "memory_refs": b.get("memory_refs", []) or [],
                 "component_ids": b.get("component_ids", []) or [],
                 "relations": b.get("relations", []) or [],
@@ -189,6 +241,7 @@ class HelixCorpus:
                 # Beliefs have no conversational position — adjacency is a
                 # Tier-0 mechanic only.
                 "session_id": None,
+                "scope_id": None,
                 "turn_id": None,
                 "event_id": None,
                 "chunk_index": None,
@@ -244,6 +297,10 @@ class HelixCorpus:
             point_id = meta.get("point_id") or f"mem_{journal_id}"
             pulse_id = entry.get("pulse_id", 0)
             created_at = meta.get("created_at") or entry.get("timestamp") or ""
+            tags = meta.get("tags", []) or []
+            scope_id, turn_id, event_id, chunk_index = _structured_position(
+                content, tags, created_at, pulse_id,
+            )
             self._memory_items.append({
                 "id": point_id,
                 "content": content,
@@ -254,6 +311,7 @@ class HelixCorpus:
                 "relevance": meta.get("importance", 0.5),
                 "term": "",
                 "aliases": [],
+                "tags": tags,
                 "memory_refs": [],
                 "component_ids": [],
                 "relations": [],
@@ -265,13 +323,13 @@ class HelixCorpus:
                 "stability_index": meta.get("stability_index", 0.5),
                 "encoding_lagrangian": lagrangian,
                 "affective_salience": self._affective_salience(lagrangian),
-                # Helix has no session concept. The creation date buckets a
-                # day's pulses together and the pulse id orders them, so
-                # "adjacent turns" becomes "adjacent pulses on the same day".
-                "session_id": created_at[:10] if created_at else None,
-                "turn_id": pulse_id,
-                "event_id": None,
-                "chunk_index": None,
+                # Strong importer boundaries win; ordinary Helix memories
+                # retain the creation-date/pulse fallback.
+                "session_id": scope_id,
+                "scope_id": scope_id,
+                "turn_id": turn_id,
+                "event_id": event_id,
+                "chunk_index": chunk_index,
             })
 
         # The journal appends a new line per update rather than mutating, so
