@@ -11,6 +11,8 @@ Extracted from pulse_loop.py into the provider abstraction layer.
 
 import json
 import logging
+import os
+import time
 from typing import Optional, Dict, Any, List
 
 from llm.providers.base import ChatSession
@@ -51,9 +53,19 @@ class OllamaSession(ChatSession):
         self.system_instruction = system_instruction
         self.temperature = temperature
         self.max_output_tokens = max_output_tokens
-        self.options = options or {}
+        self.options = dict(options or {})
+        # keep_alive is an Ollama request parameter, not a model-generation
+        # option. A short-lived auxiliary worker can set it to zero so its
+        # model is unloaded before the foreground and embedding models resume.
+        self.keep_alive = self.options.pop("keep_alive", None)
         self.history: List[Dict[str, str]] = []
         self._last_token_count = 0
+        try:
+            self.max_attempts = max(
+                1, int(os.environ.get("HELIX_OLLAMA_MAX_ATTEMPTS", "4"))
+            )
+        except (TypeError, ValueError):
+            self.max_attempts = 4
 
         # Ensure options include context window
         if "num_ctx" not in self.options:
@@ -90,12 +102,28 @@ class OllamaSession(ChatSession):
         import ollama
 
         try:
-            response = ollama.chat(
-                model=self.model,
-                messages=messages,
-                options=self.options,
-                think=False,  # Disable thinking for fast pulses
-            )
+            response = None
+            for attempt in range(1, self.max_attempts + 1):
+                try:
+                    response = ollama.chat(
+                        model=self.model,
+                        messages=messages,
+                        options=self.options,
+                        keep_alive=self.keep_alive,
+                        think=False,  # Disable thinking for fast pulses
+                    )
+                    break
+                except Exception as exc:
+                    if attempt >= self.max_attempts:
+                        raise
+                    delay = 2 ** attempt
+                    logger.warning(
+                        "Ollama package call failed (%d/%d): %s; retrying in %ds",
+                        attempt, self.max_attempts, exc, delay,
+                    )
+                    time.sleep(delay)
+            if response is None:
+                raise RuntimeError("Ollama returned no response")
 
             thought = response.message.content or ""
 
@@ -119,18 +147,34 @@ class OllamaSession(ChatSession):
         import requests
 
         try:
-            response = requests.post(
-                "http://localhost:11434/api/chat",
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "options": self.options,
-                    "stream": False,
-                    "think": False,
-                },
-                timeout=None,  # No timeout — wait as long as needed
-            )
-            response.raise_for_status()
+            response = None
+            for attempt in range(1, self.max_attempts + 1):
+                try:
+                    response = requests.post(
+                        "http://localhost:11434/api/chat",
+                        json={
+                            "model": self.model,
+                            "messages": messages,
+                            "options": self.options,
+                            "stream": False,
+                            "think": False,
+                            "keep_alive": self.keep_alive,
+                        },
+                        timeout=None,  # No timeout — wait as long as needed
+                    )
+                    response.raise_for_status()
+                    break
+                except Exception as exc:
+                    if attempt >= self.max_attempts:
+                        raise
+                    delay = 2 ** attempt
+                    logger.warning(
+                        "Ollama REST call failed (%d/%d): %s; retrying in %ds",
+                        attempt, self.max_attempts, exc, delay,
+                    )
+                    time.sleep(delay)
+            if response is None:
+                raise RuntimeError("Ollama returned no response")
             data = response.json()
 
             thought = data.get("message", {}).get("content", "")

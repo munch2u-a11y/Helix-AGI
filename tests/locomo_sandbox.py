@@ -321,6 +321,10 @@ def build_runtime(tmp_dir: str) -> Dict[str, Any]:
     data_dir.mkdir(parents=True, exist_ok=True)
 
     physics = PhysicsEngine(str(data_dir / "spatial"))
+    # A memory benchmark cannot continue honestly after the semantic encoder
+    # substitutes zero vectors. Production Helix may retain its spatial-only
+    # fallback, but this isolated evaluator fails closed after bounded retries.
+    physics.semantic_encoder.strict = True
     memory_manager = MemoryManager(str(data_dir / "memory"))
     memory_manager.set_physics(physics)
     belief_store = BeliefStore(str(data_dir / "beliefs"))
@@ -564,6 +568,8 @@ def run_operational_pulse(
         max_pulses=max_pulses,
     )
     raw_response = session.send_message(pulse_message)
+    if str(raw_response).lstrip().lower().startswith("[internal error:"):
+        raise RuntimeError(str(raw_response).strip())
 
     artifact_memory_ids: List[str] = []
     if store_artifacts:
@@ -720,6 +726,11 @@ def run_session_maintenance(
     worker = None
     if mode == "full":
         options = dict(provider_config.options or {})
+        # Maintenance sees one bounded session slice, not the full 64K QA
+        # context. Unload its auxiliary model after the call so Ollama does
+        # not retain the 8B reader, 3B worker, and embedding model together.
+        options["num_ctx"] = min(int(options.get("num_ctx", 16_384)), 16_384)
+        options["keep_alive"] = "0"
         maintenance_config = ProviderConfig(
             provider_type=provider_config.provider_type,
             model=maintenance_model or provider_config.model,

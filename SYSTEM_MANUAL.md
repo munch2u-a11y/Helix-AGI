@@ -258,6 +258,13 @@ Saved benchmark credentials are defaults only: explicit environment variables
 take precedence. Memory-suite runs that must remain local should also pass
 `--backend ollama --model <local-model>`; this bypasses credential loading and
 prevents accidental fallback to a metered provider.
+Local chat and 1024D embedding calls use bounded exponential retries for
+transient Ollama restarts. Production retains the spatial-only embedding
+fallback after retries; memory benchmarks enable strict semantic mode and
+abort instead of storing zero-vector memories or scoring internal-error text.
+The bounded 3B maintenance worker uses a 16K context and unloads immediately
+after each session, avoiding simultaneous retention of the 8B reader, 3B
+worker, and embedding model on memory-constrained local hosts.
 
 ### Full Codex CLI Consciousness Mode
 

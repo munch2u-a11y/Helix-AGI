@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Iterable, List
 
 import numpy as np
@@ -57,6 +58,15 @@ class SemanticEncoder:
             1, int(os.environ.get("HELIX_SEMANTIC_BATCH_SIZE", "16"))
         )
         self._failure_reported = False
+        try:
+            self.max_attempts = max(
+                1, int(os.environ.get("HELIX_SEMANTIC_MAX_ATTEMPTS", "4"))
+            )
+        except (TypeError, ValueError):
+            self.max_attempts = 4
+        self.strict = os.environ.get(
+            "HELIX_SEMANTIC_STRICT", "0"
+        ).strip().lower() in ("1", "true", "yes", "on")
 
     @property
     def identity(self) -> str:
@@ -91,13 +101,28 @@ class SemanticEncoder:
 
             for start in range(0, len(texts), self.batch_size):
                 batch = texts[start:start + self.batch_size]
-                response = ollama.embed(
-                    model=self.model,
-                    input=batch,
-                    dimensions=self.dim,
-                    truncate=True,
-                    keep_alive=self.keep_alive,
-                )
+                response = None
+                for attempt in range(1, self.max_attempts + 1):
+                    try:
+                        response = ollama.embed(
+                            model=self.model,
+                            input=batch,
+                            dimensions=self.dim,
+                            truncate=True,
+                            keep_alive=self.keep_alive,
+                        )
+                        break
+                    except Exception as exc:
+                        if attempt >= self.max_attempts:
+                            raise
+                        delay = 2 ** attempt
+                        logger.warning(
+                            "Semantic encoder call failed (%d/%d): %s; retrying in %ds",
+                            attempt, self.max_attempts, exc, delay,
+                        )
+                        time.sleep(delay)
+                if response is None:
+                    raise RuntimeError("semantic encoder returned no response")
                 vectors = np.asarray(response.embeddings, dtype=np.float32)
                 if vectors.shape != (len(batch), self.dim):
                     raise ValueError(
@@ -116,6 +141,10 @@ class SemanticEncoder:
                     self.model,
                 )
                 self._failure_reported = True
+            if self.strict:
+                raise RuntimeError(
+                    f"Semantic encoder unavailable after {self.max_attempts} attempts"
+                ) from exc
             return np.zeros((len(texts), self.dim), dtype=np.float32)
 
     @staticmethod
