@@ -54,6 +54,7 @@ commands as equivalent coverage or release criteria.
 | Codex App Server provider and host tools | `test_codex_cli_provider.py` |
 | Event-driven tasks, orchestrators, focus, and procedures | `test_task_cognition.py` |
 | Preconscious context assembly | `test_preconscious_injection.py` |
+| Typed source-aware Office capsules and stateless speaker boundary | `test_office_runtime.py` |
 | Belief and memory behavior | `test_belief_operations.py`, `test_emc2_retrieval.py` |
 | Tool dispatch and learned tools | `test_tool_executor.py`, `test_tool_learning_pipeline.py`, `test_tool_factory.py` |
 | Channels and dashboard | `test_channel_router.py`, `test_dashboard_*.py` |

@@ -110,6 +110,17 @@ class MemoryIntakeOffice:
             facet for facet, pattern in self._FACETS
             if re.search(pattern, lowered, re.IGNORECASE)
         )
+        # Comparative phrasing ("sound less like himself", "looks like X")
+        # is not a preference request merely because it contains ``like``.
+        if (
+            "preference" in facets
+            and not re.search(
+                r"\bfavou?rite\b|\bprefer(?:s|red|ence)?\b|\benjoys?\b",
+                lowered,
+            )
+            and re.search(r"\b(?:sound|look|feel|seem|more|less)\w*\s+like\b", lowered)
+        ):
+            facets = tuple(facet for facet in facets if facet != "preference")
         is_question = bool("?" in query or re.match(
             r"^(?:what|when|where|which|who|whose|why|how|did|does|do|is|are|was|were|can|could|would)\b",
             lowered,
@@ -142,7 +153,11 @@ class MemoryIntakeOffice:
         })
         requires_chronology = bool(
             question_type == "temporal"
-            or re.search(r"\b(?:before|after|first|last|latest|current|then|next|previously)\b", lowered)
+            or re.search(
+                r"\b(?:before|after|last|latest|current|then|next|previously)\b|"
+                r"(?<![-\w])first(?![-\w])",
+                lowered,
+            )
         )
         role_constraint = (
             "relational" if relation_requested

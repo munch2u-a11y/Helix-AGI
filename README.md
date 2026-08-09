@@ -45,6 +45,24 @@ flowchart TD
     K --> A
 ```
 
+### Experimental Office-First Speaking Path
+
+Set `HELIX_OFFICE_FIRST=1` to invert prompt ownership in the standard pulse
+loop. The event enters a typed front desk first; source-specific variables mark
+it as a direct message, email, social post, file read, search return, tool/task
+receipt, sensory reading, or host event. The Office then asks the existing
+semantic, exact, entity-case, belief, affect, recent-continuity, and lateral
+desks to compete for a small context budget and opens a fresh schema-free
+speaking session over the resulting capsule. Identity is absent unless the
+turn actually depends on it, and external/tool content is delimited as data.
+
+This is an opt-in response-construction vertical slice, not yet a replacement
+for task-focus execution. Committed plans still enter the existing task
+cognition hook, and successful task/tool results return as receipts. With a
+local Ollama speaker, the current task-cognition provider boundary still
+limits autonomous tool completion; the Office will report that no completion
+receipt exists rather than allowing the speaker to invent one.
+
 ### Documentation
 
 | Document | Status and purpose |
@@ -395,6 +413,8 @@ All LLM model names are configurable via environment variables. Set these in `~/
 | `HELIX_MRAG_CONTEXT_LIMIT` | profile default | Context ceiling used to size mRAG injection (`8192` local, `128000` frontier) |
 | `HELIX_MRAG_RENDER_MODE` | `verbatim` | Preserve the exact office-selected records; `summary` is a legacy explicit override |
 | `HELIX_CONTEXT_OFFICE` | `1` | Enable read-only specialist evidence desks; set `0` for an mRAG-only foreground ablation |
+| `HELIX_OFFICE_FIRST` | `0` | Experimental typed Office intake, fresh evidence capsule, and stateless schema-free speaking session per pulse |
+| `HELIX_OFFICE_FIRST_ITEMS` | `10` | Competitive evidence slots in an Office-first capsule, excluding small continuity/lateral bounds |
 | `HELIX_MRAG_MIN_SIMILARITY` | `0.12` | Lowest cosine accepted unless an item has literal evidence |
 | `HELIX_MRAG_MAX_SCORE_DROP` | `0.18` | Largest accepted cosine drop from the best semantic candidate |
 | `HELIX_ASSOCIATIVE_MEMORY` | `1` | Enable directed cluster-transition learning/recall; set `0` for benchmark ablation |

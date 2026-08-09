@@ -55,6 +55,15 @@ class MemoryIntakeOfficeTests(unittest.TestCase):
         self.assertFalse(order.requires_exact)
         self.assertEqual(clean_memory_query(order.raw_message), order.search_query)
 
+    def test_comparative_like_and_hyphenated_first_do_not_change_question_type(self):
+        order = self.intake.review(
+            "I think the Office-first design may sound less like himself. What do you think?"
+        )
+        self.assertIn("opinion", order.requested_facets)
+        self.assertNotIn("preference", order.requested_facets)
+        self.assertFalse(order.requires_exact)
+        self.assertFalse(order.requires_chronology)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

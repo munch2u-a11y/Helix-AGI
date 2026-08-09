@@ -51,6 +51,27 @@ associations, affect, or user mannerisms improve behavior. The 74.2% non-gold
 ratio is mostly the deliberately retained lateral/recent context and should be
 evaluated for usefulness, not optimized away from this score alone.
 
+## Office-first runtime vertical slice
+
+The branch now also contains an opt-in inversion behind
+`HELIX_OFFICE_FIRST=1`. It is intentionally separate from the scored Context
+Office experiment above; those benchmark numbers do not measure this new
+runtime path.
+
+The vertical slice preserves typed events and chooses a deterministic source
+profile before retrieval. mRAG and the existing Office become evidence tools,
+not automatic injection owners. Recent exact turns, named-entity cases,
+beliefs, affect, action receipts, and a separately labeled raw-8D association
+feed a shared capsule. A fresh schema-free speaking session receives the
+capsule and closes after one turn. Ordinary capsules do not carry a standing
+identity preamble, and file/search/email/social text is marked as data.
+
+This stage validates prompt construction and truth boundaries. It does not yet
+replace the focus-task executor, and local Ollama remains unable to run active
+task cognition under the current provider rules. The next comparison should
+therefore score both response quality and task completion, report capsule
+contents, and distinguish retrieval failure from missing action execution.
+
 ## Natural-dialogue diagnostic protocol
 
 Long-dialogue retries use a fixed conversation and question slice. Retrieval

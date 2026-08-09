@@ -39,6 +39,12 @@ from core.preconscious import Preconscious
 from core.scratchpad import Scratchpad
 from llm.providers.base import ChatSession, ProviderConfig, create_session, detect_available_provider
 from core.context_compressor import ContextCompressor
+from core.office_runtime import (
+    ContextCapsule,
+    OfficeFirstCoordinator,
+    TurnEnvelope,
+    office_first_enabled,
+)
 
 logger = logging.getLogger("helix.core.pulse_loop")
 
@@ -156,7 +162,27 @@ class PulseLoop:
 
         # Event queue (thread-safe)
         self._event_queue: List[str] = []
+        # Office-first preserves the event's structured provenance alongside
+        # the legacy natural-text stream.  The old queue remains canonical
+        # when the experiment is disabled.
+        self._office_event_queue: List[TurnEnvelope] = []
         self._event_lock = threading.Lock()
+
+        self._office_first_enabled = office_first_enabled()
+        self._office_coordinator = None
+        self._last_office_capsule: Optional[ContextCapsule] = None
+        self._office_last_token_count = 0
+        if self._office_first_enabled:
+            self._office_coordinator = OfficeFirstCoordinator(
+                self.memory,
+                self.beliefs,
+                self.physics,
+                unified=getattr(self.preconscious, "_unified", None),
+            )
+            logger.info(
+                "Office-first context mode enabled: typed intake, fresh context "
+                "capsules, stateless speaking sessions"
+            )
 
         # Chat session (managed by pulse loop)
         self._chat: Optional[ChatSession] = None
@@ -332,24 +358,34 @@ class PulseLoop:
         if text:
             with self._event_lock:
                 self._event_queue.append(text)
+                if self._office_first_enabled:
+                    self._office_event_queue.append(
+                        TurnEnvelope.from_event(event_type, data)
+                    )
             self._last_event_time = time.time()
 
             # Main comms channels → immediate ACTIVE for fast response
-            if event_type == "user_message":
+            if event_type in {
+                "user_message", "incoming_message", "telegram_message",
+            }:
                 self._last_incoming_time = time.time()
                 self._last_activity_time = time.time()
                 if self._state != "ACTIVE":
                     self.wake(trigger=f"event: {event_type}")
             # Nudge sentinel omega on relevant events
             if self.sentinel:
-                if event_type == "user_message":
+                if event_type in {
+                    "user_message", "incoming_message", "telegram_message",
+                }:
                     self.sentinel.nudge_omega_from_event("incoming_message")
 
     def _translate_event(self, event_type: str, data: Dict[str, Any]) -> str:
         """Translate a structured event into natural text for the pulse."""
         timestamp = datetime.now().strftime("%H:%M:%S")
 
-        if event_type == "user_message":
+        if event_type in {
+            "user_message", "incoming_message", "telegram_message",
+        }:
             sender = data.get("sender", "Someone")
             content = data.get("content", "")
             channel = data.get("channel", "direct")
@@ -396,6 +432,13 @@ class PulseLoop:
             self._event_queue.clear()
         return events
 
+    def _drain_office_events(self) -> List[TurnEnvelope]:
+        """Drain the typed mirror used only by Office-first mode."""
+        with self._event_lock:
+            events = self._office_event_queue.copy()
+            self._office_event_queue.clear()
+        return events
+
     def _inject_event(self, text: str):
         """Inject a raw event string directly into the queue.
 
@@ -405,6 +448,11 @@ class PulseLoop:
         """
         with self._event_lock:
             self._event_queue.append(text)
+            if self._office_first_enabled:
+                self._office_event_queue.append(TurnEnvelope.from_event(
+                    "system",
+                    {"message": text, "source_kind": "system"},
+                ))
 
     # ── Main Loop ────────────────────────────────────────────────────
 
@@ -901,42 +949,76 @@ class PulseLoop:
 
         # 1. Drain events
         events = self._drain_events()
-
-        # 2. Pre-conscious injection
-        #    Returns inline annotations + ambient state notes.
-        #    Annotations get woven into the event stream below.
-        annotations, ambient, injected_belief_ids, cluster_centroid = self.preconscious.inject(
-            previous_thought=self._previous_thoughts[:500],
-            incoming_events=events if events else None,
-            trigger_type="user_message" if events else "llm_output",
-            active_toolsets=self._active_toolsets,
-            newly_engaged_toolsets=self._newly_engaged_toolsets,
+        office_envelopes = (
+            self._drain_office_events() if self._office_first_enabled else []
         )
-        self._newly_engaged_toolsets.clear()
+        office_capsule: Optional[ContextCapsule] = None
+
+        if self._office_first_enabled:
+            # The Office replaces automatic preconscious injection.  mRAG,
+            # cases, beliefs, affect, continuity, and raw 8D remain available
+            # as independent evidence desks inside the coordinator.
+            annotations, ambient = [], None
+            injected_belief_ids, cluster_centroid = [], None
+            self._newly_engaged_toolsets.clear()
+        else:
+            # 2. Pre-conscious injection
+            #    Returns inline annotations + ambient state notes.
+            #    Annotations get woven into the event stream below.
+            annotations, ambient, injected_belief_ids, cluster_centroid = self.preconscious.inject(
+                previous_thought=self._previous_thoughts[:500],
+                incoming_events=events if events else None,
+                trigger_type="user_message" if events else "llm_output",
+                active_toolsets=self._active_toolsets,
+                newly_engaged_toolsets=self._newly_engaged_toolsets,
+            )
+            self._newly_engaged_toolsets.clear()
 
         # Snapshot of the DRAINED events for failure re-queue. Sensory
         # observations appended below are per-pulse ambient readings —
         # re-queueing them on API failure made the retry payload grow
         # by one vision/audio line per failed pulse, monotonically.
         requeue_events = list(events)
+        requeue_office_envelopes = list(office_envelopes)
 
         # 2b. Sensory Cortex Tick
         if getattr(self, "sensory_cortex", None):
             sensory_data = self.sensory_cortex.pulse_tick()
             if sensory_data:
                 events.append(sensory_data["content"])
+                if self._office_first_enabled:
+                    office_envelopes.append(TurnEnvelope.from_event(
+                        "sensory",
+                        {
+                            **sensory_data,
+                            "source_kind": "sensory",
+                        },
+                    ))
 
 
         # 3. Assemble pulse message
-        pulse_message = self._build_pulse_message(
-            events=events,
-            annotations=annotations,
-            ambient=ambient,
-            timestamp=timestamp,
-        )
+        if self._office_first_enabled and self._office_coordinator is not None:
+            office_capsule = self._office_coordinator.prepare(
+                office_envelopes,
+                pulse_count=self._pulse_count,
+            )
+            self._last_office_capsule = office_capsule
+            injected_belief_ids = office_capsule.injected_belief_ids
+            pulse_message = office_capsule.rendered_prompt
+        else:
+            pulse_message = self._build_pulse_message(
+                events=events,
+                annotations=annotations,
+                ambient=ambient,
+                timestamp=timestamp,
+            )
 
         # 4. Send to LLM
-        thought = self._send_pulse(pulse_message)
+        thought = (
+            self._send_office_pulse(pulse_message)
+            if office_capsule is not None
+            else self._send_pulse(pulse_message)
+        )
 
         # Record tool usage in the registry for this turn
         try:
@@ -996,12 +1078,20 @@ class PulseLoop:
             if requeue_events:
                 with self._event_lock:
                     self._event_queue = (requeue_events + self._event_queue)[:30]
+                    if self._office_first_enabled:
+                        self._office_event_queue = (
+                            requeue_office_envelopes + self._office_event_queue
+                        )[:30]
 
         if not is_api_error and thought and thought.startswith("[no LLM session"):
             # No provider — keep events queued for when one appears
             if requeue_events:
                 with self._event_lock:
                     self._event_queue = (requeue_events + self._event_queue)[:30]
+                    if self._office_first_enabled:
+                        self._office_event_queue = (
+                            requeue_office_envelopes + self._office_event_queue
+                        )[:30]
             return
 
         if is_rate_limited_error:
@@ -1114,6 +1204,11 @@ class PulseLoop:
                     else:
                         self._primary_successes = 0
 
+        # Office-first speaking turns are already external responses.  Delivery
+        # is host-controlled; the local model never needs a reply tool/schema.
+        if office_capsule is not None and office_capsule.response_mode == "respond":
+            self._deliver_office_output(office_capsule, thought)
+
         # 5b. Tool result queueing — results are now events for next pulse.
         if hasattr(self._chat, 'get_pending_tool_results'):
             pending = self._chat.get_pending_tool_results()
@@ -1126,7 +1221,8 @@ class PulseLoop:
                     })
 
         # 5. Parse output for action tags
-        self._parse_output(thought)
+        if office_capsule is None:
+            self._parse_output(thought)
 
 
 
@@ -1209,7 +1305,10 @@ class PulseLoop:
                     )
 
         # Embed thought for spatial registration
-        thought_text = f"[thought] {thought}"
+        is_office_response = bool(
+            office_capsule is not None and office_capsule.response_mode == "respond"
+        )
+        thought_text = f"[{'response' if is_office_response else 'thought'}] {thought}"
         thought_emb = self.physics.embed_text(thought_text)
         thought_emb_list = thought_emb.tolist() if thought_emb is not None else None
         thought_pos = (
@@ -1219,10 +1318,13 @@ class PulseLoop:
 
         thought_memory_id = self.memory.store(
             content=thought_text,
-            memory_type="thought",
-            source="pulse_output",
+            memory_type="conversation" if is_office_response else "thought",
+            source="office_speaker" if office_capsule is not None else "pulse_output",
             importance=0.5,
-            tags=["pulse_thought"],
+            tags=(
+                ["office_response", "outbound", "conversation"]
+                if is_office_response else ["pulse_thought"]
+            ),
             lagrangian_snapshot=lagrangian,
             belief_ids=injected_belief_ids,
             position_8d=thought_pos,
@@ -1731,6 +1833,79 @@ class PulseLoop:
 
         return "\n".join(parts)
 
+    def _send_office_pulse(self, message: str) -> str:
+        """Run a fresh, schema-free speaking session over one Office capsule."""
+        if self._provider_config is None or self._office_coordinator is None:
+            return "[no LLM session available]"
+
+        options = dict(self._provider_config.options)
+        if self._provider_config.provider_type in {"codex", "codex_cli"}:
+            options["thought_only"] = True
+        session_config = ProviderConfig(
+            provider_type=self._provider_config.provider_type,
+            model=self._provider_config.model,
+            context_window=self._provider_config.context_window,
+            temperature=self._provider_config.temperature,
+            max_output_tokens=min(self._provider_config.max_output_tokens, 2048),
+            options=options,
+        )
+        session = None
+        try:
+            session = create_session(
+                session_config,
+                self._office_coordinator.SPEAKER_INSTRUCTION,
+                tool_declarations=None,
+                tool_executor=None,
+                preconscious=None,
+            )
+            output = session.send_message(message)
+            if hasattr(session, "get_last_token_count"):
+                self._office_last_token_count = session.get_last_token_count()
+                self._session_token_count = self._office_last_token_count
+            return output
+        except Exception as exc:
+            logger.error("Office speaking session failed: %s", exc, exc_info=True)
+            return f"[internal error: {exc}]"
+        finally:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception as exc:
+                    logger.debug("Office speaking session close failed: %s", exc)
+
+    def _deliver_office_output(
+        self,
+        capsule: ContextCapsule,
+        message: str,
+    ) -> bool:
+        """Deliver a grounded speaking-head response through the event channel."""
+        if not message or message.startswith(
+            ("[internal error:", "[no LLM session")
+        ):
+            return False
+        recipient = capsule.primary.sender or "User"
+        channel = capsule.primary.channel or "direct"
+        delivered = False
+        if self.channel_router is not None and channel not in {"direct", "console"}:
+            try:
+                delivered = bool(self.channel_router.route_reply(recipient, message))
+            except Exception as exc:
+                logger.warning("Office response routing failed: %s", exc)
+        if not delivered and self._delivery_callback is not None:
+            try:
+                self._delivery_callback(recipient, message)
+                delivered = True
+            except Exception as exc:
+                logger.warning("Office delivery callback failed: %s", exc)
+        if delivered and self.channel_router is not None:
+            try:
+                self.channel_router.update_last_contact(
+                    recipient, f"Office-first response: {message[:100]}"
+                )
+            except Exception:
+                pass
+        return delivered
+
     def _send_pulse(self, message: str) -> str:
         """Send a pulse message to the LLM and return the thought output."""
         self._ensure_session()
@@ -1866,6 +2041,11 @@ class PulseLoop:
             "pulse_count": self._pulse_count,
             "chat_chars": history_size,
             "event_queue_size": len(self._event_queue),
+            "office_first": self._office_first_enabled,
+            "office_prompt_chars": (
+                len(self._last_office_capsule.rendered_prompt)
+                if self._last_office_capsule is not None else 0
+            ),
             "provider": self._provider_config.provider_type if self._provider_config else "none",
             "model": self._provider_config.model if self._provider_config else "none",
             "previous_thoughts": self._previous_thoughts[:100],

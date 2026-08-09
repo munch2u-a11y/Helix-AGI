@@ -12,10 +12,13 @@ status.
 ```mermaid
 flowchart TD
     E[Event queue<br/>messages, tool results, task results] --> P{Pulse state}
-    P -->|ACTIVE 10 s| R[Preconscious assembly]
-    P -->|REGULAR 30 s| R
-    P -->|RESTING configured interval| R
+    P -->|ACTIVE 10 s| OF{Office-first?}
+    P -->|REGULAR 30 s| OF
+    P -->|RESTING configured interval| OF
     P -->|DORMANT sleep window| D[Dream and consolidation]
+
+    OF -->|default| R[Preconscious assembly]
+    OF -->|experimental| OE[Typed Office intake<br/>source / trust / focus / response mode]
 
     R --> W[Memory intake work order<br/>subject / facet / exactness / time / relation]
     W --> M[mRAG semantic foreground<br/>native 1024D Qwen3]
@@ -30,6 +33,11 @@ flowchart TD
     S --> I
     A --> I
     I --> C[Main consciousness<br/>persistent provider session]
+
+    OE --> OW[Independent Office work orders<br/>semantic / exact / case / belief / affect /<br/>continuity / receipt / lateral]
+    OW --> OC[Evidence critic + fresh context capsule]
+    OC --> OS[Schema-free speaking head<br/>fresh provider session]
+    OS --> H
 
     C -->|off / observe| X[Direct host-tool path]
     C -->|active: committed intention| T[Durable TaskRecord]
@@ -56,6 +64,29 @@ host executor, but they do not move the conscious 8D attention center or teach
 memory associations. This avoids races and prevents parallel work from being
 mistaken for autobiographical attention.
 
+`HELIX_OFFICE_FIRST=1` enables the experimental alternate path in the standard
+`PulseLoop`. It retains a typed mirror of each event instead of discarding
+source provenance during natural-language translation. A deterministic Office
+coordinator then uses the existing mRAG, Context Office, entity cases, belief
+and affect views, recent exact turns, action receipts, and one explicitly
+non-evidentiary 8D association to build a fresh capsule. The speaking head is a
+new schema-free provider session on every pulse, so no cached chat history or
+large identity system prompt is required. The default remains the established
+persistent-session preconscious path.
+
+Each event performs the normal full multi-head mRAG search plus at most one
+source-focus search assembled from small metadata fields such as sender/thread,
+author/audience, file path/objective, search query, or tool/task name. Canonical
+belief or skill results from that second head receive real competing bids; the
+head is not merely a tag shown to the speaker.
+
+The vertical slice currently makes response construction Office-first; it does
+not replace task-focus execution. A spoken committed plan can still enter the
+existing task-inception hook, and completed focus work returns as a typed
+`task_result` receipt. Local Ollama task execution remains limited by the
+existing task-cognition provider boundary; Office-first never fabricates tool
+completion when no successful receipt exists.
+
 ## Pulse State Machine
 
 | State | Default cadence | Transition behavior |
@@ -75,11 +106,34 @@ captures post-state, runs hooks, and checks context lifecycle. In `off` and
 path. In `active`, the main session is thought-only and committed intentions
 are completed by focused task sessions.
 
+In Office-first mode, the corresponding cycle is typed event drain, source
+profile selection, retrieval work orders, evidence arbitration, capsule
+rendering, a fresh schema-free speaking call, response delivery when the event
+requires one, exact memory encoding, physics, and the same post-pulse hooks.
+Source profiles are deterministic and deliberately short:
+
+| Source | Dynamic focus |
+|---|---|
+| Direct message | intent, continuity, relationship, learned tone, affect |
+| Email | sender, thread, commitments, dates, relationship tone |
+| Social post | author, audience, claims, public voice, relationship |
+| File read | active task, path, requested section, project context |
+| Search result | query, sources, claims, uncertainty, active task |
+| Tool/task result | objective or tool, status, receipt, next step |
+| Sensory/system | current state, change, salience or constraint |
+
+File, search, email, and social bodies are delimited as data. Only a successful
+host receipt can authorize the speaking head to describe an action as complete.
+
 ## Preconscious Retrieval Contract
 
 Retrieval is deliberately separated into semantic advice, a deterministic
 Context Office evidence brief, and bounded non-semantic complements. Scores
 from these representations are never blended into one pseudo-distance.
+
+This table describes both the default preconscious path and the same stores
+consulted as Office work orders when `HELIX_OFFICE_FIRST=1`. In that experiment
+the coordinator, rather than `Preconscious.inject`, owns final prompt space.
 
 | Order | Lane | Representation | Contract |
 |---:|---|---|---|
@@ -270,6 +324,8 @@ of truth for on-disk details.
 | `HELIX_MRAG_PROFILE` | `local` | `local` or `frontier` search/render budget |
 | `HELIX_MRAG_RENDER_MODE` | `verbatim` | Preserve exact selected records; `summary` remains a legacy explicit override |
 | `HELIX_CONTEXT_OFFICE` | enabled | Read-only specialist evidence desks over canonical memory |
+| `HELIX_OFFICE_FIRST` | disabled | Use typed Office capsules and fresh schema-free speaking sessions instead of persistent preconscious prompt assembly |
+| `HELIX_OFFICE_FIRST_ITEMS` | `10` | Competitive evidence ceiling per capsule; recent continuity and one lateral association have separate small bounds |
 | `HELIX_ASSOCIATIVE_MEMORY` | enabled | Disable sequential association learning/recall for ablation |
 | `HELIX_MRAG_ADJACENCY` | disabled | Restore old temporal-neighbor expansion for benchmark parity |
 | `HELIX_SEMANTIC_MODEL` | `qwen3-embedding:0.6b` | Local semantic encoder |

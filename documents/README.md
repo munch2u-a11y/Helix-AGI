@@ -1,6 +1,6 @@
 # Helix Technical Documentation
 
-**Documentation status:** current index · **Last verified against source:** 2026-08-08
+**Documentation status:** current index · **Last verified against source:** 2026-08-09
 
 Helix documentation is divided by purpose. This distinction matters because
 the repository retains old audits and benchmark reports to preserve design

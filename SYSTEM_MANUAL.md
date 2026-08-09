@@ -1,8 +1,8 @@
 # Helix Cognitive Architecture: System Manual
 
-**Documentation status:** current runtime reference · **Last verified against source:** 2026-08-08
+**Documentation status:** current runtime reference · **Last verified against source:** 2026-08-09
 
-This is the detailed developer and operator guide. It is not injected wholesale as a system prompt. The live prompt is assembled from identity beliefs, per-pulse preconscious grounding, generated ability awareness, and—when active task cognition is enabled—a small cognitive kernel. For a shorter wiring reference and documentation precedence, see [`documents/architecture_current.md`](documents/architecture_current.md) and [`documents/README.md`](documents/README.md).
+This is the detailed developer and operator guide. It is not injected wholesale as a system prompt. The default live prompt is assembled from identity beliefs, per-pulse preconscious grounding, generated ability awareness, and—when active task cognition is enabled—a small cognitive kernel. The experimental Office-first path instead compiles a fresh source-aware context capsule and includes identity only when the present turn needs it. For a shorter wiring reference and documentation precedence, see [`documents/architecture_current.md`](documents/architecture_current.md) and [`documents/README.md`](documents/README.md).
 
 ---
 
@@ -12,6 +12,10 @@ You are not a static prompt. Your identity is emergent, dynamically constructed 
 
 ### Dynamic Preamble
 Your system prompt opens with your **heaviest `premises` belief** — queried live from the belief store at boot. If a new core premise overtakes it in gravitational mass, the next session uses that belief as your preamble. Identity crystallizes from experience, not configuration.
+
+This describes the default persistent-session path. With
+`HELIX_OFFICE_FIRST=1`, the speaking head has only a small fixed truth kernel;
+identity beliefs compete for capsule space and are omitted from ordinary turns.
 
 ### The Belief Store
 Your beliefs are organized into 7 categories across two epistemic tiers, each stored as a separate JSON file in `data/beliefs/`:
@@ -88,6 +92,45 @@ Each pulse executes:
 9. **Lagrangian Snapshot (after)** — capture post-pulse state.
 10. **Post-Pulse Hooks** — BeliefDetector, WorkflowDetector, EngagementHook, AffectHook, CoOccurrenceHook all run.
 11. **Context Lifecycle Check** — compression triggered if needed.
+
+### Experimental Office-First Cycle
+
+`HELIX_OFFICE_FIRST=1` changes prompt ownership without changing the canonical
+memory or belief stores. The pulse retains a typed event mirror, classifies its
+source and trust boundary, emits deterministic retrieval work orders, lets the
+existing Office desks arbitrate evidence, and creates one fresh context capsule.
+A schema-free provider session writes the response or private thought and is
+closed immediately afterward; persistent chat history and the large identity
+system instruction are bypassed.
+
+Retrieval runs the ordinary full mRAG query and no more than one additional
+source-focus query. The latter is constructed from small trusted metadata such
+as sender/thread, author/audience, path/objective, search query, or tool/task
+name. Its canonical belief and skill matches submit real bids; the focus tags
+are therefore operational rather than decorative.
+
+The front desk injects small source-dependent variables instead of asking the
+local model to infer the workflow:
+
+- Direct message: intent, continuity, relationship tone, affect.
+- Email: sender, thread, commitments, dates, reply tone.
+- Social post: author, audience, claim, public voice, relationship.
+- File read: active task, path, requested section, project context.
+- Search return: query, sources, claims, uncertainty, active task.
+- Tool/task return: action or objective, status, receipt, next step.
+- Sensory/system event: current state, change, salience, constraint.
+
+The capsule has explicit continuity, evidence, learned stance, affect,
+conditional identity, non-evidentiary association, and action-receipt roles.
+External content is delimited as data. A response cannot claim completion
+unless a successful host receipt is present.
+
+This first vertical slice replaces response context construction, not focused
+task execution. Committed response text can still create a task through the
+post-pulse intention hook. Active focus workers return a typed receipt for a
+later Office turn. Ollama remains subject to the existing local task-cognition
+limit and therefore does not gain autonomous tool execution merely by enabling
+Office-first mode.
 
 ### Context Compression
 Token pressure causes rolling compression instead of a hard reset:
@@ -224,6 +267,14 @@ it can erase retrieved names, dates, and arbitrary relations. Maintained
 session/topic summaries remain ordinary corpus candidates and compete for
 space. `HELIX_MRAG_RENDER_MODE=summary` is retained only as an explicit legacy
 override.
+
+When Office-first mode is enabled, these same retrieval systems operate as
+evidence tools owned by `OfficeFirstCoordinator`. `Preconscious.inject()` no
+longer owns the final prompt. Recent exact conversation, receipts, and one raw
+8D lateral result remain separately labeled so the speaking model cannot turn
+an association into a fact. `HELIX_OFFICE_FIRST_ITEMS` defaults to ten
+competitive evidence records; small continuity and lateral bounds are outside
+that ceiling.
 
 ### Entity Cases and Maintenance
 
