@@ -28,6 +28,7 @@ class BackgroundDaemon:
         memory_manager=None,
         llm_client=None,
         data_dir: str = "data",
+        case_office=None,
     ):
         self.physics = physics_engine
         self.belief_store = belief_store
@@ -41,6 +42,7 @@ class BackgroundDaemon:
                 memory_manager=memory_manager,
                 llm_client=llm_client,
                 data_dir=data_dir,
+                case_office=case_office,
             )
 
     def run_dream_cycle(self) -> dict:

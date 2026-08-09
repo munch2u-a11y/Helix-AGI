@@ -26,7 +26,7 @@ import tempfile
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # Ensure Helix packages are importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -94,6 +94,14 @@ Rules:
   {"answer": "your answer here"}
 - Do not mention the benchmark, retrieval system, or injected context.
 - Do not use markdown fences.
+"""
+
+MAINTENANCE_SYSTEM_INSTRUCTION = """\
+Extract durable person-specific context from one completed conversation session.
+Return one JSON object with a `people` list. Each person may contain: name,
+facts, preferences, opinions, traits, communication_style, and affect.
+Every facet is a list of short strings. Use explicit support only, keep people
+separate, and return at most two items per facet. No markdown or explanation.
 """
 
 
@@ -414,9 +422,19 @@ def build_operational_pulse_message(
     return "\n".join(parts).strip()
 
 
-def format_dialogue_payload(dia_id: str, speaker: str, text: str, session_datetime: str) -> str:
+def format_dialogue_payload(
+    dia_id: str,
+    speaker: str,
+    text: str,
+    session_datetime: str,
+    visual_description: str = "",
+) -> str:
     time_prefix = f"[TIME: {session_datetime}] " if session_datetime else ""
-    return f"[{dia_id}] {time_prefix}{speaker}: {text}"
+    visual = (
+        f" [observed image: {' '.join(str(visual_description).split())}]"
+        if visual_description else ""
+    )
+    return f"[{dia_id}] {time_prefix}{speaker}: {text}{visual}"
 
 
 def store_pulse_artifacts(
@@ -426,26 +444,44 @@ def store_pulse_artifacts(
     raw_response: str,
     surfaced_ids: List[str],
     store_thought: bool = True,
-) -> None:
+) -> List[str]:
     """Store pulse input/output memories in the live operational shape."""
     physics = runtime["physics"]
     memory_manager = runtime["memory_manager"]
     projection = physics.spatial_mind.belief_space.projection
     pulse_id = int(getattr(physics, "_pulse_count", 0) or 0)
+    spatial_embeddings = physics.embed_text_batch(events)
+    try:
+        semantic_embeddings = physics.embed_semantic_batch(events, is_query=False)
+    except Exception as exc:
+        logger.warning("Batch semantic ingest unavailable: %s", exc)
+        semantic_embeddings = [None] * len(events)
 
-    for event in events:
-        event_emb = physics.embed_text(event)
+    stored_event_ids: List[str] = []
+    for index, event in enumerate(events):
+        event_emb = spatial_embeddings[index]
         event_emb_list = event_emb.tolist() if event_emb is not None else None
         event_pos = projection.project(event_emb).tolist() if event_emb is not None else None
+        semantic_emb = semantic_embeddings[index]
+        semantic_emb_list = (
+            semantic_emb.tolist() if semantic_emb is not None else None
+        )
 
         tags = ["pulse_event", "locomo_dialogue"]
         did = parse_dia_id(event)
         if did:
             tags.append(did)
+            if ":" in did:
+                session_ref, turn_ref = did.split(":", 1)
+                tags.extend((
+                    f"session:{session_ref}",
+                    f"turn:{turn_ref}",
+                    f"event:{did}",
+                ))
         if "[TIME:" in event:
             tags.append("timestamped")
 
-        memory_manager.store(
+        memory_id = memory_manager.store(
             content=event,
             memory_type="event",
             source="pulse_input",
@@ -453,11 +489,13 @@ def store_pulse_artifacts(
             tags=tags,
             position_8d=event_pos,
             embedding_384d=event_emb_list,
+            semantic_embedding_1024d=semantic_emb_list,
             pulse_id=pulse_id,
         )
+        stored_event_ids.append(f"mem_{memory_id}")
 
     if not store_thought:
-        return
+        return stored_event_ids
 
     thought_text = f"[thought] {raw_response}"
     thought_emb = physics.embed_text(thought_text)
@@ -475,6 +513,7 @@ def store_pulse_artifacts(
         embedding_384d=thought_emb_list,
         pulse_id=pulse_id,
     )
+    return stored_event_ids
 
 
 def run_operational_pulse(
@@ -516,8 +555,9 @@ def run_operational_pulse(
     )
     raw_response = session.send_message(pulse_message)
 
+    artifact_memory_ids: List[str] = []
     if store_artifacts:
-        store_pulse_artifacts(
+        artifact_memory_ids = store_pulse_artifacts(
             runtime,
             events=events,
             raw_response=raw_response,
@@ -540,6 +580,7 @@ def run_operational_pulse(
         "surfaced_ids": surfaced_ids,
         "context_string": context_string,
         "retrieval_stats": dict(unified.last_stats) if unified is not None else {},
+        "artifact_memory_ids": artifact_memory_ids,
     }
     if mode == "qa":
         result["answer"] = extract_answer(raw_response)
@@ -551,8 +592,10 @@ def replay_dialogue(
     provider_config,
     dialogue: Dict[str, Any],
     ingest_batch_size: int = 1,
+    maintenance_mode: str = "off",
+    maintenance_model: str = "",
 ) -> Dict[str, Any]:
-    """Replay a dialogue through Helix as live operational events."""
+    """Replay live sessions with optional between-session maintenance."""
     from llm.providers.base import create_session
 
     conv = dialogue["conversation"]
@@ -562,57 +605,149 @@ def replay_dialogue(
             session_nums.append(int(key.split("_")[1]))
     session_nums.sort()
 
-    flattened_events: List[str] = []
+    traces = []
+    maintenance_traces = []
+    total_turns = 0
+    batch_size = max(1, ingest_batch_size)
     for s_num in session_nums:
         session_key = f"session_{s_num}"
+        session_id = f"D{s_num}"
         session_datetime = conv.get(f"{session_key}_date_time", "")
-        for turn in conv[session_key]:
-            flattened_events.append(
-                format_dialogue_payload(
-                    dia_id=turn["dia_id"],
-                    speaker=turn["speaker"],
-                    text=turn["text"],
-                    session_datetime=session_datetime,
-                )
+        session_events = [
+            format_dialogue_payload(
+                dia_id=turn["dia_id"],
+                speaker=turn["speaker"],
+                text=turn["text"],
+                session_datetime=session_datetime,
+                visual_description=turn.get("blip_caption", ""),
             )
-
-    session = create_session(
-        provider_config,
-        INGEST_SYSTEM_INSTRUCTION,
-        tool_declarations=None,
-        tool_executor=None,
-        preconscious=runtime["preconscious"],
-    )
-
-    previous_thought = ""
-    traces = []
-    batch_size = max(1, ingest_batch_size)
-    for idx in range(0, len(flattened_events), batch_size):
-        batch = flattened_events[idx : idx + batch_size]
-        pulse = run_operational_pulse(
-            runtime,
-            session,
-            previous_thought=previous_thought,
-            events=batch,
-            trigger_type="user_message",
-            mode="ingest",
-            pulse_number=len(traces) + 1,
+            for turn in conv[session_key]
+        ]
+        total_turns += len(session_events)
+        session = create_session(
+            provider_config,
+            INGEST_SYSTEM_INSTRUCTION,
+            tool_declarations=None,
+            tool_executor=None,
+            preconscious=runtime["preconscious"],
         )
-        traces.append(
-            {
-                "pulse": len(traces) + 1,
-                "events": batch,
-                "raw_response": pulse["raw_response"],
-                "context_string": pulse["context_string"],
-            }
-        )
-        previous_thought = pulse["raw_response"]
+        previous_thought = ""
+        session_memory_ids: List[str] = []
+        try:
+            for idx in range(0, len(session_events), batch_size):
+                batch = session_events[idx : idx + batch_size]
+                pulse = run_operational_pulse(
+                    runtime,
+                    session,
+                    previous_thought=previous_thought,
+                    events=batch,
+                    trigger_type="user_message",
+                    mode="ingest",
+                    pulse_number=len(traces) + 1,
+                )
+                session_memory_ids.extend(pulse["artifact_memory_ids"])
+                traces.append(
+                    {
+                        "pulse": len(traces) + 1,
+                        "session_id": session_id,
+                        "events": batch,
+                        "raw_response": pulse["raw_response"],
+                        "context_string": pulse["context_string"],
+                    }
+                )
+                previous_thought = pulse["raw_response"]
+        finally:
+            close = getattr(session, "close", None)
+            if callable(close):
+                close()
+
+        if maintenance_mode != "off":
+            maintenance_traces.append(run_session_maintenance(
+                runtime,
+                provider_config,
+                session_id=session_id,
+                memory_ids=session_memory_ids,
+                mode=maintenance_mode,
+                maintenance_model=maintenance_model,
+            ))
+        associative = getattr(runtime["preconscious"], "_associative", None)
+        if associative is not None:
+            associative.break_sequence()
 
     return {
-        "turn_count": len(flattened_events),
+        "turn_count": total_turns,
         "pulse_count": len(traces),
         "traces": traces,
+        "maintenance_mode": maintenance_mode,
+        "maintenance": maintenance_traces,
     }
+
+
+def run_session_maintenance(
+    runtime: Dict[str, Any],
+    provider_config,
+    *,
+    session_id: str,
+    memory_ids: Sequence[str],
+    mode: str,
+    maintenance_model: str = "",
+) -> Dict[str, Any]:
+    """Run reusable exact filing plus one optional bounded local worker."""
+    from core.session_memory_maintenance import SessionMemoryMaintenance
+    from llm.providers.base import ProviderConfig, create_session
+
+    preconscious = runtime["preconscious"]
+    unified = getattr(preconscious, "_unified", None)
+    office = getattr(unified, "context_office", None)
+    if office is None:
+        return {"session_id": session_id, "worker_error": "Context Office unavailable"}
+    records = [
+        unified.corpus.get(memory_id)
+        for memory_id in memory_ids
+    ]
+    records = [record for record in records if record is not None]
+
+    worker = None
+    if mode == "full":
+        options = dict(provider_config.options or {})
+        maintenance_config = ProviderConfig(
+            provider_type=provider_config.provider_type,
+            model=maintenance_model or provider_config.model,
+            context_window=provider_config.context_window,
+            temperature=0.0,
+            max_output_tokens=min(768, provider_config.max_output_tokens),
+            options=options,
+        )
+
+        def worker(request):
+            session = create_session(
+                maintenance_config,
+                MAINTENANCE_SYSTEM_INSTRUCTION,
+                tool_declarations=None,
+                tool_executor=None,
+            )
+            try:
+                response = session.send_message(json.dumps(request, ensure_ascii=False))
+            finally:
+                close = getattr(session, "close", None)
+                if callable(close):
+                    close()
+            return extract_json_object(response) or {}
+
+    stats = SessionMemoryMaintenance(
+        cases=office.cases,
+        belief_store=runtime["belief_store"],
+        worker=worker,
+    ).run(session_id, records)
+
+    # Newly formed people facets are immediately searchable by the current
+    # preconscious instance; do not wait for a process restart.
+    preconscious._lexicon_lookup = {}
+    preconscious._load_layer2_anchors()
+    preconscious._belief_cache = []
+    preconscious._belief_cache_count = 0
+    preconscious._belief_cache_mass = 0.0
+    return stats
 
 
 def run_agent_question(
@@ -799,9 +934,12 @@ def run_evaluation(
     max_questions: Optional[int] = None,
     backend: str = "auto",
     model: str = "",
+    maintenance: str = "off",
+    maintenance_model: str = "",
     dry_run: bool = False,
     save_path: Optional[str] = None,
     details_path: Optional[str] = None,
+    maintenance_path: Optional[str] = None,
 ) -> bool:
     logger.info("Loading LoCoMo dataset from: %s", dataset_path)
     if not os.path.exists(dataset_path):
@@ -869,6 +1007,8 @@ def run_evaluation(
         cat: init_recall_store() for cat in CATEGORY_NAMES
     }
     details: List[Dict[str, Any]] = []
+    maintenance_audit: List[Dict[str, Any]] = []
+    maintenance_snapshots: List[Dict[str, Any]] = []
 
     for d_idx in range(num_to_eval):
         dialogue = data[dialogue_index + d_idx]
@@ -882,7 +1022,33 @@ def run_evaluation(
                 provider_config,
                 dialogue,
                 ingest_batch_size=max(1, ingest_batch_size),
+                maintenance_mode=maintenance,
+                maintenance_model=maintenance_model,
             )
+            maintenance_audit.extend(replay.get("maintenance", []))
+            if maintenance != "off":
+                office = getattr(
+                    getattr(runtime["preconscious"]._unified, "context_office", None),
+                    "cases",
+                    None,
+                )
+                maintenance_snapshots.append({
+                    "sample_id": sample_id,
+                    "cycles": replay.get("maintenance", []),
+                    "cases": office.summary() if office is not None else [],
+                    "profiles": [
+                        {
+                            "id": belief.get("id"),
+                            "term": belief.get("term"),
+                            "content": belief.get("content"),
+                            "memory_refs": belief.get("memory_refs", []),
+                        }
+                        for belief in runtime["belief_store"].get_category(
+                            "people", limit=100_000
+                        )
+                        if belief.get("formation_type") == "session_profile"
+                    ],
+                })
             logger.info(
                 "Replayed %d dialogue turns through %d operational pulses.",
                 replay["turn_count"],
@@ -948,6 +1114,7 @@ def run_evaluation(
                         "latency_ms": round(agent_result["latency_ms"], 2),
                         "replay_turns": replay["turn_count"],
                         "replay_pulses": replay["pulse_count"],
+                        "maintenance_mode": replay["maintenance_mode"],
                         "pulses": agent_result["pulses"],
                     }
                 )
@@ -960,8 +1127,31 @@ def run_evaluation(
     report_lines.append(f"**Questions Evaluated**: {len(global_answer['f1'])}")
     report_lines.append(f"**Question Pulses**: {max_pulses}")
     report_lines.append(f"**Replay Batch Size**: {ingest_batch_size}")
+    report_lines.append(f"**Between-Session Maintenance**: {maintenance}")
+    if maintenance == "full":
+        report_lines.append(
+            f"**Maintenance Model**: {maintenance_model or provider_config.model}"
+        )
     report_lines.append(f"**Provider**: {provider_config.provider_type} / {provider_config.model}")
     report_lines.append("")
+
+    if maintenance_audit:
+        report_lines.append("## Maintenance Audit")
+        report_lines.append("")
+        report_lines.append(
+            f"- Cycles completed: {len(maintenance_audit)}"
+        )
+        report_lines.append(
+            "- Exact case references linked: "
+            + str(sum(int(item.get("references_linked", 0)) for item in maintenance_audit))
+        )
+        report_lines.append(
+            "- Person-session profiles written: "
+            + str(sum(int(item.get("profiles_written", 0)) for item in maintenance_audit))
+        )
+        worker_errors = [item for item in maintenance_audit if item.get("worker_error")]
+        report_lines.append(f"- Worker failures: {len(worker_errors)}")
+        report_lines.append("")
     report_lines.append(
         "This run scores Helix's generated answers. Retrieval scores below are diagnostic provenance checks, not the primary grade."
     )
@@ -1047,6 +1237,14 @@ def run_evaluation(
         details_file.write_text(json.dumps(details, indent=2), encoding="utf-8")
         logger.info("Detailed results saved to: %s", details_file)
 
+    if maintenance_path and maintenance_snapshots:
+        maintenance_file = Path(maintenance_path)
+        maintenance_file.parent.mkdir(parents=True, exist_ok=True)
+        maintenance_file.write_text(
+            json.dumps(maintenance_snapshots, indent=2), encoding="utf-8"
+        )
+        logger.info("Maintenance audit saved to: %s", maintenance_file)
+
     return True
 
 
@@ -1088,6 +1286,17 @@ def main() -> None:
         help="Optional reader model override",
     )
     parser.add_argument(
+        "--maintenance",
+        choices=("off", "cases", "full"),
+        default="off",
+        help="Between-session maintenance: exact case filing only, or filing plus derived person facets",
+    )
+    parser.add_argument(
+        "--maintenance-model",
+        default="",
+        help="Optional model for the bounded maintenance worker",
+    )
+    parser.add_argument(
         "--max-pulses",
         type=int,
         default=2,
@@ -1116,6 +1325,12 @@ def main() -> None:
         default="documents/locomo_benchmark_details.json",
         help="Path to save per-question raw outputs and metrics",
     )
+    parser.add_argument(
+        "--save-maintenance",
+        type=str,
+        default="",
+        help="Optional path for case counts, maintenance cycles, and source-linked profiles",
+    )
     args = parser.parse_args()
 
     success = run_evaluation(
@@ -1127,9 +1342,12 @@ def main() -> None:
         max_questions=max(1, args.max_questions) if args.max_questions is not None else None,
         backend=args.backend,
         model=args.model,
+        maintenance=args.maintenance,
+        maintenance_model=args.maintenance_model,
         dry_run=args.dry_run,
         save_path=args.save_results,
         details_path=args.save_details,
+        maintenance_path=args.save_maintenance or None,
     )
     raise SystemExit(0 if success else 1)
 

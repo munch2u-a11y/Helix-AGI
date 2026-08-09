@@ -466,6 +466,11 @@ def setup_helix(data_dir: str = "data"):
         memory_manager=memory_manager,
         llm_client=curator_llm,
         data_dir=data_dir,
+        case_office=getattr(
+            getattr(getattr(preconscious, "_unified", None), "context_office", None),
+            "cases",
+            None,
+        ),
     )
 
     print("  Pulse loop: Ready")

@@ -23,7 +23,8 @@ flowchart TD
     M --> O[Context Office desk bids]
     O -. insufficient slice .-> B[On-demand office board]
     B -. bounded candidates .-> O
-    O --> V[Shared bid arbitration]
+    O --> K[Named-entity case route<br/>exact refs + source-linked facets]
+    K --> V[Shared bid arbitration]
     V --> I[Bounded exact injection]
     S --> I
     A --> I
@@ -83,7 +84,7 @@ from these representations are never blended into one pseudo-distance.
 |---:|---|---|---|
 | 1 | Layer-2 anchors | Named people, concepts, skills, desires | Exact high-priority anchors with repetition guard |
 | 2 | mRAG semantic advisor | Native normalized 1024D Qwen3 embeddings | Full-trigger, sentence, RAKE, entity, concept, and relation heads plus exact-term/tag evidence advise office routing and remain the fallback |
-| 3 | Context Office | Transient term, episode, turn, and task indexes over the canonical corpus | Facts, State, Relations, Catalog, Beliefs, Causality, Affect, and conditionally routed Identity desks submit bids for one shared budget; no duplicated markdown/database memory |
+| 3 | Context Office | Transient term, episode, turn, task, and entity-case indexes over the canonical corpus | Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, and conditionally routed Identity desks submit bids for one shared budget; no duplicated canonical memory |
 | 4 | Raw spatial / Lateral desk | MiniLM 384D projected through a fixed matrix to 8D | At most two spatial-only items; append-only, explicitly non-evidentiary, and unable to reorder the office brief |
 | 5 | Associative transition | Directed cluster prototypes in a separate 8D overlay | Repeated A→B attention transitions surface lateral follow-ons; individual memories and beliefs do not move |
 | 6 | Metadata and working state | Stability, Lagrangian snapshot, scratchpad, recent/contact state | Preserved for rendering, representative choice, and one bounded somatic echo; response-relevant current affect competes through the Affect desk |
@@ -130,6 +131,23 @@ Worker contracts contain one direct task sentence and a capped candidate list;
 they contain no examples and no repeated identity preamble. The deterministic
 workers are the default. These same contracts are the extension boundary for
 optional local desk models without exposing an oversized schema bundle.
+
+### Session maintenance and entity cases
+
+Exact incoming records always remain in the central append-only journal. An
+entity case stores bounded memory and belief references, aliases, and session
+membership; it does not move or rewrite those records. Questions that
+explicitly name a known person are routed to a lexical search over that case
+before its candidates enter ordinary bid arbitration. This gives a mature
+agent a small “Bob desk” without giving that desk guaranteed prompt space.
+
+At the start of the nightly Curator cycle, recent exact `pulse_input` records
+are grouped by session and filed deterministically. One optional bounded worker
+per session may form a source-linked person profile containing supported facts,
+preferences, opinions, traits, communication style, and affect. Exact filing
+commits independently, so a local-model timeout or malformed profile cannot
+lose the underlying memories. The same provider-neutral workflow is available
+to sandboxes and future event-defined rest boundaries.
 
 ## Learned Relations and New Concepts
 
@@ -221,6 +239,7 @@ indexing the complete frozen memory.
 | Spatial state | `data/spatial/` | Two 8D fields, attention/physics state, associative transitions |
 | Scratchpad | `data/scratchpad/` | Explicit working notes |
 | Task cognition | `data/tasks/` | Atomic task snapshot plus audit events, orchestrators, transitions, procedures |
+| Entity cases | `data/cases/office_board.json` | Source references and session membership; exact content remains canonical |
 | Interaction ledger | `data/interaction_ledger.json` | Artifact-level action provenance |
 
 Exact filenames can evolve; storage classes and migration code are the source

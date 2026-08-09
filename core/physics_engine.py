@@ -206,6 +206,25 @@ class PhysicsEngine:
             logger.debug(f"Embedding failed: {e}")
             return np.zeros(EMBEDDING_DIM, dtype=np.float32)
 
+    def embed_text_batch(self, texts: List[str]) -> np.ndarray:
+        """Batch texts for the stable 384D spatial projection."""
+        if not texts:
+            return np.empty((0, EMBEDDING_DIM), dtype=np.float32)
+        embedder = self._get_embedder()
+        if embedder is None:
+            return np.zeros((len(texts), EMBEDDING_DIM), dtype=np.float32)
+        try:
+            result = np.asarray(embedder(list(texts)), dtype=np.float32)
+            if result.shape != (len(texts), EMBEDDING_DIM):
+                raise ValueError(
+                    f"spatial batch shape {result.shape}, expected "
+                    f"{(len(texts), EMBEDDING_DIM)}"
+                )
+            return result
+        except Exception as e:
+            logger.debug("Batch spatial embedding failed: %s", e)
+            return np.stack([self.embed_text(text) for text in texts])
+
     def embed_and_project(self, text: str) -> np.ndarray:
         """Text → stable 384D MiniLM embedding → persistent 8D position."""
         emb = self.embed_text(text)

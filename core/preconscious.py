@@ -2275,6 +2275,7 @@ class Preconscious:
                 "supporting_belief": "BELIEFS DESK — supporting structured belief",
                 "affect_state": "AFFECT DESK — current response-relevant posture",
                 "affective_resonance": "AFFECT DESK — emotionally resonant memory, not factual proof",
+                "case_record": "CASE DESK — exact or source-linked entity record",
                 "unverified_semantic": "SEMANTIC ADVISOR — unverified candidate",
                 "semantic_recall": "SEMANTIC ADVISOR — recall",
             }

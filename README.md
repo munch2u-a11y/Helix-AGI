@@ -23,7 +23,7 @@ flowchart TD
     B -->|DORMANT| C[Nightly dream and consolidation]
     B -->|awake pulse| P[Preconscious assembly]
     P --> M[1024D multi-head mRAG<br/>semantic foreground]
-    M --> O[Context Office desks<br/>Facts / State / Relations / Catalog /<br/>Beliefs / Causality / Affect / conditional Identity]
+    M --> O[Context Office desks<br/>Facts / State / Relations / Catalog / Case /<br/>Beliefs / Causality / Affect / conditional Identity]
     O -. insufficient initial coverage .-> Q[On-demand office board<br/>bounded canonical lookup]
     Q -. candidates .-> O
     O --> V[Shared bid arbitration<br/>utility / confidence / cost]
@@ -71,6 +71,7 @@ Helix uses a high-accuracy semantic foreground together with a deliberately sepa
 - **Context-scaled injection** — Local and frontier profiles use different head, candidate, item, and token budgets. The frontier profile preserves more verbatim evidence for GPT-class context windows; neither profile dumps every retrieved item into the prompt.
 - **Concept-aware retrieval** — The full trigger, bounded sentence chunks, and RAKE keyphrases become independent mRAG heads. Specific terms also receive rarity-weighted exact lookup.
 - **Competitive prompt construction** — Facts, state, relations, beliefs, preferences, learned traits, affect, and conditional identity context submit scored bids for one prompt budget. A desk gets a bounded office-board lookup only when its initial retrieval slice cannot cover the task; complete joins and calculations bid atomically.
+- **Entity case routing** — Exact memories remain in the canonical journal while maintained person cases store source references and derived, source-linked profile facets. A question naming someone routes first to that small case search space; its results still compete for shared injection space and never become a privileged second memory silo.
 - **Continuous attention dynamics** — The attention center has *inertia* (γ = 0.85). Sustained focus changes the spatial neighborhood even when a future query is not semantically similar. Context compression is token-driven; attention drift is diagnostic rather than a reset trigger.
 - **Natural internal/external separation** — External stimuli (user messages, tool returns, sensor data) enter via the event queue; internal generation (autonomous thought, journal entries) enters as pulse output. The preconscious surfaces both but the model always knows which is which — this is structural, not prompt-engineered.
 - **Somatic encoding** — Every memory is stored with its 8D position and Lagrangian snapshot (Ω, H, D_KL). When recalled, the original affective state mildly reproduces — state-dependent episodic recall.
@@ -108,6 +109,7 @@ Helix uses a high-accuracy semantic foreground together with a deliberately sepa
 - **Raw 8D Complement** — Both spatial fields are queried from Helix's carried attention trajectory without the former top-100 semantic pre-filter. A maximum of two spatial-only memories or beliefs is appended after mRAG and can never reorder its results.
 - **Sequence Associations** — Direct foreground movement between clusters learns durable directed transitions. Repetition nudges cluster prototypes in a separate 8D overlay; it never drags co-injected memory/belief points together. Associated items already ranked by mRAG are excluded, keeping this lane genuinely lateral. If the same destination independently arrives through raw spatial recall, it is retained once and explicitly tagged as a learned follow-on association.
 - **Affect-Preserving Recall** — Stability and encoding Lagrangian metadata remain attached throughout retrieval. The Affect desk bids current posture and at most two resonant memories only when they can change the response; recalled memories still reproduce one bounded aggregate somatic echo.
+- **Between-session maintenance** — The nightly Curator files recent exact inputs into entity cases before synthesis, then uses one bounded worker per session to form person-specific facts, preferences, opinions, traits, communication style, and affect. Filing succeeds even when the optional worker fails.
 
 ### Event-Driven Task Cognition
 

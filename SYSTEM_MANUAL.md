@@ -211,7 +211,7 @@ The bridge between memory and conscious awareness. Each pulse, it assembles a pe
 
 1. **Layer 2 Anchor Match** — known people, concepts, skills, and desires named in the trigger inject at highest priority with a rolling repetition guard.
 2. **mRAG Foreground** — the full trigger is always searched, with bounded sentence, RAKE keyphrase, entity, and concept-expansion heads. The `local` profile permits 16 heads and a 60-candidate pool; `frontier` permits 32 heads and 160 candidates, with a larger injection budget for a large-context conscious model. They query native 1024D Qwen3 embeddings using exact numpy or FAISS FlatIP. A semantic acceptance boundary rejects weak tail candidates even when the store is smaller than top-k. Rarity-weighted exact terms and conceptual tags supplement cosine ranking. Raw 8D results never re-rank or displace this order.
-3. **Context Office Arbitration** — Facts, State, Relations, Catalog, Beliefs, Causality, Affect, and conditionally routed Identity desks bid for one shared prompt budget. Each bid considers task fit, relevance, confidence, stability, importance, affective salience, and text cost. Complete joins and calculations are atomic. A bounded canonical office-board lookup occurs only when the initial semantic slice is insufficient. Worker contracts are direct, example-free, and candidate-capped.
+3. **Context Office Arbitration** — Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, and conditionally routed Identity desks bid for one shared prompt budget. Each bid considers task fit, relevance, confidence, stability, importance, affective salience, and text cost. Complete joins and calculations are atomic. A bounded canonical office-board lookup occurs only when the initial semantic slice is insufficient. Worker contracts are direct, example-free, and candidate-capped.
 4. **Raw Spatial Complement** — the carried attention trajectory queries both 8D fields directly, with no top-100 semantic pre-filter. At most two spatial-only items are added after the mRAG foreground.
 5. **Associative Transition Complement** — repeated direct movement between foreground clusters learns a directed transition and nudges only those cluster prototypes in a separate 8D overlay. One-off transitions do not surface; learned results are additive and items already ranked by mRAG are ineligible. If raw spatial recall has independently selected the learned destination, the item is deduplicated and labeled as a learned follow-on association so the conscious model receives the relation's provenance. Individual memory and belief positions never move because they were co-injected.
 6. **Affect and Stability** — original encoding Lagrangian and stability metadata survive retrieval. The Affect desk submits current posture and no more than two resonant memories when they can change the response; recalled memories reproduce one bounded aggregate somatic echo rather than one nudge per chunk.
@@ -223,6 +223,22 @@ it can erase retrieved names, dates, and arbitrary relations. Maintained
 session/topic summaries remain ordinary corpus candidates and compete for
 space. `HELIX_MRAG_RENDER_MODE=summary` is retained only as an explicit legacy
 override.
+
+### Entity Cases and Maintenance
+
+The entity-case office keeps a persistent index under
+`data/cases/office_board.json`. Cases contain exact-memory references,
+source-linked belief references, aliases, and session membership—not a second
+copy of the authoritative journal. An explicit person name routes the question
+to that case-local search before candidates enter the shared Office budget.
+
+Nightly Curator Phase 0 groups recent exact incoming records by session and
+files them into cases. A single bounded maintenance worker per session may
+derive supported facts, preferences, opinions, traits, communication style,
+and affect into one person-session profile with memory provenance. Exact filing
+is deterministic and survives worker failure. This workflow is also used by
+the LoCoMo sandbox when `--maintenance cases|full` is selected; exam questions
+remain retrieval-only.
 
 The old standalone gravity block and all-to-centroid Hebbian co-injection drift are disabled while unified retrieval is active. Set `HELIX_UNIFIED_RAG=0` only for legacy fallback. `HELIX_MRAG_ADJACENCY=1` restores the old temporal-neighbor expansion for benchmark parity; it is off by default so mRAG remains semantic. `HELIX_ASSOCIATIVE_MEMORY=0` disables only transition learning/recall for an ablation. `HELIX_SEMANTIC_MODEL` defaults to `qwen3-embedding:0.6b`, `HELIX_SEMANTIC_DIM` to `1024`, `HELIX_FAISS_MODE` to exact `flat`, and `HELIX_MRAG_PROFILE` to `local`.
 

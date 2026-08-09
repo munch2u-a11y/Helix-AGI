@@ -26,6 +26,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from core.affect_office import AffectOffice
+from core.case_memory_office import CaseMemoryOffice
 from core.office_workflows import OfficeArbiter
 
 
@@ -246,6 +247,14 @@ class ContextOffice:
         self.corpus = corpus
         self.arbiter = OfficeArbiter()
         self.affect = AffectOffice()
+        memory = getattr(corpus, "_memory", None)
+        memory_dir = str(getattr(memory, "data_dir", "") or "")
+        self.cases = (
+            CaseMemoryOffice(
+                os.path.join(os.path.dirname(memory_dir), "cases"), corpus
+            )
+            if memory_dir else None
+        )
         self._version: Optional[int] = None
         self._items: List[Dict[str, Any]] = []
         self._by_id: Dict[str, Dict[str, Any]] = {}
@@ -438,6 +447,31 @@ class ContextOffice:
                 selected.append(item)
                 selected_ids.add(item_id)
 
+        # An explicitly named entity routes to its maintained case view. Case
+        # results are still bids: the case owns a small search space, not a
+        # permanent prompt section.
+        case_result = (
+            self.cases.route(query, max_items=min(10, max_items))
+            if self.cases is not None
+            else {"case_names": [], "items": [], "candidates": 0}
+        )
+        selected_by_id = {
+            str(item.get("id", "")): index for index, item in enumerate(selected)
+        }
+        for case_item in case_result["items"]:
+            item_id = str(case_item.get("id", ""))
+            if item_id in selected_by_id:
+                existing = selected[selected_by_id[item_id]]
+                existing["case_name"] = case_item.get("case_name", "")
+                existing["case_route_score"] = case_item.get("case_route_score", 0.0)
+                existing["relevance"] = max(
+                    float(existing.get("relevance") or 0.0),
+                    float(case_item.get("relevance") or 0.0),
+                )
+                continue
+            selected_by_id[item_id] = len(selected)
+            selected.append(case_item)
+
         # Affect is another bidder, not an ambient block guaranteed space on
         # every turn. It sees only the current field and explicitly surfaced
         # records; it cannot assert facts or request a permanent identity
@@ -447,7 +481,9 @@ class ContextOffice:
         bid_count = len(selected)
         selected = self.arbiter.allocate(
             selected,
-            active_desks=plan.desks,
+            active_desks=(
+                tuple(plan.desks) + (("case",) if case_result["case_names"] else ())
+            ),
             max_items=max_items,
             proof_ids=proof_ids,
         )
@@ -460,6 +496,8 @@ class ContextOffice:
                 semantic_retained=max(0, len(selected) - len(evidence)),
                 board_consulted=board_consulted,
                 bids_considered=bid_count,
+                case_names=case_result["case_names"],
+                case_candidates=case_result["candidates"],
             ),
         )
 
@@ -611,6 +649,8 @@ class ContextOffice:
         semantic_retained: int = 0,
         board_consulted: bool = False,
         bids_considered: int = 0,
+        case_names: Optional[Sequence[str]] = None,
+        case_candidates: int = 0,
     ) -> Dict[str, Any]:
         return {
             "enabled": True,
@@ -626,4 +666,6 @@ class ContextOffice:
             "semantic_retained": int(semantic_retained),
             "office_board_consulted": bool(board_consulted),
             "bids_considered": int(bids_considered),
+            "case_names": list(case_names or []),
+            "case_candidates": int(case_candidates),
         }

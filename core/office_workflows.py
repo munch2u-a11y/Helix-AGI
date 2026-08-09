@@ -62,6 +62,9 @@ DESK_CONTRACTS: Dict[str, DeskContract] = {
     "identity": DeskContract(
         "identity", "Bid identity context only when this turn depends on identity, values, history, or characteristic behavior.", 6,
     ),
+    "case": DeskContract(
+        "case", "Bid exact or source-linked records from the explicitly named entity case.", 10,
+    ),
     "semantic_advisor": DeskContract(
         "semantic_advisor", "Bid answer-relevant recall. Mark unsupported candidates unverified.", 12,
     ),
@@ -165,7 +168,7 @@ class OfficeArbiter:
         retrieval = self._unit(item.get("relevance"), 1.0 / (rank + 2.0))
         relevance = max(lexical, retrieval, 1.0 / (rank + 2.0))
         task_fit = 1.0 if desk in active_desks else (
-            0.72 if desk in {"beliefs", "affect", "identity"} else 0.56
+            0.72 if desk in {"beliefs", "affect", "identity", "case"} else 0.56
         )
         confidence = 0.99 if verified else self._unit(item.get("confidence"), 0.58)
         stability = self._unit(item.get("stability_index"), 0.50)

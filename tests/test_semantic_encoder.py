@@ -108,6 +108,25 @@ class SemanticEncoderTests(unittest.TestCase):
             self.assertEqual(point_id, "mem_1")
             self.assertTrue(physics.semantic_index.contains(point_id))
 
+    def test_spatial_ingest_batches_embedding_calls(self):
+        calls = []
+
+        def fake_embed(texts):
+            calls.append(list(texts))
+            return np.stack([
+                np.full(384, index + 1, dtype=np.float32)
+                for index, _text in enumerate(texts)
+            ])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            physics = PhysicsEngine(tmp)
+            physics._embedder = fake_embed
+            result = physics.embed_text_batch(["first", "second"])
+
+        self.assertEqual(calls, [["first", "second"]])
+        self.assertEqual(result.shape, (2, 384))
+        self.assertEqual(float(result[1, 0]), 2.0)
+
 
 class SemanticIndexTests(unittest.TestCase):
     def test_legacy_vector_cannot_be_padded_into_native_index(self):

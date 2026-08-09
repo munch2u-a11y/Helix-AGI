@@ -53,11 +53,13 @@ class Curator:
         memory_manager,
         llm_client,
         data_dir: str = "data",
+        case_office=None,
     ):
         self.physics = physics_engine
         self.beliefs = belief_store
         self.memory = memory_manager
         self.llm_client = llm_client  # Auxiliary client (e.g., Gemini Flash)
+        self.case_office = case_office
         self.data_dir = Path(data_dir)
         
         self.log_dir = self.data_dir / "logs"
@@ -98,6 +100,13 @@ class Curator:
         }
         
         try:
+            logger.info("Curator Phase 0: Entity Case Maintenance")
+            try:
+                stats["case_maintenance"] = self._run_case_maintenance()
+            except Exception as e:
+                logger.error("Entity case maintenance failed (continuing): %s", e)
+                stats["case_maintenance"] = {"errors": 1}
+
             logger.info("Curator Phase 1: Collecting Raw Memories")
             raw_memories = self._collect_raw_memories()
             
@@ -187,6 +196,75 @@ class Curator:
             logger.info("Curator cycle finished.")
             
         return stats
+
+    def _run_case_maintenance(self) -> Dict[str, Any]:
+        """File recent exact inputs and form bounded source-linked profiles."""
+        if self.case_office is None:
+            return {"status": "disabled", "cycles": 0}
+        from core.session_memory_maintenance import SessionMemoryMaintenance
+
+        recent = []
+        for item in self.case_office.corpus.all_items():
+            if item.get("tier") != 0 or item.get("source") != "pulse_input":
+                continue
+            created = str(item.get("created_at") or "")
+            try:
+                parsed = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                if parsed.tzinfo is not None:
+                    parsed = parsed.astimezone().replace(tzinfo=None)
+                if parsed < datetime.now() - timedelta(hours=24):
+                    continue
+            except (TypeError, ValueError):
+                pass
+            recent.append(item)
+        if not recent:
+            return {"status": "empty", "cycles": 0}
+
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for item in recent:
+            session_id = str(
+                item.get("session_id") or item.get("scope_id") or "recent"
+            )
+            grouped.setdefault(session_id, []).append(item)
+
+        def worker(request):
+            if not self.llm_client:
+                return {}
+            response = self.llm_client.generate(
+                prompt=json.dumps(request, ensure_ascii=False),
+                system_instruction=(
+                    "Extract durable person-specific context from this session. "
+                    "Return JSON only with a people list. Each person may have name, "
+                    "facts, preferences, opinions, traits, communication_style, and "
+                    "affect lists. Use explicit support only; max two items per facet."
+                ),
+            )
+            text = self._strip_code_fences(getattr(response, "text", "") or "")
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else {}
+
+        maintenance = SessionMemoryMaintenance(
+            cases=self.case_office,
+            belief_store=self.beliefs,
+            worker=worker if self.llm_client else None,
+        )
+        cycle_stats = []
+        # The coordinator, not individual desks, bounds board work.
+        for session_id in sorted(grouped)[-32:]:
+            cycle_stats.append(maintenance.run(session_id, grouped[session_id]))
+        return {
+            "status": "complete",
+            "cycles": len(cycle_stats),
+            "references_linked": sum(
+                int(item.get("references_linked", 0)) for item in cycle_stats
+            ),
+            "profiles_written": sum(
+                int(item.get("profiles_written", 0)) for item in cycle_stats
+            ),
+            "worker_failures": sum(
+                1 for item in cycle_stats if item.get("worker_error")
+            ),
+        }
 
     # ── Entity Profile Maintenance ────────────────────────────────────
 
