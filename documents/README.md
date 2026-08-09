@@ -16,6 +16,7 @@ These documents describe the live system on the current branch:
 | [Current Architecture](architecture_current.md) | Canonical runtime wiring, retrieval lanes, task cognition, providers, and persistence |
 | [System Manual](../SYSTEM_MANUAL.md) | Detailed subsystem behavior and operating model |
 | [Task Cognition Pipeline](task_cognition_pipeline.md) | Focused diagram and lifecycle for event-driven task cognition |
+| [Context Architecture Fork Comparison](context_architecture_experiments.md) | Same-exam hybrid compiler versus canonical Context Office results and tradeoffs |
 | [Test Suite Guide](../tests/TEST_SUITE_README.md) | Test organization and execution |
 
 When current documents disagree, use this precedence:

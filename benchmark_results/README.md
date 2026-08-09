@@ -76,3 +76,9 @@ into one Helix sandbox, and applies the same reader prompt and answer rules.
 The example writes to `benchmark_results/ragoffice_parity_context_office_110/`.
 Use `--context-office off` with a distinct directory for a clean ablation, or
 `--question-ids q_1,q_11,q_50,n_7` for a local-reader audit subset.
+
+The completed Context Office run scored 100/100 answerable questions, 10/10
+negative controls, and 100% gold-support recall. Its report records one mixed
+answer/refusal warning and a 74.2% non-gold ratio. See
+`documents/context_architecture_experiments.md` for the same-exam comparison
+with the 100/100 hybrid compiler run and the 50/100 shared baseline.

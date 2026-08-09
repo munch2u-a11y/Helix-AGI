@@ -47,6 +47,7 @@ flowchart TD
 |---|---|
 | [Technical documentation index](documents/README.md) | Start here; defines authoritative versus historical documents |
 | [Current technical architecture](documents/architecture_current.md) | Canonical live wiring, retrieval contract, providers, and persistence |
+| [Context architecture experiments](documents/context_architecture_experiments.md) | Same-exam comparison of the hybrid compiler and Context Office forks |
 | [System manual](SYSTEM_MANUAL.md) | Detailed current subsystem and operating reference |
 | [Task cognition pipeline](documents/task_cognition_pipeline.md) | Focused event-driven task diagram and lifecycle |
 | [Historical audits](documents/audits/) | Preserved source snapshots; not current runtime contracts |
