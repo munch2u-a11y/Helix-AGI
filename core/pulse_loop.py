@@ -41,7 +41,7 @@ from llm.providers.base import ChatSession, ProviderConfig, create_session, dete
 from core.context_compressor import ContextCompressor
 from core.office_runtime import (
     ContextCapsule,
-    OfficeFirstCoordinator,
+    OfficeRelay,
     TurnEnvelope,
     office_first_enabled,
 )
@@ -169,11 +169,11 @@ class PulseLoop:
         self._event_lock = threading.Lock()
 
         self._office_first_enabled = office_first_enabled()
-        self._office_coordinator = None
+        self._office_relay = None
         self._last_office_capsule: Optional[ContextCapsule] = None
         self._office_last_token_count = 0
         if self._office_first_enabled:
-            self._office_coordinator = OfficeFirstCoordinator(
+            self._office_relay = OfficeRelay(
                 self.memory,
                 self.beliefs,
                 self.physics,
@@ -997,8 +997,8 @@ class PulseLoop:
 
 
         # 3. Assemble pulse message
-        if self._office_first_enabled and self._office_coordinator is not None:
-            office_capsule = self._office_coordinator.prepare(
+        if self._office_first_enabled and self._office_relay is not None:
+            office_capsule = self._office_relay.prepare(
                 office_envelopes,
                 pulse_count=self._pulse_count,
             )
@@ -1835,7 +1835,7 @@ class PulseLoop:
 
     def _send_office_pulse(self, message: str) -> str:
         """Run a fresh, schema-free speaking session over one Office capsule."""
-        if self._provider_config is None or self._office_coordinator is None:
+        if self._provider_config is None or self._office_relay is None:
             return "[no LLM session available]"
 
         options = dict(self._provider_config.options)
@@ -1853,7 +1853,7 @@ class PulseLoop:
         try:
             session = create_session(
                 session_config,
-                self._office_coordinator.SPEAKER_INSTRUCTION,
+                self._office_relay.SPEAKER_INSTRUCTION,
                 tool_declarations=None,
                 tool_executor=None,
                 preconscious=None,

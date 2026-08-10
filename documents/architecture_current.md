@@ -34,8 +34,9 @@ flowchart TD
     A --> I
     I --> C[Main consciousness<br/>persistent provider session]
 
-    OE --> OW[Independent Office work orders<br/>semantic / exact / case / belief / affect /<br/>continuity / receipt / lateral]
-    OW --> OC[Evidence critic + fresh context capsule]
+    OE --> OQ[One source-aware retrieval request<br/>message + small trusted metadata]
+    OQ --> OU[Existing UnifiedRetrieval<br/>mRAG + Context Office + bounded 8D]
+    OU --> OC[Continuity + receipts + fresh capsule]
     OC --> OS[Schema-free speaking head<br/>fresh provider session]
     OS --> H
 
@@ -74,11 +75,11 @@ new schema-free provider session on every pulse, so no cached chat history or
 large identity system prompt is required. The default remains the established
 persistent-session preconscious path.
 
-Each event performs the normal full multi-head mRAG search plus at most one
-source-focus search assembled from small metadata fields such as sender/thread,
-author/audience, file path/objective, search query, or tool/task name. Canonical
-belief or skill results from that second head receive real competing bids; the
-head is not merely a tag shown to the speaker.
+Each event makes one call to `UnifiedRetrieval`. The user's wording is augmented
+with only relevant source metadata such as sender/thread, author/audience, file
+path/objective, search query, or tool/task name. The existing mRAG and Context
+Office modules continue to own all search heads and arbitration; the runtime
+adapter does not reproduce either mechanism.
 
 The vertical slice currently makes response construction Office-first; it does
 not replace task-focus execution. A spoken committed plan can still enter the
@@ -107,9 +108,9 @@ path. In `active`, the main session is thought-only and committed intentions
 are completed by focused task sessions.
 
 In Office-first mode, the corresponding cycle is typed event drain, source
-profile selection, retrieval work orders, evidence arbitration, capsule
-rendering, a fresh schema-free speaking call, response delivery when the event
-requires one, exact memory encoding, physics, and the same post-pulse hooks.
+profile selection, one unified retrieval call, capsule rendering, a fresh
+schema-free speaking call, response delivery when the event requires one,
+exact memory encoding, physics, and the same post-pulse hooks.
 Source profiles are deterministic and deliberately short:
 
 | Source | Dynamic focus |
@@ -325,7 +326,7 @@ of truth for on-disk details.
 | `HELIX_MRAG_RENDER_MODE` | `verbatim` | Preserve exact selected records; `summary` remains a legacy explicit override |
 | `HELIX_CONTEXT_OFFICE` | enabled | Read-only specialist evidence desks over canonical memory |
 | `HELIX_OFFICE_FIRST` | disabled | Use typed Office capsules and fresh schema-free speaking sessions instead of persistent preconscious prompt assembly |
-| `HELIX_OFFICE_FIRST_ITEMS` | `10` | Competitive evidence ceiling per capsule; recent continuity and one lateral association have separate small bounds |
+| `HELIX_OFFICE_FIRST_ITEMS` | `10` | Maximum records accepted from the one unified retrieval call; recent continuity has a separate two-turn bound |
 | `HELIX_ASSOCIATIVE_MEMORY` | enabled | Disable sequential association learning/recall for ablation |
 | `HELIX_MRAG_ADJACENCY` | disabled | Restore old temporal-neighbor expansion for benchmark parity |
 | `HELIX_SEMANTIC_MODEL` | `qwen3-embedding:0.6b` | Local semantic encoder |

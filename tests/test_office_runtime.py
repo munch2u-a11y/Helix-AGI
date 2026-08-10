@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.office_runtime import (
-    OfficeFirstCoordinator,
+    OfficeRelay,
     TurnEnvelope,
     classify_source,
 )
@@ -48,7 +48,10 @@ class _Lane:
 class _Office:
     def __init__(self, items=(), names=()):
         self.items = list(items)
-        self.cases = SimpleNamespace(known_names=lambda: list(names))
+        self.cases = SimpleNamespace(
+            known_names=lambda: list(names),
+            route=Mock(return_value={"case_names": [], "items": [], "candidates": 0}),
+        )
 
     def prepare(self, query, semantic_items, max_items, work_order=None):
         return SimpleNamespace(
@@ -63,6 +66,19 @@ class _Unified:
         self.context_office = _Office(office_items, names)
         self.corpus = SimpleNamespace()
         self.injected = []
+        self.items = list(office_items or items)
+        self.queries = []
+        self.last_stats = {}
+
+    def retrieve(self, query, spatial_candidates=None, **kwargs):
+        self.queries.append(query)
+        result = list(self.items)
+        if spatial_candidates:
+            lateral = dict(spatial_candidates[0])
+            lateral["lane"] = "spatial"
+            result.append(lateral)
+        self.last_stats = {"selected": len(result), "calls": len(self.queries)}
+        return result
 
     def note_injected(self, ids):
         self.injected.append(list(ids))
@@ -70,7 +86,7 @@ class _Unified:
 
 def _coordinator(*, items=(), office_items=(), recent=(), spatial=(), names=()):
     unified = _Unified(items=items, office_items=office_items, names=names)
-    coordinator = OfficeFirstCoordinator(
+    coordinator = OfficeRelay(
         _Memory(recent), SimpleNamespace(), _Physics(spatial), unified=unified,
     )
     return coordinator, unified
@@ -131,8 +147,8 @@ class ContextCapsuleTests(unittest.TestCase):
 
         self.assertEqual(capsule.response_mode, "respond")
         self.assertIn("source=direct_message", capsule.rendered_prompt)
-        self.assertIn("intent,continuity,relationship,tone,affect", capsule.rendered_prompt)
-        self.assertIn("[STANCE / LEARNED PATTERN]", capsule.rendered_prompt)
+        self.assertIn("intent continuity relationship tone affect", capsule.rendered_prompt)
+        self.assertIn("[LEARNED CONTEXT]", capsule.rendered_prompt)
         self.assertNotIn("[IDENTITY]", capsule.rendered_prompt)
         self.assertNotIn("you are helix", capsule.rendered_prompt.lower())
         self.assertLess(len(coordinator.SPEAKER_INSTRUCTION.split()), 40)
@@ -234,15 +250,11 @@ class ContextCapsuleTests(unittest.TestCase):
             "sender": "User", "content": "What does that remind you of?",
         })
         capsule = coordinator.prepare([envelope])
-        self.assertIn("[CONTINUITY]", capsule.rendered_prompt)
-        continuity = [bid for bid in capsule.evidence if bid.desk == "continuity"]
-        self.assertTrue(continuity)
-        self.assertTrue(all(not bid.verified for bid in continuity))
-        self.assertIn("do not independently verify claims", capsule.rendered_prompt)
+        self.assertIn("[RECENT TURNS — RECORDED, NOT VERIFIED]", capsule.rendered_prompt)
+        self.assertTrue(capsule.continuity)
         self.assertIn("[ASSOCIATION — NON-EVIDENTIARY]", capsule.rendered_prompt)
-        lateral = [bid for bid in capsule.evidence if bid.desk == "lateral"]
+        lateral = [item for item in capsule.memories if item.get("lane") == "spatial"]
         self.assertEqual(len(lateral), 1)
-        self.assertFalse(lateral[0].verified)
 
     def test_same_pulse_messages_are_not_lost(self):
         coordinator, _ = _coordinator()
@@ -259,7 +271,7 @@ class ContextCapsuleTests(unittest.TestCase):
         self.assertIn("remember the blue folder", prompt)
         self.assertIn("Where should I put it?", prompt)
 
-    def test_file_return_adds_one_bounded_source_focus_search(self):
+    def test_file_return_adds_metadata_to_one_unified_search(self):
         coordinator, unified = _coordinator()
         envelope = TurnEnvelope.from_event("tool_result", {
             "tool": "read_file",
@@ -268,16 +280,12 @@ class ContextCapsuleTests(unittest.TestCase):
             "objective": "review the context compiler",
         })
         capsule = coordinator.prepare([envelope])
-        self.assertEqual(len(unified.lane_a.queries), 2)
-        self.assertEqual(capsule.diagnostics["office"]["search_heads"], [
-            "full", "source_focus",
-        ])
-        focus_query = unified.lane_a.queries[1][0]
-        self.assertIn("core/office_runtime.py", focus_query)
-        self.assertIn("active task", focus_query)
-        self.assertIn("active_task,path,requested_section,project_context", capsule.rendered_prompt)
+        self.assertEqual(len(unified.queries), 1)
+        self.assertIn("core/office_runtime.py", unified.queries[0])
+        self.assertIn("review the context compiler", unified.queries[0])
+        self.assertIn("active-task path requested-section project-context", capsule.rendered_prompt)
 
-    def test_source_focused_belief_gets_a_real_competing_slot(self):
+    def test_unified_selection_is_not_rearbitrated(self):
         fact = {
             "id": "mem_1", "content": "The meeting starts at noon.",
             "tier": 0, "office_desk": "facts", "office_verified": True,
@@ -286,14 +294,16 @@ class ContextCapsuleTests(unittest.TestCase):
             "id": "prf_1", "content": "Joshua prefers plain, candid wording.",
             "tier": 2, "_category": "preferences", "lane_a_score": 0.88,
         }
-        coordinator, _ = _coordinator(items=[style], office_items=[fact])
+        coordinator, unified = _coordinator(items=[style], office_items=[fact])
         envelope = TurnEnvelope.from_event("incoming_message", {
             "sender": "Joshua", "content": "What time is the meeting?",
         })
         capsule = coordinator.prepare([envelope])
-        self.assertEqual(capsule.diagnostics["office"]["source_focus_advisors"], 1)
+        self.assertEqual(len(unified.queries), 1)
         self.assertIn("The meeting starts at noon", capsule.rendered_prompt)
-        self.assertIn("Joshua prefers plain, candid wording", capsule.rendered_prompt)
+        # The thin relay trusts UnifiedRetrieval's final set; it does not run
+        # a second semantic-advisor framework of its own.
+        self.assertNotIn("Joshua prefers plain, candid wording", capsule.rendered_prompt)
 
     def test_current_sender_case_can_bid_for_relationship_context(self):
         case_item = {
@@ -302,19 +312,29 @@ class ContextCapsuleTests(unittest.TestCase):
             "tier": 0,
             "case_name": "Joshua",
         }
-        coordinator, _ = _coordinator(names=["Joshua"])
-        coordinator.context_office.cases.route = Mock(return_value={
-            "case_names": ["Joshua"], "items": [case_item], "candidates": 1,
-        })
+        coordinator, unified = _coordinator(office_items=[case_item], names=["Joshua"])
         envelope = TurnEnvelope.from_event("incoming_message", {
             "sender": "Joshua", "content": "Hmm, maybe we should revise this?",
         })
         capsule = coordinator.prepare([envelope])
         self.assertIn("Joshua often opens uncertain proposals", capsule.rendered_prompt)
-        case_bids = [bid for bid in capsule.evidence if bid.desk == "case"]
+        case_bids = [
+            item for item in capsule.memories if item.get("case_name") == "Joshua"
+        ]
         self.assertEqual(len(case_bids), 1)
-        self.assertEqual(case_bids[0].role, "source_relationship_case")
-        self.assertFalse(case_bids[0].verified)
+        self.assertEqual(len(unified.queries), 1)
+        self.assertIn("Joshua", unified.queries[0])
+
+    def test_pipeline_is_one_small_stage_relay(self):
+        coordinator, unified = _coordinator()
+        envelope = TurnEnvelope.from_event("incoming_message", {
+            "sender": "User", "content": "What did we decide?",
+        })
+        capsule = coordinator.prepare([envelope])
+        self.assertEqual(capsule.diagnostics["pipeline"], [
+            "ingest", "retrieve", "compile", "speak", "consolidate",
+        ])
+        self.assertEqual(len(unified.queries), 1)
 
 
 class PulseOfficeBoundaryTests(unittest.TestCase):
@@ -345,7 +365,7 @@ class PulseOfficeBoundaryTests(unittest.TestCase):
         loop._provider_config = ProviderConfig(
             "ollama", "granite4.1:8b", max_output_tokens=4096,
         )
-        loop._office_coordinator = SimpleNamespace(
+        loop._office_relay = SimpleNamespace(
             SPEAKER_INSTRUCTION="Return only the response.",
         )
         loop._office_last_token_count = 0

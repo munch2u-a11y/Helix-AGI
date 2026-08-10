@@ -59,12 +59,13 @@ Office experiment above; those benchmark numbers do not measure this new
 runtime path.
 
 The vertical slice preserves typed events and chooses a deterministic source
-profile before retrieval. mRAG and the existing Office become evidence tools,
-not automatic injection owners. Recent exact turns, named-entity cases,
-beliefs, affect, action receipts, and a separately labeled raw-8D association
-feed a shared capsule. A fresh schema-free speaking session receives the
-capsule and closes after one turn. Ordinary capsules do not carry a standing
-identity preamble, and file/search/email/social text is marked as data.
+profile before retrieval. A thin relay makes one call to the existing
+`UnifiedRetrieval` pipeline; mRAG, Context Office, case routing, beliefs, affect,
+and the 8D complement keep their existing ownership and are not reimplemented.
+The relay adds recent exact turns and action receipts, compiles the shared
+capsule, and closes the fresh schema-free speaking session after one turn.
+Ordinary capsules do not carry a standing identity preamble, and
+file/search/email/social text is marked as data.
 
 This stage validates prompt construction and truth boundaries. It does not yet
 replace the focus-task executor, and local Ollama remains unable to run active

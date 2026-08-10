@@ -97,17 +97,17 @@ Each pulse executes:
 
 `HELIX_OFFICE_FIRST=1` changes prompt ownership without changing the canonical
 memory or belief stores. The pulse retains a typed event mirror, classifies its
-source and trust boundary, emits deterministic retrieval work orders, lets the
-existing Office desks arbitrate evidence, and creates one fresh context capsule.
+source and trust boundary, makes one call to the existing unified retrieval
+pipeline, and creates one fresh context capsule.
 A schema-free provider session writes the response or private thought and is
 closed immediately afterward; persistent chat history and the large identity
 system instruction are bypassed.
 
-Retrieval runs the ordinary full mRAG query and no more than one additional
-source-focus query. The latter is constructed from small trusted metadata such
+The ordinary multi-head mRAG query remains intact. Small trusted metadata such
 as sender/thread, author/audience, path/objective, search query, or tool/task
-name. Its canonical belief and skill matches submit real bids; the focus tags
-are therefore operational rather than decorative.
+name is appended to that same query for disambiguation. The Office relay does
+not create new semantic heads, evidence bidders, critics, or arbitration;
+`UnifiedRetrieval` and `ContextOffice` remain the only owners of those jobs.
 
 The front desk injects small source-dependent variables instead of asking the
 local model to infer the workflow:
@@ -268,13 +268,13 @@ session/topic summaries remain ordinary corpus candidates and compete for
 space. `HELIX_MRAG_RENDER_MODE=summary` is retained only as an explicit legacy
 override.
 
-When Office-first mode is enabled, these same retrieval systems operate as
-evidence tools owned by `OfficeFirstCoordinator`. `Preconscious.inject()` no
-longer owns the final prompt. Recent exact conversation, receipts, and one raw
-8D lateral result remain separately labeled so the speaking model cannot turn
-an association into a fact. `HELIX_OFFICE_FIRST_ITEMS` defaults to ten
-competitive evidence records; small continuity and lateral bounds are outside
-that ceiling.
+When Office-first mode is enabled, `OfficeRelay` is only a thin
+adapter around the same retrieval system; `Preconscious.inject()` no longer
+owns the final prompt. Recent exact conversation and receipts are added after
+the one unified retrieval call. Raw 8D results remain separately labeled so
+the speaking model cannot turn an association into a fact.
+`HELIX_OFFICE_FIRST_ITEMS` defaults to ten selected retrieval records; recent
+continuity has its own two-turn bound.
 
 ### Entity Cases and Maintenance
 
