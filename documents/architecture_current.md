@@ -1,6 +1,6 @@
 # Helix Current Technical Architecture
 
-**Status:** canonical current architecture · **Last verified against source:** 2026-08-09 · **Applies to:** `experiment/ragoffice-context-office`
+**Status:** canonical current architecture · **Last verified against source:** 2026-08-10 · **Applies to:** `experiment/ragoffice-context-office`
 
 This document is the shortest authoritative description of the live Helix
 runtime. Historical audits and benchmark reports are intentionally not updated
@@ -49,6 +49,8 @@ flowchart TD
     Q --> E
 
     C --> H[Memory, physics, and post-pulse hooks]
+    H -. idle/nightly .-> ML[Redundant Markdown views<br/>time / session / subject / topic / relation]
+    ML -. canonical IDs + summaries .-> OU
     H --> E
 ```
 
@@ -141,10 +143,11 @@ the coordinator, rather than `Preconscious.inject`, owns final prompt space.
 | 1 | Memory intake | Deterministic query work order | Removes transport framing and identifies named subjects, requested facets, exactness, chronology, and relational scope before any search |
 | 2 | Layer-2 anchors | Named people, concepts, skills, desires | Exact high-priority anchors with repetition guard; session profiles are omitted from exact factual questions unless a profile facet is requested |
 | 3 | mRAG semantic advisor | Native normalized 1024D Qwen3 embeddings | Full-trigger, sentence, RAKE, entity, concept, and relation heads plus exact-term/tag evidence advise office routing and remain the fallback |
-| 4 | Context Office | Transient term, episode, turn, task, and typed entity-case indexes over the canonical corpus | Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, and conditionally routed Identity desks submit bids for one shared budget; no duplicated canonical memory |
-| 5 | Raw spatial / Lateral desk | MiniLM 384D projected through a fixed matrix to 8D | At most two spatial-only items; append-only, explicitly non-evidentiary, and unable to reorder the office brief |
-| 6 | Associative transition | Directed cluster prototypes in a separate 8D overlay | Repeated A→B attention transitions surface lateral follow-ons; individual memories and beliefs do not move |
-| 7 | Metadata and working state | Stability, Lagrangian snapshot, scratchpad, recent/contact state | Preserved for rendering, representative choice, and one bounded somatic echo; response-relevant current affect competes through the Affect desk |
+| 4 | Maintained text views | Redundant Markdown logs by time, session, subject, topic, and relation | Copies retain one canonical memory ID; obvious folders are unioned and deduplicated by ID before top-K; overture/key-detail summaries cite their source IDs |
+| 5 | Context Office | Transient term, episode, turn, task, and typed entity-case indexes over the canonical corpus | Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, and conditionally routed Identity desks submit bids for one shared budget |
+| 6 | Raw spatial / Lateral desk | MiniLM 384D projected through a fixed matrix to 8D | At most two spatial-only items; append-only, explicitly non-evidentiary, and unable to reorder the office brief |
+| 7 | Associative transition | Directed cluster prototypes in a separate 8D overlay | Repeated A→B attention transitions surface lateral follow-ons; individual memories and beliefs do not move |
+| 8 | Metadata and working state | Stability, Lagrangian snapshot, scratchpad, recent/contact state | Preserved for rendering, representative choice, and one bounded somatic echo; response-relevant current affect competes through the Affect desk |
 
 The semantic index defaults to exact normalized dot-product search: NumPy for
 small stores and FAISS `IndexFlatIP` after the automatic threshold. Optional

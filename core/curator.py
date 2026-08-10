@@ -198,14 +198,16 @@ class Curator:
         return stats
 
     def _run_case_maintenance(self) -> Dict[str, Any]:
-        """File recent exact inputs and form bounded source-linked profiles."""
+        """File recent exact inputs/outputs and form source-linked summaries."""
         if self.case_office is None:
             return {"status": "disabled", "cycles": 0}
         from core.session_memory_maintenance import SessionMemoryMaintenance
 
         recent = []
         for item in self.case_office.corpus.all_items():
-            if item.get("tier") != 0 or item.get("source") != "pulse_input":
+            if item.get("tier") != 0 or item.get("source") not in {
+                "pulse_input", "pulse_output", "office_speaker", "focus_worker",
+            }:
                 continue
             created = str(item.get("created_at") or "")
             try:
@@ -233,10 +235,11 @@ class Curator:
             response = self.llm_client.generate(
                 prompt=json.dumps(request, ensure_ascii=False),
                 system_instruction=(
-                    "Extract durable person-specific context from this session. "
-                    "Return JSON only with a people list. Each person may have name, "
-                    "facts, preferences, opinions, traits, communication_style, and "
-                    "affect lists. Use explicit support only; max two items per facet."
+                    "Organize the session using explicit support only. Return JSON with "
+                    "people, session, and views. People contain source-linked facets. "
+                    "Session contains a concise overture and key_details. Views contain "
+                    "subject/topic/relation kind, key, overture, key_details, and source_ids. "
+                    "Every derived item cites source_ids; max two items per facet."
                 ),
             )
             text = self._strip_code_fences(getattr(response, "text", "") or "")

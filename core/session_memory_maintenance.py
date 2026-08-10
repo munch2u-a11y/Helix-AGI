@@ -34,9 +34,31 @@ class SessionMemoryMaintenance:
 
     def run(self, session_id: str, records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         filing = self.cases.register_records(records, session_id=session_id)
+        topics_by_id = self._tag_topics(records)
+        subjects_by_id = {
+            key: list(values)
+            for key, values in (filing.get("subjects_by_record") or {}).items()
+        }
+        relations_by_id = {
+            key: [list(value) for value in values]
+            for key, values in (filing.get("relations_by_record") or {}).items()
+        }
+        self._add_output_links(records, subjects_by_id, relations_by_id)
+        log_filing = self.cases.logs.file_records(
+            records,
+            session_id=session_id,
+            subjects_by_id=subjects_by_id,
+            topics_by_id=topics_by_id,
+            relations_by_id=relations_by_id,
+        )
+        exact_summary = self.cases.logs.write_exact_session_summary(session_id, records)
         stats = {
             "session_id": session_id,
             **filing,
+            "log_records": log_filing["records"],
+            "log_copies_written": log_filing["copies_written"],
+            "exact_summary_written": bool(exact_summary),
+            "derived_summaries_written": 0,
             "worker_called": False,
             "profiles_written": 0,
             "profiles_reinforced": 0,
@@ -47,17 +69,29 @@ class SessionMemoryMaintenance:
 
         request = {
             "task": (
-                "Extract durable person-specific facts, preferences, opinions, traits, "
-                "communication style, and affect. Keep people separate. For each person, "
-                "include source_ids containing only records specifically about that person. "
-                "Use only explicit support."
+                "Organize this session using explicit support only. Return person-specific "
+                "facets, a session overture with key details, and subject/topic/relation "
+                "views. Every derived item must cite source_ids."
             ),
             "session_id": session_id,
             "records": [
-                {"id": item.get("id"), "content": item.get("content", "")}
+                {
+                    "id": item.get("id"),
+                    "time": item.get("created_at") or item.get("timestamp"),
+                    "source": item.get("source") or item.get("memory_type"),
+                    "content": item.get("content", ""),
+                }
                 for item in records[:80]
             ],
             "limits": {"people": 8, "items_per_facet": 2},
+            "output_fields": {
+                "people": (
+                    "name, source_ids, facts, preferences, opinions, traits, "
+                    "communication_style, affect"
+                ),
+                "session": "overture, key_details, source_ids",
+                "views": "kind, key, overture, key_details, source_ids",
+            },
         }
         stats["worker_called"] = True
         try:
@@ -76,6 +110,16 @@ class SessionMemoryMaintenance:
         record_by_id = {
             str(item.get("id")): item for item in records if item.get("id")
         }
+        stats["derived_summaries_written"] = self._write_worker_views(
+            session_id=session_id,
+            records=records,
+            record_by_id=record_by_id,
+            response=response,
+            people=people,
+            base_subjects=subjects_by_id,
+            base_topics=topics_by_id,
+            base_relations=relations_by_id,
+        )
         existing = {
             self._signature(item.get("term", ""), item.get("content", "")): item
             for item in self.beliefs.get_category("people", limit=100_000)
@@ -86,13 +130,7 @@ class SessionMemoryMaintenance:
             name = " ".join(str(person.get("name") or "").split())[:80]
             if not name:
                 continue
-            raw_source_ids = person.get("source_ids", [])
-            if isinstance(raw_source_ids, str):
-                raw_source_ids = [raw_source_ids]
-            source_ids = list(dict.fromkeys(
-                str(item_id) for item_id in raw_source_ids
-                if str(item_id) in record_by_id
-            )) if isinstance(raw_source_ids, list) else []
+            source_ids = self._valid_refs(person.get("source_ids"), record_by_id)
             if self.cases.get_case(name) is None:
                 # A person can be discussed without speaking. The maintenance
                 # worker must bind that person to explicit source IDs; a bare
@@ -126,20 +164,7 @@ class SessionMemoryMaintenance:
                     session_id=session_id,
                     explicit_subjects={item_id: [name] for item_id in source_ids},
                 )
-            clauses: List[str] = []
-            for facet in FACETS:
-                values = person.get(facet, [])
-                if isinstance(values, str):
-                    values = [values]
-                if not isinstance(values, list):
-                    continue
-                cleaned = [
-                    " ".join(str(value).split()).strip(" .")
-                    for value in values[:2]
-                    if str(value).strip()
-                ]
-                if cleaned:
-                    clauses.append(f"{facet.replace('_', ' ')}: " + "; ".join(cleaned))
+            clauses = self._facet_clauses(person)
             if not clauses:
                 continue
             content = (f"{name} — " + " | ".join(clauses))[:500].rstrip(" |")
@@ -179,6 +204,172 @@ class SessionMemoryMaintenance:
                 }
                 stats["profiles_written"] += 1
         return stats
+
+    def _write_worker_views(
+        self,
+        *,
+        session_id: str,
+        records: Sequence[Dict[str, Any]],
+        record_by_id: Mapping[str, Dict[str, Any]],
+        response: Mapping[str, Any],
+        people: Sequence[Any],
+        base_subjects: Mapping[str, Sequence[str]],
+        base_topics: Mapping[str, Sequence[str]],
+        base_relations: Mapping[str, Sequence[Sequence[str]]],
+    ) -> int:
+        """Materialize the worker's one response into several cheap read views."""
+        subjects = {key: list(values) for key, values in base_subjects.items()}
+        topics = {key: list(values) for key, values in base_topics.items()}
+        relations = {key: [list(value) for value in values] for key, values in base_relations.items()}
+        summaries: List[tuple[str, str, str, List[Any], List[str]]] = []
+
+        for person in people[:8]:
+            if not isinstance(person, Mapping):
+                continue
+            name = " ".join(str(person.get("name") or "").split())[:80]
+            refs = self._valid_refs(person.get("source_ids"), record_by_id)
+            if not name or not refs:
+                continue
+            for item_id in refs:
+                subjects.setdefault(item_id, [])
+                if name not in subjects[item_id]:
+                    subjects[item_id].append(name)
+            details = self._facet_clauses(person)
+            if details:
+                summaries.append((
+                    "subjects", name,
+                    f"Source-linked observations about {name} from this session.",
+                    details, refs,
+                ))
+
+        session = response.get("session")
+        if not isinstance(session, Mapping):
+            session = {}
+        session_refs = self._valid_refs(session.get("source_ids"), record_by_id)
+        key_details = session.get("key_details", [])
+        if isinstance(key_details, str):
+            key_details = [key_details]
+        if not isinstance(key_details, list):
+            key_details = []
+        for detail in key_details:
+            if isinstance(detail, Mapping):
+                session_refs.extend(self._valid_refs(detail.get("source_ids"), record_by_id))
+        session_refs = list(dict.fromkeys(session_refs)) or list(record_by_id)
+        overture = " ".join(str(session.get("overture") or "").split())
+        if overture or key_details:
+            summaries.append((
+                "sessions", session_id, overture, key_details, session_refs,
+            ))
+
+        views = response.get("views", [])
+        if not isinstance(views, list):
+            views = []
+        for view in views:
+            if not isinstance(view, Mapping):
+                continue
+            kind = str(view.get("kind") or "").lower().rstrip("s")
+            key = " ".join(str(view.get("key") or "").split())[:180]
+            refs = self._valid_refs(view.get("source_ids"), record_by_id)
+            if kind not in {"subject", "topic", "relation"} or not key or not refs:
+                continue
+            for item_id in refs:
+                target = subjects if kind == "subject" else topics
+                values = key.split("--") if kind == "relation" else [key]
+                if kind == "relation":
+                    relations.setdefault(item_id, []).append(values)
+                elif key not in target.setdefault(item_id, []):
+                    target[item_id].append(key)
+            details = view.get("key_details", [])
+            if isinstance(details, str):
+                details = [details]
+            summaries.append((
+                kind + "s", key,
+                " ".join(str(view.get("overture") or "").split()),
+                details if isinstance(details, list) else [], refs,
+            ))
+
+        self.cases.logs.file_records(
+            records,
+            session_id=session_id,
+            subjects_by_id=subjects,
+            topics_by_id=topics,
+            relations_by_id=relations,
+        )
+        written = 0
+        for view, key, note, details, refs in summaries:
+            if self.cases.logs.write_summary(
+                view,
+                key,
+                session_id=session_id,
+                overture=note,
+                key_details=details,
+                source_ids=refs,
+            ) is not None:
+                written += 1
+        return written
+
+    @staticmethod
+    def _valid_refs(raw: Any, record_by_id: Mapping[str, Any]) -> List[str]:
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, list):
+            return []
+        return list(dict.fromkeys(
+            str(item_id) for item_id in raw if str(item_id) in record_by_id
+        ))
+
+    @staticmethod
+    def _tag_topics(records: Sequence[Mapping[str, Any]]) -> Dict[str, List[str]]:
+        result: Dict[str, List[str]] = {}
+        for record in records:
+            item_id = str(record.get("id") or "")
+            topics = [
+                str(tag).split(":", 1)[1]
+                for tag in (record.get("tags") or [])
+                if str(tag).startswith(("topic:", "focus:")) and ":" in str(tag)
+            ]
+            if item_id and topics:
+                result[item_id] = list(dict.fromkeys(topics))
+        return result
+
+    @staticmethod
+    def _facet_clauses(person: Mapping[str, Any]) -> List[str]:
+        clauses = []
+        for facet in FACETS:
+            values = person.get(facet, [])
+            if isinstance(values, str):
+                values = [values]
+            if not isinstance(values, list):
+                continue
+            cleaned = [
+                " ".join(str(value).split()).strip(" .")
+                for value in values[:2] if str(value).strip()
+            ]
+            if cleaned:
+                clauses.append(f"{facet.replace('_', ' ')}: " + "; ".join(cleaned))
+        return clauses
+
+    @staticmethod
+    def _add_output_links(
+        records: Sequence[Mapping[str, Any]],
+        subjects: Dict[str, List[str]],
+        relations: Dict[str, List[List[str]]],
+    ) -> None:
+        for record in records:
+            if record.get("source") not in {"office_speaker", "pulse_output"}:
+                continue
+            item_id = str(record.get("id") or "")
+            if not item_id:
+                continue
+            if "Helix" not in subjects.setdefault(item_id, []):
+                subjects[item_id].append("Helix")
+            recipients = [
+                str(tag).split(":", 1)[1]
+                for tag in (record.get("tags") or [])
+                if str(tag).startswith("recipient:") and ":" in str(tag)
+            ]
+            for recipient in recipients:
+                relations.setdefault(item_id, []).append(["Helix", recipient])
 
     @staticmethod
     def _signature(name: Any, content: Any) -> str:

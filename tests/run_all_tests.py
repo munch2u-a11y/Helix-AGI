@@ -95,6 +95,7 @@ class TestSuiteRunner:
             ("test_semantic_encoder.py", "1024D Semantic Encoder Tests"),
             ("test_unified_retrieval.py", "Unified Retrieval Lane-Separation Tests"),
             ("test_context_office.py", "Context Office Specialist Tests"),
+            ("test_case_memory_office.py", "Case and Maintained Memory-Log Tests"),
             ("test_office_runtime.py", "Office-First Context Runtime Tests"),
             ("test_associative_transitions.py", "Associative Transition Tests"),
             ("test_deep_memory_benchmark.py", "Progressive Deep-Memory Benchmark Tests"),

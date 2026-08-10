@@ -67,6 +67,13 @@ capsule, and closes the fresh schema-free speaking session after one turn.
 Ordinary capsules do not carry a standing identity preamble, and
 file/search/email/social text is marked as data.
 
+The storage side now favors redundant, inspectable read views over additional
+query-time reasoning. Nightly maintenance copies exact input and output records
+into chronological, session, subject, topic, and relation Markdown logs. Every
+copy carries the same canonical memory ID; folder routing unions candidates and
+deduplicates that ID set before top-K. Source-linked summaries provide an
+overture and key details without replacing the exact logs or journal.
+
 This stage validates prompt construction and truth boundaries. It does not yet
 replace the focus-task executor, and local Ollama remains unable to run active
 task cognition under the current provider rules. The next comparison should

@@ -131,7 +131,7 @@ Helix uses a high-accuracy semantic foreground together with a deliberately sepa
 - **Raw 8D Complement** — Both spatial fields are queried from Helix's carried attention trajectory without the former top-100 semantic pre-filter. A maximum of two spatial-only memories or beliefs is appended after mRAG and can never reorder its results.
 - **Sequence Associations** — Direct foreground movement between clusters learns durable directed transitions. Repetition nudges cluster prototypes in a separate 8D overlay; it never drags co-injected memory/belief points together. Associated items already ranked by mRAG are excluded, keeping this lane genuinely lateral. If the same destination independently arrives through raw spatial recall, it is retained once and explicitly tagged as a learned follow-on association.
 - **Affect-Preserving Recall** — Stability and encoding Lagrangian metadata remain attached throughout retrieval. The Affect desk bids current posture and at most two resonant memories only when they can change the response; recalled memories still reproduce one bounded aggregate somatic echo.
-- **Between-session maintenance** — The nightly Curator files recent exact inputs into entity cases before synthesis, then uses one bounded worker per session to form person-specific facts, preferences, opinions, traits, communication style, and affect with explicit source IDs. Filing succeeds even when the optional worker fails; malformed output is reported, and maintained profiles remain case-local rather than becoming global name expansions.
+- **Between-session maintenance** — The nightly Curator files recent exact inputs and outputs into redundant Markdown views by time, session, subject, topic, and relation. Every copy retains the same canonical memory ID. A bounded worker adds session/subject/topic/relation summaries with an overture, key details, and explicit source IDs; exact filing and a source-only session summary still succeed if the worker fails. Folder candidates are deduplicated by canonical ID before they enter the shared top-K budget.
 
 ### Event-Driven Task Cognition
 
@@ -218,6 +218,7 @@ helix_agi/
 │   ├── dual_pulse_loop.py     #   Dual-model pulse orchestration
 │   ├── preconscious.py        #   Concept-based context injection pipeline
 │   ├── unified_retrieval.py   #   mRAG-primary merge + bounded lateral lanes
+│   ├── memory_log_office.py   #   Redundant exact-text views + maintenance summaries
 │   ├── associative_transitions.py # Directed cluster sequence memory
 │   ├── task_cognition/        #   Intention, tasks, focus, orchestrators, procedures
 │   ├── concept_extractor.py   #   RAKE-style keyphrase extraction

@@ -1,6 +1,6 @@
 # Helix Cognitive Architecture: System Manual
 
-**Documentation status:** current runtime reference · **Last verified against source:** 2026-08-09
+**Documentation status:** current runtime reference · **Last verified against source:** 2026-08-10
 
 This is the detailed developer and operator guide. It is not injected wholesale as a system prompt. The default live prompt is assembled from identity beliefs, per-pulse preconscious grounding, generated ability awareness, and—when active task cognition is enabled—a small cognitive kernel. The experimental Office-first path instead compiles a fresh source-aware context capsule and includes identity only when the present turn needs it. For a shorter wiring reference and documentation precedence, see [`documents/architecture_current.md`](documents/architecture_current.md) and [`documents/README.md`](documents/README.md).
 
@@ -255,11 +255,12 @@ The bridge between memory and conscious awareness. Each pulse, it assembles a pe
 1. **Memory Intake Work Order** — a deterministic front desk removes transport framing and records named subjects, requested facets, exactness, chronology, and relational scope. It retrieves and answers nothing.
 2. **Layer 2 Anchor Match** — known people, concepts, skills, and desires named in the trigger inject at highest priority with a rolling repetition guard. Session profiles are withheld from exact factual questions unless a profile facet is requested.
 3. **mRAG Foreground** — the cleaned query is always searched, with bounded sentence, RAKE keyphrase, entity, and concept-expansion heads. The `local` profile permits 16 heads and a 60-candidate pool; `frontier` permits 32 heads and 160 candidates, with a larger injection budget for a large-context conscious model. They query native 1024D Qwen3 embeddings using exact numpy or FAISS FlatIP. A semantic acceptance boundary rejects weak tail candidates even when the store is smaller than top-k. Rarity-weighted exact terms and conceptual tags supplement cosine ranking. Maintained person-session profiles are case-local and never expand a name into global semantic heads. Raw 8D results never re-rank or displace this order.
-4. **Context Office Arbitration** — Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, and conditionally routed Identity desks bid for one shared prompt budget. Each bid considers task fit, relevance, confidence, stability, importance, affective salience, and text cost. Complete joins and calculations are atomic, and exact factual work orders reserve a small Tier-0 foreground. A bounded canonical office-board lookup occurs only when the initial semantic slice is insufficient. Worker contracts are direct, example-free, and candidate-capped.
-5. **Raw Spatial Complement** — the carried attention trajectory queries both 8D fields directly, with no top-100 semantic pre-filter. At most two spatial-only items are added after the mRAG foreground.
-6. **Associative Transition Complement** — repeated direct movement between foreground clusters learns a directed transition and nudges only those cluster prototypes in a separate 8D overlay. One-off transitions do not surface; learned results are additive and items already ranked by mRAG are ineligible. If raw spatial recall has independently selected the learned destination, the item is deduplicated and labeled as a learned follow-on association so the conscious model receives the relation's provenance. Individual memory and belief positions never move because they were co-injected.
-7. **Affect and Stability** — original encoding Lagrangian and stability metadata survive retrieval. The Affect desk submits current posture and no more than two resonant memories when they can change the response; recalled memories reproduce one bounded aggregate somatic echo rather than one nudge per chunk.
-8. **Scratchpad and Recent State** — active notes, immediate temporal continuity, and contact context remain independent injection layers.
+4. **Maintained Log Views** — nightly maintenance copies exact input/output records into Markdown logs by time, session, subject, topic, and relation. Copies share one canonical memory ID. Obvious folders are read directly, unioned, and deduplicated by ID before their candidates enter top-K; maintenance summaries remain source-linked and advisory.
+5. **Context Office Arbitration** — Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, and conditionally routed Identity desks bid for one shared prompt budget. Each bid considers task fit, relevance, confidence, stability, importance, affective salience, and text cost. Complete joins and calculations are atomic, and exact factual work orders reserve a small Tier-0 foreground. A bounded canonical office-board lookup occurs only when the initial semantic slice is insufficient. Worker contracts are direct, example-free, and candidate-capped.
+6. **Raw Spatial Complement** — the carried attention trajectory queries both 8D fields directly, with no top-100 semantic pre-filter. At most two spatial-only items are added after the mRAG foreground.
+7. **Associative Transition Complement** — repeated direct movement between foreground clusters learns a directed transition and nudges only those cluster prototypes in a separate 8D overlay. One-off transitions do not surface; learned results are additive and items already ranked by mRAG are ineligible. If raw spatial recall has independently selected the learned destination, the item is deduplicated and labeled as a learned follow-on association so the conscious model receives the relation's provenance. Individual memory and belief positions never move because they were co-injected.
+8. **Affect and Stability** — original encoding Lagrangian and stability metadata survive retrieval. The Affect desk submits current posture and no more than two resonant memories when they can change the response; recalled memories reproduce one bounded aggregate somatic echo rather than one nudge per chunk.
+9. **Scratchpad and Recent State** — active notes, immediate temporal continuity, and contact context remain independent injection layers.
 
 The final Context Office selection is rendered exactly for both local and
 frontier profiles. Query-time summarization is no longer the default because
@@ -281,18 +282,24 @@ continuity has its own two-turn bound.
 The entity-case office keeps a persistent index under
 `data/cases/office_board.json`. Cases contain typed speaker, explicit-subject,
 weak-mention, and addressee references plus source-linked belief references,
-aliases, and session membership—not a second
-copy of the authoritative journal. An explicit person name routes the question
-to that case-local search before candidates enter the shared Office budget.
+aliases, and session membership. The append-only journal remains authoritative;
+maintenance also materializes disposable exact-text copies under
+`data/memory_logs/{timeline,sessions,subjects,topics,relations}/`. An explicit
+person name routes the question to that case-local search before candidates enter
+the shared Office budget.
 Only speaker and explicit-subject links satisfy direct facts; relational work
 orders may opt into weak mention/addressee links.
 
-Nightly Curator Phase 0 groups recent exact incoming records by session and
-files them into cases. A single bounded maintenance worker per session may
-derive supported facts, preferences, opinions, traits, communication style,
-and affect into one person-session profile with explicit source IDs. Exact filing
-is deterministic and survives worker failure. Missing/malformed output is
-recorded as a worker error, and the derived profiles remain case-local instead
+Pulse storage adds stable session and turn tags to both inputs and outputs.
+Nightly Curator Phase 0 groups those recent exact records by session and copies
+them into chronological, session, subject, topic, and relation folders. Each
+exact Markdown file is named for its canonical memory ID; routing unions likely
+folders and removes repeated filenames before top-K selection. A deterministic
+source-only session summary is always written. A single bounded maintenance
+worker may replace it with source-linked overture notes and key details and may
+write corresponding subject/topic/relation summaries while forming supported
+person profiles. Exact filing survives worker failure. Missing/malformed output
+is recorded as a worker error, and derived profiles remain case-local instead
 of expanding a person's name across global semantic retrieval. This workflow is also used by
 the LoCoMo sandbox when `--maintenance cases|full` is selected; exam questions
 remain retrieval-only.

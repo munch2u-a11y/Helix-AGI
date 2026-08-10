@@ -143,6 +143,7 @@ class PulseLoop:
         self._pulse_count = 0
         self._previous_thoughts = ""
         self._last_event_time = 0
+        self._memory_session_id = datetime.now().strftime("%Y%m%dT%H%M%S%f")
 
         # 3-tier activity tracking
         self._last_incoming_time = 0   # Last Telegram/audio message
@@ -368,8 +369,17 @@ class PulseLoop:
             if event_type in {
                 "user_message", "incoming_message", "telegram_message",
             }:
-                self._last_incoming_time = time.time()
-                self._last_activity_time = time.time()
+                now = time.time()
+                if (
+                    not getattr(self, "_memory_session_id", "")
+                    or not self._last_incoming_time
+                    or now - self._last_incoming_time > self.REGULAR_TIMEOUT
+                ):
+                    self._memory_session_id = datetime.now().strftime(
+                        "%Y%m%dT%H%M%S%f"
+                    )
+                self._last_incoming_time = now
+                self._last_activity_time = now
                 if self._state != "ACTIVE":
                     self.wake(trigger=f"event: {event_type}")
             # Nudge sentinel omega on relevant events
@@ -1283,6 +1293,10 @@ class PulseLoop:
                     importance, tags = 0.45, ["pulse_event", "tool_result"]
                 else:
                     importance, tags = 0.6, ["pulse_event"]
+                tags.extend((
+                    f"session:{self._memory_session_id}",
+                    f"turn:{self._pulse_count}",
+                ))
 
                 event_mem_id = self.memory.store(
                     content=event,
@@ -1315,16 +1329,23 @@ class PulseLoop:
             projection.project(thought_emb).tolist()
             if thought_emb is not None else None
         )
+        thought_tags = (
+            ["office_response", "outbound", "conversation"]
+            if is_office_response else ["pulse_thought"]
+        )
+        thought_tags.extend((
+            f"session:{self._memory_session_id}",
+            f"turn:{self._pulse_count}",
+        ))
+        if office_capsule is not None and office_capsule.primary.sender:
+            thought_tags.append(f"recipient:{office_capsule.primary.sender}")
 
         thought_memory_id = self.memory.store(
             content=thought_text,
             memory_type="conversation" if is_office_response else "thought",
             source="office_speaker" if office_capsule is not None else "pulse_output",
             importance=0.5,
-            tags=(
-                ["office_response", "outbound", "conversation"]
-                if is_office_response else ["pulse_thought"]
-            ),
+            tags=thought_tags,
             lagrangian_snapshot=lagrangian,
             belief_ids=injected_belief_ids,
             position_8d=thought_pos,

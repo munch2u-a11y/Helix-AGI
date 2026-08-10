@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
+from core.memory_log_office import MemoryLogOffice
+
 
 _ENVELOPE_RE = re.compile(r"^(?:\[[^\]]+\]\s*)+")
 _SPEAKER_RE = re.compile(r"^([A-Za-z][\w .'-]{0,39}):\s*")
@@ -91,6 +93,7 @@ class CaseMemoryOffice:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.path = self.data_dir / "office_board.json"
         self.corpus = corpus
+        self.logs = MemoryLogOffice(self.data_dir.parent / "memory_logs", corpus)
         self._lock = threading.RLock()
 
     def _load(self) -> Dict[str, Any]:
@@ -147,6 +150,8 @@ class CaseMemoryOffice:
             linked = 0
             weak_linked = 0
             touched: Set[str] = set()
+            subjects_by_record: Dict[str, List[str]] = {}
+            relations_by_record: Dict[str, List[List[str]]] = {}
             for item in records:
                 item_id = str(item.get("id") or "")
                 if not item_id:
@@ -166,6 +171,15 @@ class CaseMemoryOffice:
                             continue
                         role = "addressee" if self._is_addressee(content, name) else "mention"
                         roles_by_name.setdefault(name, set()).add(role)
+                factual_names = sorted(
+                    name for name, roles in roles_by_name.items()
+                    if roles & {"speaker", "subject"}
+                )
+                if factual_names:
+                    subjects_by_record[item_id] = factual_names
+                related_names = sorted(roles_by_name)
+                if len(related_names) >= 2:
+                    relations_by_record[item_id] = [related_names]
                 for name, roles in roles_by_name.items():
                     key = _case_key(name)
                     if not key:
@@ -224,6 +238,8 @@ class CaseMemoryOffice:
                 "references_linked": linked,
                 "weak_references_linked": weak_linked,
                 "case_names": [cases[key]["name"] for key in sorted(touched)],
+                "subjects_by_record": subjects_by_record,
+                "relations_by_record": relations_by_record,
             }
 
     def attach_beliefs(self, name: str, belief_ids: Iterable[str]) -> None:
@@ -311,6 +327,7 @@ class CaseMemoryOffice:
         with self._lock:
             board = self._load()
         lowered = str(query or "").lower()
+        log_result = self.logs.route(query, subjects=subjects, max_items=max_items)
         matches = []
         requested = {_case_key(name) for name in subjects if _case_key(name)}
         for case in board["cases"].values():
@@ -320,8 +337,11 @@ class CaseMemoryOffice:
                 for name in names
             ):
                 matches.append(case)
-        if not matches:
-            return {"case_names": [], "items": [], "candidates": 0}
+        if not matches and not log_result["items"]:
+            return {
+                "case_names": [], "items": [], "candidates": 0,
+                "factual_ref_ids": [], "log_duplicates_suppressed": 0,
+            }
 
         case_name_terms = {
             term for case in matches for term in _terms(case.get("name", ""))
@@ -374,11 +394,25 @@ class CaseMemoryOffice:
         candidates.sort(
             key=lambda item: (-float(item.get("case_route_score", 0.0)), str(item.get("id", "")))
         )
+        candidate_ids = {str(item.get("id") or "") for item in candidates}
+        for item in log_result["items"]:
+            item_id = str(item.get("id") or "")
+            if item_id and item_id not in candidate_ids:
+                candidates.append(item)
+                candidate_ids.add(item_id)
+        candidates.sort(key=lambda item: (
+            -max(
+                float(item.get("case_route_score") or 0.0),
+                float(item.get("relevance") or 0.0),
+            ),
+            str(item.get("id", "")),
+        ))
         return {
             "case_names": [str(case.get("name", "")) for case in matches],
             "items": candidates[:max(0, int(max_items))],
             "candidates": len(candidates),
             "factual_ref_ids": sorted(factual_ref_ids),
+            "log_duplicates_suppressed": log_result["duplicates_suppressed"],
         }
 
     @staticmethod

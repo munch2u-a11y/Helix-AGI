@@ -29,6 +29,10 @@ def _record(item_id, session_id, content):
         "session_id": session_id,
         "scope_id": session_id,
         "relevance": 0.4,
+        "created_at": "2026-08-09T10:00:00-04:00",
+        "source": "pulse_input",
+        "importance": 0.7,
+        "tags": [],
     }
 
 
@@ -163,6 +167,94 @@ class CaseMemoryOfficeTests(unittest.TestCase):
 
         self.assertIn("no valid people list", result["worker_error"].lower())
         self.assertEqual(result["references_linked"], 1)
+
+    def test_exact_records_are_copied_to_time_session_and_subject_logs_once(self):
+        record = _record("mem_1", "s1", "Bob: I enjoy quiet Sunday walks.")
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = CaseMemoryOffice(Path(tmp) / "cases", _Corpus([record]))
+            store = BeliefStore(str(Path(tmp) / "beliefs"))
+            maintenance = SessionMemoryMaintenance(cases=cases, belief_store=store)
+
+            first = maintenance.run("s1", [record])
+            second = maintenance.run("s1", [record])
+            root = Path(tmp) / "memory_logs"
+            timeline = (root / "timeline" / "2026-08-09" / "mem_1.md").read_text()
+            session = (root / "sessions" / "s1" / "mem_1.md").read_text()
+            subject = (root / "subjects" / "bob" / "mem_1.md").read_text()
+            summary = (root / "sessions" / "s1" / "summary.md").read_text()
+
+        self.assertIn("Bob: I enjoy quiet Sunday walks.", timeline)
+        self.assertEqual(timeline, session)
+        self.assertEqual(session, subject)
+        self.assertIn("Chronological session view", summary)
+        self.assertEqual(first["log_copies_written"], 3)
+        self.assertEqual(second["log_copies_written"], 0)
+
+    def test_maintenance_views_deduplicate_canonical_ids_before_top_k(self):
+        records = [
+            _record("mem_1", "s1", "Bob: Alice and I planned the orchard."),
+            _record("mem_2", "s1", "Alice: Bob prefers pistachio ice cream."),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = CaseMemoryOffice(Path(tmp) / "cases", _Corpus(records))
+            store = BeliefStore(str(Path(tmp) / "beliefs"))
+            result = SessionMemoryMaintenance(
+                cases=cases,
+                belief_store=store,
+                worker=lambda _request: {
+                    "people": [{
+                        "name": "Bob",
+                        "source_ids": ["mem_2"],
+                        "preferences": ["prefers pistachio ice cream"],
+                    }],
+                    "session": {
+                        "overture": "Bob and Alice discussed an orchard and a preference.",
+                        "key_details": [{
+                            "text": "Bob prefers pistachio ice cream.",
+                            "source_ids": ["mem_2"],
+                        }],
+                    },
+                    "views": [{
+                            "kind": "topic",
+                            "key": "ice cream",
+                            "source_ids": ["mem_2"],
+                            "overture": "A stated flavor preference.",
+                        }, {
+                            "kind": "relation",
+                            "key": "Alice--Bob",
+                            "source_ids": ["mem_1"],
+                            "overture": "They planned the orchard together.",
+                        }],
+                },
+            ).run("s1", records)
+            routed = cases.logs.route(
+                "What ice cream does Bob prefer?", subjects=["Bob"], max_items=10,
+            )
+            session_summary = (
+                Path(tmp) / "memory_logs" / "sessions" / "s1" / "summary.md"
+            ).read_text()
+
+        ids = [item["id"] for item in routed["items"]]
+        self.assertEqual(ids.count("mem_2"), 1)
+        self.assertGreater(routed["duplicates_suppressed"], 0)
+        self.assertGreaterEqual(result["derived_summaries_written"], 3)
+        self.assertIn("Bob and Alice discussed", session_summary)
+
+    def test_output_is_filed_under_helix_and_recipient_relation(self):
+        record = _record("mem_9", "s1", "[response] Pistachio, definitely.")
+        record["source"] = "office_speaker"
+        record["tags"] = ["outbound", "recipient:Bob"]
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = CaseMemoryOffice(Path(tmp) / "cases", _Corpus([record]))
+            store = BeliefStore(str(Path(tmp) / "beliefs"))
+            SessionMemoryMaintenance(cases=cases, belief_store=store).run("s1", [record])
+            root = Path(tmp) / "memory_logs"
+
+            helix_copy = (root / "subjects" / "helix" / "mem_9.md").exists()
+            relation_copy = (root / "relations" / "bob--helix" / "mem_9.md").exists()
+
+        self.assertTrue(helix_copy)
+        self.assertTrue(relation_copy)
 
 
 if __name__ == "__main__":
