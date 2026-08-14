@@ -595,10 +595,20 @@ def consolidate_new_beliefs(
     stats = {"merged": 0, "passed": 0, "errors": 0}
     passed_beliefs = []
 
+    # Prioritize high spatial gravity clusters for earlier consolidation
+    sorted_beliefs = sorted(
+        new_beliefs,
+        key=lambda b: (
+            -float(b.get("gravity", (b.get("metadata", {}) if isinstance(b.get("metadata"), dict) else {}).get("gravity", 0.0))),
+            -float(b.get("stability_index", b.get("confidence", 0.5))),
+            str(b.get("id", ""))
+        )
+    )
+
     # Process beliefs in parallel
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
         futures = {}
-        for belief in new_beliefs:
+        for belief in sorted_beliefs:
             future = executor.submit(
                 _process_one_belief,
                 belief, lexicon_terms, belief_store, dry_run,
