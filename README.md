@@ -45,25 +45,18 @@ flowchart TD
     K --> A
 ```
 
-### Experimental Office-First Speaking Path
+### Production Context Office & Unified Retrieval Architecture
 
-Set `HELIX_OFFICE_FIRST=1` to invert prompt ownership in the standard pulse
-loop. The event enters a typed front desk first; source-specific variables mark
-it as a direct message, email, social post, file read, search return, tool/task
-receipt, sensory reading, or host event. The Office then asks the existing
-`UnifiedRetrieval` pipeline for context once. That existing pipeline still owns
-the mRAG heads, exact and case routing, beliefs, affect, and the bounded 8D
-complement; the Office relay adds recent continuity and receipts, compiles the
-capsule, and opens a fresh schema-free speaking session. Identity is absent
-unless the turn actually depends on it, and external/tool content is delimited
-as data.
+The **Context Office** and **Unified Retrieval** pipeline coordinate context assembly during every active pulse loop turn:
 
-This is an opt-in response-construction vertical slice, not yet a replacement
-for task-focus execution. Committed plans still enter the existing task
-cognition hook, and successful task/tool results return as receipts. With a
-local Ollama speaker, the current task-cognition provider boundary still
-limits autonomous tool completion; the Office will report that no completion
-receipt exists rather than allowing the speaker to invent one.
+1. **Front Desk Routing & Event Categorization**: Incoming events (direct messages, emails, tool receipts, sensory signals) enter typed front desks.
+2. **Unified 1024D mRAG + 8D Spatial Retrieval**: The event triggers `UnifiedRetrieval`, combining:
+   - **Multi-Head Semantic Foreground (1024D)**: Primary vector recall over past sessions, beliefs, and documents.
+   - **Bounded 8D Spatial Complements**: Lateral gravity-ranked complements (max 1–2 items) that add non-displacing associative context.
+   - **Gravity-Guided Multi-Hop Traversal (`retrieve_multihop`)**: Automatically traverses 8D gravity basins around initial evidence to resolve complex multi-step queries.
+   - **Organic Tone Induction (`Personal Opinions:`)**: Converts affectively salient memories into a 1st-person subjective prompt block for Helix's conscious model.
+3. **Shared Bid Arbitration**: Specialist desks (Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, Identity) bid for context allocation based on utility, confidence, and token cost.
+4. **Context Injection & Conscious Execution**: The compiled capsule is injected into the conscious LLM prompt (Codex, Gemini, Anthropic, Ollama), driving structured tool execution or direct response generation.
 
 ### Documentation
 
