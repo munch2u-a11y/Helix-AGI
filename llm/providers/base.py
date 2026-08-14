@@ -140,6 +140,18 @@ def create_session(
             options=config.options,
         )
 
+    elif config.provider_type == "claude_cli":
+        from llm.providers.claude_cli_provider import ClaudeCliSession
+        return ClaudeCliSession(
+            model=config.model,
+            system_instruction=system_instruction,
+            max_output_tokens=config.max_output_tokens,
+            tool_declarations=tool_declarations,
+            tool_executor=tool_executor,
+            preconscious=preconscious,
+            options=config.options,
+        )
+
     elif config.provider_type in ("codex", "codex_cli"):
         from llm.providers.codex_cli_provider import CodexCliSession
         return CodexCliSession(
@@ -156,7 +168,7 @@ def create_session(
         raise ValueError(
             f"Unknown provider type: {config.provider_type}. "
             "Supported: gemini, anthropic, ollama, llama_cpp, codex_cli, "
-            "codex_subscription"
+            "claude_cli, codex_subscription"
         )
 
 
@@ -251,6 +263,36 @@ def detect_available_provider() -> Optional[ProviderConfig]:
             context_window=64_000,
             options={"n_gpu_layers": -1},
         )
+
+    elif provider_pref == "claude_cli":
+        import shutil
+
+        if not shutil.which("claude"):
+            logger.warning("HELIX_PROVIDER=claude_cli but the claude CLI is unavailable.")
+        else:
+            context_window = int(os.environ.get("HELIX_CONTEXT_WINDOW", "200000"))
+            logger.info(
+                "Using subscription-authenticated Claude Code CLI%s",
+                f" ({model_pref})" if model_pref else "",
+            )
+            budget = os.environ.get("HELIX_CLAUDE_MAX_BUDGET_USD", "").strip()
+            return ProviderConfig(
+                provider_type="claude_cli",
+                model=model_pref,
+                context_window=context_window,
+                temperature=0.2,
+                max_output_tokens=4096,
+                options={
+                    "timeout": int(os.environ.get("HELIX_CLAUDE_TIMEOUT", "900")),
+                    "effort": os.environ.get("HELIX_CLAUDE_EFFORT", ""),
+                    "fallback_model": os.environ.get("HELIX_CLAUDE_FALLBACK_MODEL", ""),
+                    # A subscription is a quota, not a bill — the cap is a
+                    # backstop against a runaway pulse loop, not a cost
+                    # control. Unset by default so it never truncates a turn
+                    # the user did want.
+                    "max_budget_usd": budget or None,
+                },
+            )
 
     elif provider_pref in ("codex", "codex_cli", "codex_subscription"):
         import shutil

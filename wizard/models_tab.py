@@ -10,7 +10,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QGroupBox, QLineEdit, QScrollArea, QFormLayout,
-    QMessageBox,
+    QMessageBox, QCheckBox,
 )
 from PyQt6.QtCore import Qt
 
@@ -100,6 +100,27 @@ class ModelsTab(QWidget):
         model_row.addWidget(self.detect_btn)
         provider_form.addRow("Active Model:", model_row)
 
+        # ── Local mode ────────────────────────────────────────────────
+        # A local model cannot hold 80 tool schemas in an 8K window, and
+        # Ollama has no native tool channel at all. Orchestrated mode puts
+        # one line per toolset in the main window and runs the actual work
+        # in directed passes, one toolset at a time.
+        self.local_mode_check = QCheckBox(
+            "Local mode — orchestrated tool use (no API key needed)"
+        )
+        self.local_mode_check.setToolTip(
+            "Gives a local model the full toolset without the full manifest.\n"
+            "Tools run in directed passes; slower than native function\n"
+            "calling, but works entirely offline."
+        )
+        self.local_mode_check.toggled.connect(self._on_local_mode_toggled)
+        provider_form.addRow(self.local_mode_check)
+
+        self.local_mode_desc = QLabel()
+        self.local_mode_desc.setWordWrap(True)
+        self.local_mode_desc.setStyleSheet("font-size: 11px; color: #8888aa;")
+        provider_form.addRow(self.local_mode_desc)
+
         settings_layout.addWidget(provider_group)
 
         # ── Credentials & Endpoints Group ──────────────────────────────
@@ -166,6 +187,28 @@ class ModelsTab(QWidget):
 
     def _on_provider_changed(self, provider: str):
         self._update_provider_desc(provider)
+        is_local = provider in ("ollama", "llama_cpp")
+        self.local_mode_check.setEnabled(is_local)
+        if not is_local and self.local_mode_check.isChecked():
+            # Hosted providers call tools natively; orchestration would only
+            # add latency and lose the provider's own tool validation.
+            self.local_mode_check.setChecked(False)
+        self._on_local_mode_toggled(self.local_mode_check.isChecked())
+
+    def _on_local_mode_toggled(self, enabled: bool):
+        if not self.local_mode_check.isEnabled():
+            self.local_mode_desc.setText(
+                "Available for the ollama and llama_cpp providers."
+            )
+        elif enabled:
+            self.local_mode_desc.setText(
+                "Tools run one toolset at a time in directed passes. "
+                "Helix keeps the full toolset without holding every schema."
+            )
+        else:
+            self.local_mode_desc.setText(
+                "Without this, a local provider has no tool access at all."
+            )
         self._update_models_list()
 
     def _update_models_list(self):
@@ -244,6 +287,11 @@ class ModelsTab(QWidget):
         provider = creds.get("HELIX_PROVIDER", "gemini")
         self.provider_combo.setCurrentText(provider)
 
+        self.local_mode_check.setChecked(
+            self.app.config.get("tool_format") == "orchestrated"
+        )
+        self._on_provider_changed(provider)
+
         self._update_models_list()
 
     def _save_settings(self):
@@ -261,9 +309,22 @@ class ModelsTab(QWidget):
         if cfg["llm_provider"] == "ollama":
             cfg["ollama_model"] = cfg["llm_model"]
 
+        # Local mode: the pulse loop reads tool_format to decide whether the
+        # session gets native declarations or an orchestrated tool layer.
+        if self.local_mode_check.isChecked():
+            cfg["tool_format"] = "orchestrated"
+            cfg["local_provider"] = cfg["llm_provider"]
+            cfg["local_model"] = cfg["llm_model"]
+        elif cfg.get("tool_format") == "orchestrated":
+            cfg["tool_format"] = "api"
+
         # Write credentials.env file
         try:
             self.app._write_credentials()
+            # tool_format lives in config.json, which credentials.env does
+            # not cover — the pulse loop reads it at session creation.
+            from wizard.app import save_config
+            save_config(cfg)
             QMessageBox.information(self, "Saved", "Model settings saved and synchronized successfully!")
         except Exception as e:
             QMessageBox.critical(self, "Error Saving", f"Failed to write configuration: {e}")

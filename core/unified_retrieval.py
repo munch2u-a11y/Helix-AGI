@@ -363,6 +363,51 @@ class UnifiedRetrieval:
 
         return combined
 
+    def format_personal_opinions(
+        self, candidates: List[Dict[str, Any]], limit: int = 4
+    ) -> str:
+        """Extract and format 1st-person subjective statements / feelings to induce tone.
+
+        Uses backend salience, affect fields, and category signals (premises, preferences, feelings)
+        to select top subjective opinion statements. Injected cleanly under 'Personal Opinions:'
+        without sending raw numbers or metadata labels to the model.
+        """
+        opinions = []
+        seen_contents = set()
+
+        for item in candidates:
+            content = (item.get("content") or "").strip()
+            if not content or content in seen_contents:
+                continue
+
+            sal = item.get("salience_metadata", {})
+            aff = float(sal.get("affective_salience", item.get("affective_salience", 0.0)))
+            grav = float(sal.get("gravity", item.get("gravity", 0.0)))
+            category = item.get("category", "")
+
+            is_subjective = (
+                any(w in content.lower() for w in ["i ", "my ", "me ", "myself", "we ", "our "])
+                or category in ("premises", "preferences", "people")
+                or aff > 0.5
+                or grav > 1.2
+            )
+
+            if is_subjective:
+                score = (aff * 0.4) + (grav * 0.6) + (0.5 if category == "premises" else 0.0)
+                opinions.append((score, content))
+                seen_contents.add(content)
+
+        opinions.sort(key=lambda x: x[0], reverse=True)
+
+        if not opinions:
+            return ""
+
+        formatted_lines = ["Personal Opinions:"]
+        for _, text in opinions[:limit]:
+            formatted_lines.append(f'- "{text}"')
+
+        return "\n".join(formatted_lines)
+
     def associative_additions(
         self,
         cluster_scores: List[Dict[str, Any]],
