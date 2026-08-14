@@ -486,6 +486,9 @@ venv/bin/python tests/test_live_agent_pulse_simulation.py
 
 # 5. Autonomous Multi-Pulse Internal Monologue Stream & 8D Attractor Navigation
 venv/bin/python tests/test_autonomous_pulse_chain.py
+
+# 6. Long-Form Agentic Memory, Proactive Initiative & Opinion Defense Benchmark
+venv/bin/python tests/test_longform_agentic_memory_bench.py
 ```
 
 ### Communication Channels
