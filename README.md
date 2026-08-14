@@ -67,15 +67,37 @@ receipt exists rather than allowing the speaker to invent one.
 
 ### Documentation
 
-| Document | Status and purpose |
-|---|---|
-| [Technical documentation index](documents/README.md) | Start here; defines authoritative versus historical documents |
-| [Current technical architecture](documents/architecture_current.md) | Canonical live wiring, retrieval contract, providers, and persistence |
-| [Context architecture experiments](documents/context_architecture_experiments.md) | Same-exam comparison of the hybrid compiler and Context Office forks |
-| [System manual](SYSTEM_MANUAL.md) | Detailed current subsystem and operating reference |
-| [Task cognition pipeline](documents/task_cognition_pipeline.md) | Focused event-driven task diagram and lifecycle |
-| [Historical audits](documents/audits/) | Preserved source snapshots; not current runtime contracts |
-| [Benchmark records](documents/README.md#benchmark-records) | Dated evaluated configurations and results |
+**Subsystem Audits** — granular, line-by-line breakdowns of each module:
+
+| Audit | Covers |
+|-------|--------|
+| [Overview & Architecture Map](documents/audits/audit_overview.md) | Full system diagram and module index |
+| [Pulse Loop](documents/audits/audit_pulse_loop.md) | State machine, event injection, pulse cycle |
+| [Preconscious](documents/audits/audit_preconscious.md) | Concept-based injection, gravity queries, lexicon |
+| [Physics Engine](documents/audits/audit_physics_engine.md) | Dual-space coordination, text embeddings, neighborhood/temporal queries |
+| [Spatial Mind](documents/audits/audit_spatial_mind.md) | Dual-space manifold, Euler-Lagrange dynamics |
+| [Cognitive Space](documents/audits/audit_cognitive_space.md) | 8D projection, cognitive gravity, KD-Tree |
+| [Affect Field](documents/audits/audit_affect_field.md) | Plutchik emotional wave packets, anisotropic diffusion |
+| [Affect Hook](documents/audits/audit_affect_hook.md) | Post-pulse hook integration, Lagrangian snapshot read, and sentinel Ω nudges |
+| [Belief Detector](documents/audits/audit_belief_detector.md) | Real-time belief extraction via Lagrangian deltas |
+| [Cognitive Journal](documents/audits/audit_cognitive_journal.md) | Append-only JSONL event sourcing |
+| [Belief Store](documents/audits/audit_belief_store.md) | Database layer, normalized schemas, category I/O, and stability-based confidence adjustments |
+| [Memory Manager](documents/audits/audit_memory_manager.md) | Unified JSONL journal and 384D FAISS index |
+| [Semantic Index](documents/audits/audit_semantic_index.md) | Normalized 384D vector storage, numpy search, FAISS upgrade path |
+| [Scratchpad](documents/audits/audit_scratchpad.md) | Markdown-based working memory |
+| [Tool Learning](documents/audits/audit_tool_learning.md) | Failure capture, lesson verification, and Curator notes compilation |
+
+**Deep Dives:**
+
+| Document | Focus |
+|----------|-------|
+| [Preconscious Memory Deep Dive](documents/preconscious_memory_audit.md) | Full injection pipeline rationale |
+| [Preconscious Refactor Audit](documents/preconscious_refactor_audit.md) | Concept-based injection redesign |
+| [Pulse Workflow Audit](documents/pulse_workflow_audit.md) | Step-by-step pulse execution |
+| [Phase 1: Core Memory & Beliefs](documents/helix_audit_part1.md) | Belief store, mass, attrition |
+| [Phase 2: Spatial Manifold & Physics](documents/helix_audit_part2.md) | 8D manifold, gravity mechanics |
+| [Phase 3: Subconscious Autonomy](documents/helix_audit_part3.md) | Dream engine, nightly cycles |
+| [MCP Agent Lab Integration](documents/mcp_agent_lab.md) | Run reproducible tests through installed Codex, Claude Code, or Gemini CLIs |
 
 ---
 
@@ -559,9 +581,13 @@ This is an early-stage research project. Contributions are welcome in:
 
 ## License
 
-**Open Source:** [AGPL-3.0](LICENSE) — free to use, modify, and distribute with copyleft obligations. If you deploy a modified version as a network service, you must share your source code.
+Helix-AGI is licensed under the [Apache License 2.0](LICENSE). You may use,
+modify, distribute, and build commercial or proprietary products with it,
+subject to the license's notice and attribution requirements.
 
-**Commercial:** For proprietary use without AGPL obligations, commercial licenses are available. Contact [**helix.agi.email@gmail.com**](mailto:helix.agi.email@gmail.com) for details.
+Versions published before the Apache 2.0 transition remain available under
+their original AGPL-3.0 terms. This release and subsequent contributions are
+provided under Apache 2.0 unless explicitly stated otherwise.
 
 ---
 
