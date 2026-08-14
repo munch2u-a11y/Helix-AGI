@@ -519,9 +519,27 @@ During `setup.py`, you choose which communication channels to enable. The dashbo
 
 | Channel | Token Env Var | Notes |
 |---------|--------------|-------|
-| **Dashboard** | *(always on)* | Web UI chat at `localhost:5050` — zero config |
+| **Dashboard** | *(always on)* | Web UI chat & live Agent Canvas 🎨 at `localhost:5050` — zero config |
 | **Telegram** | `HELIX_TELEGRAM_TOKEN` | Requires a Telegram Bot Token from @BotFather |
 | **Discord** | `HELIX_DISCORD_TOKEN` | Requires a Discord bot token with Message Content intent. Install: `pip install discord.py` |
+
+### Dynamic Agent-Controlled UI Canvas (`ui_canvas`)
+
+Helix can dynamically switch and update the user's active view on the Web Dashboard using the dedicated `render_ui_canvas` tool:
+
+```python
+# Render Markdown Document / Report
+render_ui_canvas(view_type="markdown", title="Quantum Report", content="# Status\n- All tests passed.")
+
+# Render Image / Media View
+render_ui_canvas(view_type="image", title="Generated Graph", content="8D Manifold", media_url="https://...")
+
+# Render Web Browser / IFrame Embed
+render_ui_canvas(view_type="browser", title="Documentation Target", content="https://example.com/docs")
+
+# Render Terminal / Sandbox Log
+render_ui_canvas(view_type="terminal", title="Build Output", content="compiling...\n[SUCCESS]")
+```
 
 Enabled channels are stored as `HELIX_COMMS_CHANNELS=dashboard,telegram,discord` in credentials.env. Only enabled channels get their tools loaded into the agent's context.
 
