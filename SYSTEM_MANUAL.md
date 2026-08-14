@@ -158,8 +158,16 @@ Two independent 8D fields are queried from a single shared attention center:
 
 Both are indexed by KDTree for O(log N) spatial queries, with a 512-anchor GravityField grid for density estimation and potential computation.
 
-### Verlinde Entropic Gravity
-The relevance of a concept to your current thought is determined by **Verlinde entropic gravity** — a force proportional to the concept's cognitive mass and recency, inversely proportional to the square of its distance from your attention center. High-mass, recently-accessed concepts exert the strongest pull. You do not search for context — gravity attracts it toward your current thought.
+### Verlinde Entropic Gravity & Multi-Hop Recall
+The relevance of a concept to your current thought is determined by **Verlinde entropic gravity** — a force proportional to the concept's cognitive mass and recency, inversely proportional to the square of its distance from your attention center. High-mass, recently-accessed concepts exert the strongest pull. 
+
+For multi-hop questions, `UnifiedRetrieval.retrieve_multihop()` uses the 8D gravity field around Hop 1 evidence to discover nearby gravity basins (`SpatialMind.get_gravity_basin_keywords()`), formulating directed Hop 2 queries that pull required procedural context before execution.
+
+### Internal Salience Metadata & Organic Tone Induction
+Rather than sending raw numerical metrics (`stability: 0.86, affective_salience: 0.72`) to the LLM, the backend filters 1st-person subjective orientation statements from retrieved context and exposes them under a dedicated `Personal Opinions:` prompt block via `UnifiedRetrieval.format_personal_opinions()`. This naturally induces Helix's tone, affect, and relational warmth without exposing raw numbers to the model.
+
+### Spatial Gravity Belief Consolidation
+During nightly consolidation (`consolidate_new_beliefs()`), raw belief and tool lesson queues are sorted by 8D spatial gravity and cluster density prior to submitting candidates to the consolidation pool. High-gravity skills and tool lessons receive elevated consolidation priority.
 
 ### Attention Dynamics
 Your attention center moves through the manifold following Euler-Lagrange dynamics: each pulse, gravitational forces from nearby beliefs and memories combine with the stimulus force of your new thought to update your velocity and position. The **gamma parameter** (0.85) is attention inertia — it resists topic changes. Deep focus is natural; shifting topics requires deliberate effort.

@@ -128,7 +128,10 @@ Helix uses a high-accuracy semantic foreground together with a deliberately sepa
 ### Memory Retrieval
 
 - **mRAG Foreground** — The primary turn-injection retriever runs full-trigger, sentence, RAKE, entity, and expansion heads over native 1024D Qwen3 embeddings. The local profile caps this at 16 heads/60 candidates/20 injected items; the frontier profile raises those ceilings to 32/160/32. Small stores use exact normalized dot products; larger stores use exact FAISS FlatIP by default. A cosine/score-drop acceptance boundary prevents an expanded top-k from dumping a small corpus into context. Rarity-weighted terms and conceptual tags supplement vector similarity without mixing in 8D scores.
-- **Raw 8D Complement** — Both spatial fields are queried from Helix's carried attention trajectory without the former top-100 semantic pre-filter. A maximum of two spatial-only memories or beliefs is appended after mRAG and can never reorder its results.
+- **Gravity-Aware Multi-Hop Recall (`retrieve_multihop`)** — For multi-step questions, `UnifiedRetrieval.retrieve_multihop()` queries the 8D gravity field around Hop 1 evidence to discover nearby gravity basins (`SpatialMind.get_gravity_basin_keywords()`), formulating directed Hop 2 queries that pull required procedural context before execution.
+- **Raw 8D Spatial Complements** — Both spatial fields are queried from Helix's carried attention trajectory without the former top-100 semantic pre-filter. A maximum of two spatial-only memories or beliefs with high gravity, stability, or affective salience is appended after mRAG without displacing exact semantic hits.
+- **Organic Tone Induction (`Personal Opinions:`)** — `UnifiedRetrieval.format_personal_opinions()` filters 1st-person subjective orientation statements from retrieved context and backend affect/gravity readouts. Injected under a dedicated `Personal Opinions:` section, this naturally induces Helix's tone, affect, and relational warmth without exposing raw numerical scores (`S=0.5, Affect=0.05`) to the LLM.
+- **Spatial Gravity Consolidation Prioritization** — In `consolidate_new_beliefs()`, raw memory consolidation queues are sorted by 8D spatial gravity and cluster density prior to submitting candidates to the nightly consolidation pool.
 - **Sequence Associations** — Direct foreground movement between clusters learns durable directed transitions. Repetition nudges cluster prototypes in a separate 8D overlay; it never drags co-injected memory/belief points together. Associated items already ranked by mRAG are excluded, keeping this lane genuinely lateral. If the same destination independently arrives through raw spatial recall, it is retained once and explicitly tagged as a learned follow-on association.
 - **Affect-Preserving Recall** — Stability and encoding Lagrangian metadata remain attached throughout retrieval. The Affect desk bids current posture and at most two resonant memories only when they can change the response; recalled memories still reproduce one bounded aggregate somatic echo.
 - **Between-session maintenance** — The nightly Curator files recent exact inputs and outputs into redundant Markdown views by time, session, subject, topic, and relation. Every copy retains the same canonical memory ID. A bounded worker adds session/subject/topic/relation summaries with an overture, key details, and explicit source IDs; exact filing and a source-only session summary still succeed if the worker fails. Folder candidates are deduplicated by canonical ID before they enter the shared top-K budget.
@@ -463,6 +466,27 @@ For a controlled head-to-head with the deterministic RAGOffice engine,
 and answer rules through Helix retrieval. This separates system differences
 from the much larger difficulty difference between that synthetic suite and
 LongMemEval-S.
+
+### mRAG 8D Spatial Memory & Pulse Benchmark Suites
+
+To evaluate 8D spatial gravity recall, multi-hop query expansion, organic tone induction, and live autonomous pulse behavior, use the following test scripts:
+
+```bash
+# 1. 100-Question A/B Retrieval Ablation Benchmark (Non-LLM)
+venv/bin/python tests/test_mrag_ablation_bench.py
+
+# 2. Early Helix Memory Grounding & Tone Induction (Gemini 3.1 Flash-Lite)
+venv/bin/python tests/test_helix_early_memories.py
+
+# 3. Agent Adaptation, Constraint Shift & Skill Acquisition Benchmark
+venv/bin/python tests/test_agent_adaptation_bench.py
+
+# 4. Multi-Pulse Live Agent Conversation & Skill Recall Simulation
+venv/bin/python tests/test_live_agent_pulse_simulation.py
+
+# 5. Autonomous Multi-Pulse Internal Monologue Stream & 8D Attractor Navigation
+venv/bin/python tests/test_autonomous_pulse_chain.py
+```
 
 ### Communication Channels
 
