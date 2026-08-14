@@ -15,34 +15,72 @@ Helix can also turn naturally voiced intentions into durable tasks. In active ta
 
 ---
 
-## Architecture Overview
+### Memory, mRAG & 8D Spatial Injection Architecture
 
 ```mermaid
 flowchart TD
-    A[Events and pulse timer] --> B{ACTIVE / REGULAR /<br/>RESTING / DORMANT}
-    B -->|DORMANT| C[Nightly dream and consolidation]
-    B -->|awake pulse| P[Preconscious assembly]
-    P --> W[Memory intake work order<br/>subject / facet / exact / time / relation]
-    W --> M[1024D multi-head mRAG<br/>semantic foreground]
-    M --> O[Context Office desks<br/>Facts / State / Relations / Catalog / Case /<br/>Beliefs / Causality / Affect / conditional Identity]
-    O -. insufficient initial coverage .-> Q[On-demand office board<br/>bounded canonical lookup]
-    Q -. candidates .-> O
-    O --> V[Shared bid arbitration<br/>utility / confidence / cost]
-    P --> S[Raw 8D spatial<br/>lateral complement]
-    P --> R[Learned directed cluster<br/>transition complement]
-    V --> I[Bounded exact contextual injection]
-    S --> I
-    R --> I
-    I --> H[Main Helix consciousness<br/>Codex / Gemini / Anthropic / local]
-    H -->|off or observe| X[Direct host-tool path]
-    H -->|active: committed intention| T[Durable task + learned<br/>situational orchestrator]
-    T --> F[Shared-memory focus<br/>conditional identity + scoped schemas]
-    F --> X
-    X --> E[Central ToolExecutor]
-    E --> U[Outcome event]
-    H --> K[Memory encoding + physics + hooks]
-    U --> A
-    K --> A
+    subgraph Trigger ["Pulse Trigger & Event Perception"]
+        E[Incoming Event / User Message / Timer] --> P[Preconscious Engine]
+    end
+
+    subgraph RetrievalLanes ["Parallel Retrieval Lanes"]
+        P --> M[1024D Semantic mRAG<br/>Foreground Vector Recall]
+        P --> S[8D Spatial Manifold<br/>Gravity Complements]
+        P --> H[Gravity-Guided Multi-Hop<br/>retrieve_multihop Traversal]
+        P --> L[Layer 2 Lexicon Anchors<br/>People / Skills / Concepts]
+    end
+
+    subgraph FilteringTone ["Filtering & Tone Formatting"]
+        M --> D[Injection Gravity Decay &<br/>Dynamic Token Budget]
+        S --> D
+        H --> D
+        L --> D
+        D --> O["Organic Tone Induction<br/>(Personal Opinions: Block)"]
+    end
+
+    subgraph ContextOffice ["Context Office Desks & Arbitration"]
+        O --> Desks["Context Desks<br/>Facts · State · Relations · Catalog<br/>Case · Beliefs · Causality · Affect"]
+        Desks --> Bids[Shared Bid Arbitration<br/>Utility / Confidence / Cost]
+    end
+
+    subgraph Injection ["Conscious Prompt Injection"]
+        Bids --> Capsule[Compiled Context Capsule]
+        Capsule --> LLM["Main Conscious Model<br/>Codex / Gemini / Anthropic / Ollama"]
+    end
+```
+
+### Tool Execution System & Lesson Learning Architecture
+
+```mermaid
+flowchart TD
+    subgraph ConsciousIntent ["Conscious Function Call Intent"]
+        LLM["Conscious Model Output"] --> ToolCall[Tool Call Decision]
+    end
+
+    subgraph ToolDispatch ["Dynamic Registry & Dispatch"]
+        ToolCall --> Reg["tool_registry.py<br/>(Hermes-Style Dynamic TTL Gating)"]
+        Reg --> Gate{Safety & Whitelist Gate}
+    end
+
+    subgraph ToolGroups ["Tool Execution Groups"]
+        Gate -->|Approved| Exec["Central ToolExecutor"]
+        Exec --> CoreTools["Core Operations<br/>run_command · write_to_file · replace_file_content"]
+        Exec --> CanvasTools["Agent UI Canvas 🎨<br/>render_ui_canvas (markdown/image/iframe)"]
+        Exec --> CommsTools["Comms Channels<br/>send_message (Dashboard/Telegram/Discord)"]
+        Exec --> PluginTools["Native Skills & Agnostic MCP<br/>plugins/helix-agent-lab"]
+    end
+
+    subgraph OutcomeFeedback ["Outcome Event & Lesson Learning"]
+        CoreTools --> Res[Tool Outcome Event]
+        CanvasTools --> Res
+        CommsTools --> Res
+        PluginTools --> Res
+        
+        Res -->|Success| Perception[Feed Result Back to Preconscious]
+        Res -->|Failure / Error| Tracker["ToolLessonTracker<br/>(Capture Operational Lessons)"]
+        Tracker --> Consolidation["Nightly Curator Consolidation (G=2.5)<br/>Store as Procedural Skill Belief"]
+        Consolidation -->|Future Session| Preconscious[Preconscious Tool Express Lane]
+    end
 ```
 
 ### Production Context Office & Unified Retrieval Architecture
