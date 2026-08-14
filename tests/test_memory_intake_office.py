@@ -64,6 +64,31 @@ class MemoryIntakeOfficeTests(unittest.TestCase):
         self.assertFalse(order.requires_exact)
         self.assertFalse(order.requires_chronology)
 
+    def test_routes_sent_received_cognition_and_tool_evidence(self):
+        sent = self.intake.review(
+            "What did you tell Mara about the invoice?", known_entities=["Mara"],
+        )
+        sent_noun_first = self.intake.review(
+            "What message did you send Mara?", known_entities=["Mara"],
+        )
+        received = self.intake.review(
+            "What did Mara tell me about the invoice?", known_entities=["Mara"],
+        )
+        cognition = self.intake.review(
+            "Why did you decide to message Mara?", known_entities=["Mara"],
+        )
+        tool = self.intake.review("What result did the temperature sensor report?")
+
+        self.assertEqual(sent.target_record_kinds, ("outbound_message",))
+        self.assertEqual(sent_noun_first.target_record_kinds, ("outbound_message",))
+        self.assertEqual(sent.evidence_scope, "delivered_communication")
+        self.assertEqual(sent.thought_policy, "exclude")
+        self.assertEqual(received.target_record_kinds, ("inbound_message",))
+        self.assertEqual(cognition.target_record_kinds, ("thought",))
+        self.assertEqual(cognition.thought_policy, "primary")
+        self.assertIn("outbound_message", cognition.related_record_kinds)
+        self.assertEqual(tool.target_record_kinds, ("tool_result", "tool_observation"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

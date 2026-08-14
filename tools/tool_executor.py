@@ -640,7 +640,15 @@ class ToolExecutor:
                     memory_type="conversation",
                     source="helix_outbound",
                     importance=0.75,  # conversations are manifold-core (>= 0.7)
-                    tags=["reply", "outbound", "conversation", recipient.lower()],
+                    tags=[
+                        "reply", "outbound", "conversation", recipient.lower(),
+                        f"recipient:{recipient}",
+                    ],
+                    record_metadata={
+                        "record_kind": "outbound_message",
+                        "recipients": [recipient],
+                        "action_status": "delivered",
+                    },
                 )
             return f"Sent to {recipient}."
         return f"Could not deliver reply to {recipient} — no recent inbound channel or default channel found."
@@ -662,7 +670,15 @@ class ToolExecutor:
                     memory_type="conversation",
                     source="helix_outbound",
                     importance=0.75,  # conversations are manifold-core (>= 0.7)
-                    tags=["message", "outbound", "conversation", recipient.lower()],
+                    tags=[
+                        "message", "outbound", "conversation", recipient.lower(),
+                        f"recipient:{recipient}",
+                    ],
+                    record_metadata={
+                        "record_kind": "outbound_message",
+                        "recipients": [recipient],
+                        "action_status": "delivered",
+                    },
                 )
             return f"Sent to {recipient}."
         return f"Could not deliver message to {recipient} — no contact record or default channel found."
@@ -2365,4 +2381,3 @@ class ToolExecutor:
             return br.browse_screenshot()
 
         return f"Unknown browser operation: {op}"
-

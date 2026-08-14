@@ -192,6 +192,30 @@ class NonTeachingExamTests(unittest.TestCase):
         self.assertIn("August 14, 2032", annotation)
         self.assertIn("FACTS DESK", annotation)
 
+    def test_renderer_marks_thought_as_non_action_evidence(self):
+        preconscious = Preconscious.__new__(Preconscious)
+        preconscious._unified = object()
+        preconscious._last_surfaced_memory_ids = []
+        preconscious._last_cluster_centroid = None
+        preconscious._is_repetitive = lambda _content: False
+        selection = [{
+            "id": "mem_thought",
+            "content": "I should message Mara.",
+            "record_kind": "thought",
+            "action_status": "unverified",
+            "tier": 0,
+            "lane": "semantic",
+            "position_8d": None,
+            "gravity": 1.0,
+        }]
+
+        annotation, _ = preconscious._render_selection(
+            selection, ["Mara"], budget=1, learn=False,
+        )
+
+        self.assertIn("PRIVATE THOUGHT", annotation)
+        self.assertIn("not proof of external action", annotation)
+
 
 class CodexTransportParsingTests(unittest.TestCase):
     def test_codex_jsonl_parser_extracts_thread_and_message(self):

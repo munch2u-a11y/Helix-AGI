@@ -59,6 +59,10 @@ class MemoryWorkOrder:
     relation_requested: bool
     profile_allowed: bool
     role_constraint: str
+    target_record_kinds: Tuple[str, ...]
+    evidence_scope: str
+    thought_policy: str
+    related_record_kinds: Tuple[str, ...]
 
     def to_dict(self):
         return asdict(self)
@@ -84,6 +88,91 @@ class MemoryIntakeOffice:
         r"mother|father|sister|brother|partner|team|owner|lead|manage|works? with)\b",
         re.IGNORECASE,
     )
+
+    @staticmethod
+    def _record_policy(
+        query: str,
+        *,
+        is_question: bool,
+        requires_exact: bool,
+        subjects: Tuple[str, ...],
+    ) -> Tuple[Tuple[str, ...], str, str, Tuple[str, ...]]:
+        """Route evidence roles without asking a model to classify memory."""
+        lowered = query.lower()
+        cognition = bool(re.search(
+            r"\b(?:what|why|how) (?:was|were|did|do|does) (?:i|you|helix)\b.*"
+            r"\b(?:think|thinking|feel|feeling|decide|decided|consider|intend|"
+            r"intended|plan|planned|want|wanted|reason|because)\b|"
+            r"\bwhy did (?:i|you|helix)\b|\bwhat (?:was|were) (?:i|you) thinking\b",
+            lowered,
+        ))
+        outbound = bool(re.search(
+            r"\b(?:what|when|where|why|how|did) (?:did )?(?:i|you|helix)\b.*"
+            r"\b(?:say|tell|told|message|messaged|send|sent|reply|replied|write|wrote)\b|"
+            r"\b(?:what|which) (?:message|reply|email|note) did (?:i|you|helix)\b",
+            lowered,
+        ))
+        communication_verb = bool(re.search(
+            r"\b(?:say|said|tell|told|message|messaged|send|sent|write|wrote|reply|replied)\b",
+            lowered,
+        ))
+        inbound = bool(subjects and communication_verb and not outbound)
+        tool_report = bool(re.search(
+            r"\b(?:tool|sensor|terminal|command|search|api|camera|diagnostic)\b.*"
+            r"\b(?:report|reported|return|returned|result|output|show|showed|read|failure|failed|error)\b|"
+            r"\b(?:what|which) did (?:the )?(?:tool|sensor|terminal|command|search|api|camera)\b",
+            lowered,
+        ))
+        task_outcome = bool(re.search(
+            r"\b(?:task|job|work)\b.*\b(?:complete|completed|finish|finished|outcome|result|failed)\b",
+            lowered,
+        ))
+
+        if cognition:
+            return (
+                ("thought",),
+                "agent_cognition",
+                "primary",
+                ("inbound_message", "outbound_message", "tool_observation", "task_outcome"),
+            )
+        if outbound:
+            return (
+                ("outbound_message",),
+                "delivered_communication",
+                "exclude",
+                ("inbound_message", "tool_result"),
+            )
+        if inbound:
+            return (
+                ("inbound_message",),
+                "received_communication",
+                "exclude",
+                ("outbound_message",),
+            )
+        if tool_report:
+            return (
+                ("tool_result", "tool_observation"),
+                "tool_report",
+                "exclude",
+                ("task_outcome",),
+            )
+        if task_outcome:
+            return (
+                ("task_outcome", "task_result"),
+                "task_outcome",
+                "exclude",
+                ("tool_result", "tool_observation"),
+            )
+        return (
+            (),
+            (
+                "exact_factual_evidence" if requires_exact
+                else "factual_evidence" if is_question
+                else "recognition"
+            ),
+            "exclude" if is_question else "bounded",
+            (),
+        )
 
     def review(
         self,
@@ -164,6 +253,17 @@ class MemoryIntakeOffice:
             else "subject_facts" if subjects and is_question
             else "unconstrained"
         )
+        (
+            target_record_kinds,
+            evidence_scope,
+            thought_policy,
+            related_record_kinds,
+        ) = self._record_policy(
+            query,
+            is_question=is_question,
+            requires_exact=requires_exact,
+            subjects=subjects,
+        )
         return MemoryWorkOrder(
             raw_message=raw,
             search_query=query,
@@ -179,4 +279,8 @@ class MemoryIntakeOffice:
             relation_requested=relation_requested,
             profile_allowed=profile_allowed,
             role_constraint=role_constraint,
+            target_record_kinds=target_record_kinds,
+            evidence_scope=evidence_scope,
+            thought_policy=thought_policy,
+            related_record_kinds=related_record_kinds,
         )

@@ -48,6 +48,7 @@ import numpy as np
 from memory.mrag.corpus import HelixCorpus, normalize_ref
 from memory.mrag.semantic_lane import SemanticLane, estimate_tokens
 from memory.mrag.vector_store import HelixVectorStore
+from memory.record_envelope import record_kind_from_index_metadata
 from core.context_office import ContextOffice, is_enabled as office_enabled
 from core.memory_intake_office import MemoryIntakeOffice
 
@@ -95,6 +96,9 @@ DEFAULT_MAX_ITEMS = 12
 BUDGET_ITEMS_MULTIPLE = 15.0
 BUDGET_CONTEXT_FRACTION = 0.15
 DEFAULT_CONTEXT_LIMIT = 8192
+TYPED_RESERVE_LIMIT = 3
+EPISODE_COMPLEMENT_LIMIT = 2
+DEFAULT_THOUGHT_LIMIT = 2
 
 
 def is_enabled() -> bool:
@@ -210,6 +214,9 @@ class UnifiedRetrieval:
             item for item in self.lane_a.retrieve(search_query)
             if item["id"] not in exclude
         ]
+        semantic_lane_a = self._route_record_roles(
+            search_query, semantic_lane_a, work_order,
+        )
         office_stats: Dict[str, Any] = {"enabled": False}
         if self.context_office is not None:
             brief = self.context_office.prepare(
@@ -225,10 +232,15 @@ class UnifiedRetrieval:
             office_stats = brief.diagnostics
         else:
             lane_a = semantic_lane_a
+        lane_a = self._apply_record_policy(lane_a, work_order)
         lane_b_ranked = self._prepare_spatial(spatial_candidates or [], exclude)
+        lane_b_ranked = self._apply_record_policy(lane_b_ranked, work_order)
         self.last_lane_a_ids = {item["id"] for item in lane_a}
 
         merged = self._semantic_primary_merge(lane_a, lane_b_ranked, complement_quota)
+        merged.extend(self._episode_additions(
+            merged, work_order, limit=EPISODE_COMPLEMENT_LIMIT,
+        ))
         merged, suppressed_ids = self._suppress_by_provenance(merged)
         merged, duplicate_ids = self._purge_near_duplicates(merged)
 
@@ -277,6 +289,149 @@ class UnifiedRetrieval:
         )
 
         return selected
+
+    # ── Evidence-role routing ───────────────────────────────────────
+
+    def _route_record_roles(
+        self,
+        query: str,
+        semantic_items: List[Dict[str, Any]],
+        work_order,
+    ) -> List[Dict[str, Any]]:
+        """Reserve semantic foreground for the evidence role a query asks for.
+
+        The global mRAG ranking remains intact within each partition.  A
+        filtered search over the same SemanticIndex fills role-specific gaps;
+        this is a typed read view, not a second store or a cross-lane score.
+        """
+        targets = set(getattr(work_order, "target_record_kinds", ()) or ())
+        if not targets:
+            return self._apply_record_policy(semantic_items, work_order)
+
+        typed: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+
+        def admit(item: Optional[Dict[str, Any]], *, similarity: Optional[float] = None):
+            if not item or item.get("id") in seen:
+                return
+            if item.get("record_kind") not in targets:
+                return
+            item["typed_evidence_match"] = True
+            if similarity is not None:
+                item["typed_similarity"] = float(similarity)
+            typed.append(item)
+            seen.add(item["id"])
+
+        for item in semantic_items:
+            admit(item)
+
+        filtered_search = getattr(self.vector_store, "query_top_k_filtered", None)
+        if callable(filtered_search) and len(typed) < TYPED_RESERVE_LIMIT:
+            query_embedding = self.vector_store.embed_text(query)
+            results = filtered_search(
+                query_embedding,
+                k=max(TYPED_RESERVE_LIMIT * 3, TYPED_RESERVE_LIMIT),
+                filter_fn=lambda _item_id, metadata: (
+                    record_kind_from_index_metadata(metadata) in targets
+                ),
+            )
+            minimum = float(getattr(self.lane_a, "min_semantic_similarity", 0.12))
+            query_terms = set(getattr(work_order, "search_terms", ()) or ())
+            for item_id, similarity in results:
+                item = self.corpus.get(item_id)
+                item_terms = set(str(
+                    (item or {}).get("retrieval_text") or (item or {}).get("content", "")
+                ).lower().split())
+                literal = bool(query_terms & item_terms)
+                if float(similarity) < minimum and not literal:
+                    continue
+                admit(item, similarity=similarity)
+                if len(typed) >= TYPED_RESERVE_LIMIT:
+                    break
+
+        remaining = [item for item in semantic_items if item.get("id") not in seen]
+        return self._apply_record_policy(typed + remaining, work_order)
+
+    @staticmethod
+    def _apply_record_policy(
+        items: List[Dict[str, Any]],
+        work_order,
+    ) -> List[Dict[str, Any]]:
+        policy = str(getattr(work_order, "thought_policy", "bounded") or "bounded")
+        targets = set(getattr(work_order, "target_record_kinds", ()) or ())
+        result: List[Dict[str, Any]] = []
+        thought_count = 0
+        for item in items:
+            kind = item.get("record_kind")
+            if kind != "thought":
+                result.append(item)
+                continue
+            if "thought" in targets or policy == "primary":
+                result.append(item)
+                continue
+            if policy == "exclude":
+                continue
+            if thought_count < DEFAULT_THOUGHT_LIMIT:
+                result.append(item)
+                thought_count += 1
+        return result
+
+    def _episode_additions(
+        self,
+        selected: List[Dict[str, Any]],
+        work_order,
+        *,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        """Append exact causal/turn neighbors around the best typed anchor."""
+        related_kinds = set(
+            getattr(work_order, "related_record_kinds", ()) or ()
+        )
+        if not related_kinds or limit <= 0:
+            return []
+        targets = set(getattr(work_order, "target_record_kinds", ()) or ())
+        anchors = [
+            item for item in selected
+            if item.get("record_kind") in targets
+        ][:1]
+        if not anchors:
+            return []
+
+        anchor = anchors[0]
+        anchor_id = anchor.get("id")
+        anchor_pulse = anchor.get("pulse_id")
+        direct_ids = set(anchor.get("caused_by") or [])
+        candidates: List[Tuple[int, float, str, Dict[str, Any]]] = []
+        selected_ids = {item.get("id") for item in selected}
+        for item in self.corpus.all_items():
+            item_id = item.get("id")
+            if not item_id or item_id in selected_ids:
+                continue
+            if item.get("record_kind") not in related_kinds:
+                continue
+            reverse_causes = set(item.get("caused_by") or [])
+            directly_linked = item_id in direct_ids or anchor_id in reverse_causes
+            same_pulse = bool(
+                anchor_pulse not in (None, 0, "0")
+                and item.get("pulse_id") == anchor_pulse
+            )
+            if not directly_linked and not same_pulse:
+                continue
+            candidates.append((
+                0 if directly_linked else 1,
+                -float(item.get("relevance", 0.0)),
+                str(item_id),
+                item,
+            ))
+        additions: List[Dict[str, Any]] = []
+        for _link_rank, _negative_relevance, _item_id, item in sorted(candidates):
+            item["lane"] = "episode"
+            item["episode_anchor"] = anchor_id
+            item["rrf_score"] = 0.0
+            additions.append(item)
+            if len(additions) >= limit:
+                break
+        return additions
 
     def associative_additions(
         self,
@@ -706,8 +861,13 @@ class UnifiedRetrieval:
         if not candidates:
             return []
 
-        complement = [c for c in candidates if c.get("lane") == "spatial"]
-        candidates = [c for c in candidates if c.get("lane") != "spatial"]
+        complement = (
+            [c for c in candidates if c.get("lane") == "episode"]
+            + [c for c in candidates if c.get("lane") == "spatial"]
+        )
+        candidates = [
+            c for c in candidates if c.get("lane") not in {"episode", "spatial"}
+        ]
         if not candidates:
             # Nothing semantic to anchor on; the complement becomes the result.
             candidates, complement = complement, []
@@ -783,9 +943,9 @@ class UnifiedRetrieval:
             selected_ids.add(item["id"])
             tokens += item_tokens
 
-        # Phase 4 — append the spatial complement on top. These slots are
-        # extra by construction, so they are bounded by their own quota rather
-        # than by max_items or the semantic token budget.
+        # Phase 4 — append exact episode neighbors, then the spatial
+        # complement. These slots are extra by construction and each source is
+        # independently bounded before reaching this method.
         for item in complement:
             if item["id"] in selected_ids:
                 continue

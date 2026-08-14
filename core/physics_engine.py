@@ -29,6 +29,7 @@ from core.cognitive_space import CognitiveSpace, CognitiveProjection, PROJECTION
 from core.spatial_mind import SpatialMind
 from memory.semantic_encoder import SemanticEncoder
 from memory.semantic_index import SemanticIndex
+from memory.record_envelope import envelope_from_metadata
 
 logger = logging.getLogger("helix.core.physics_engine")
 
@@ -538,6 +539,7 @@ class PhysicsEngine:
         semantic_embedding: np.ndarray = None,
         register_spatial: bool = True,
         register_semantic: bool = True,
+        semantic_text: Optional[str] = None,
     ) -> np.ndarray:
         """Register a point in the independent spatial and semantic stores.
 
@@ -562,7 +564,11 @@ class PhysicsEngine:
                 logger.warning(f"Unknown point_type '{point_type}' for {point_id}")
 
         if register_semantic:
-            semantic_text = spatial_kwargs.get("content") or semantic_metadata.get("content", "")
+            semantic_text = (
+                semantic_text
+                or spatial_kwargs.get("content")
+                or semantic_metadata.get("content", "")
+            )
             self._upsert_semantic_point(
                 point_id,
                 semantic_text,
@@ -717,6 +723,8 @@ class PhysicsEngine:
         tags: Optional[List[str]] = None,
         belief_ids: Optional[List[str]] = None,
         register_semantic: bool = True,
+        retrieval_text: str = "",
+        record_envelope: Optional[Dict[str, Any]] = None,
     ) -> tuple[str, list[float], list[float]]:
         """Upsert a journal memory entry into the live manifold and semantic index."""
         lag = lagrangian_snapshot or {}
@@ -726,6 +734,16 @@ class PhysicsEngine:
             if embedding_384d is not None
             else self.embed_text(content)
         )
+        envelope = dict(record_envelope or {})
+        semantic_record_metadata = {
+            key: envelope.get(key)
+            for key in (
+                "record_schema_version", "record_kind", "direction", "visibility",
+                "actor", "recipients", "epistemic_role", "evidence_scopes",
+                "action_status", "tool_name", "caused_by",
+            )
+            if envelope.get(key) not in (None, "", [])
+        }
         position = self._register_point(
             point_id=point_id,
             emb=emb,
@@ -747,6 +765,7 @@ class PhysicsEngine:
                     "created_at": created_at,
                     "tags": tags or [],
                     "belief_ids": belief_ids or [],
+                    **semantic_record_metadata,
                 },
             },
             semantic_metadata={
@@ -762,6 +781,8 @@ class PhysicsEngine:
                 "position_8d": position_8d or [],
                 "tags": tags or [],
                 "belief_ids": belief_ids or [],
+                "retrieval_text": retrieval_text or content,
+                **semantic_record_metadata,
             },
             semantic_embedding=(
                 np.asarray(semantic_embedding_1024d, dtype=np.float32)
@@ -769,6 +790,7 @@ class PhysicsEngine:
                 else None
             ),
             register_semantic=register_semantic,
+            semantic_text=retrieval_text or content,
         )
         return point_id, position.tolist() if position is not None else [], emb.tolist()
 
@@ -839,7 +861,8 @@ class PhysicsEngine:
             point_id = str(metadata.get("point_id") or self.memory_point_id(journal_id))
             if not journal_id or len(content) < 5:
                 continue
-            records.append((point_id, content, {
+            envelope = envelope_from_metadata(content, metadata)
+            semantic_metadata = {
                 "content": content[:500],
                 "type": "memory",
                 "importance": metadata.get("importance", 0.5),
@@ -851,7 +874,18 @@ class PhysicsEngine:
                 "position_8d": memory.get("position_8d") or [],
                 "tags": metadata.get("tags", []) or [],
                 "belief_ids": metadata.get("belief_ids", []) or [],
-            }))
+                "retrieval_text": envelope["retrieval_text"],
+                **{
+                    key: envelope.get(key)
+                    for key in (
+                        "record_schema_version", "record_kind", "direction", "visibility",
+                        "actor", "recipients", "epistemic_role", "evidence_scopes",
+                        "action_status", "tool_name", "caused_by",
+                    )
+                    if envelope.get(key) not in (None, "", [])
+                },
+            }
+            records.append((point_id, envelope["retrieval_text"], semantic_metadata))
 
         added = 0
         migration_batch = max(16, self.semantic_encoder.batch_size * 4)
@@ -976,6 +1010,8 @@ class PhysicsEngine:
                         position_8d=m.get("position_8d"),
                         access_count=m.get("access_count", 0),
                         tags=m.get("tags", []),
+                        retrieval_text=m.get("retrieval_text", ""),
+                        record_envelope=m.get("record_envelope"),
                         register_semantic=semantic_loaded,
                     )
                     memories_added += 1

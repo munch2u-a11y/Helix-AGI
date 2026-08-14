@@ -2311,14 +2311,42 @@ class Preconscious:
                 if subject and office_role in {"belief_source", "supporting_belief"}:
                     label += f'; answer-bearing relation for "{subject}"'
                 belief_texts.append(f"[{label}] {content}")
-            elif b.get("association_linked") or b.get("lane") == "associative":
-                belief_texts.append(f"[learned follow-on association] {content}")
-            elif b.get("lane") == "spatial":
-                belief_texts.append(
-                    f"[LATERAL DESK — spatial association, not verified evidence] {content}"
-                )
             else:
-                belief_texts.append(content)
+                labels = []
+                if b.get("association_linked") or b.get("lane") == "associative":
+                    labels.append("learned follow-on association")
+                elif b.get("lane") == "spatial":
+                    labels.append("LATERAL DESK — spatial association, not verified evidence")
+                elif b.get("lane") == "episode":
+                    labels.append("EPISODE LINK — same-pulse or explicit causal context")
+
+                kind = b.get("record_kind")
+                status = str(b.get("action_status") or "recorded")
+                recipients = ", ".join(str(value) for value in (b.get("recipients") or []))
+                record_labels = {
+                    "thought": (
+                        "PRIVATE THOUGHT — evidence of consideration, not proof of external action"
+                    ),
+                    "inbound_message": "RECEIVED MESSAGE — exact inbound communication",
+                    "outbound_message": (
+                        "DELIVERED OUTBOUND MESSAGE — exact communication record"
+                        if status == "delivered"
+                        else "OUTBOUND RESPONSE — delivery not confirmed"
+                    ),
+                    "tool_result": "TOOL RESULT — tool-reported observation",
+                    "tool_call": "TOOL CALL — attempted action, completion not established",
+                    "tool_observation": "TOOL EXECUTION RECORD",
+                    "task_result": "FOCUSED TASK RESULT — returned outcome report",
+                    "task_outcome": "ACCEPTED TASK OUTCOME",
+                    "belief": "DERIVED BELIEF — consult cited source memories",
+                }
+                if kind in record_labels:
+                    label = record_labels[kind]
+                    if kind == "outbound_message" and recipients:
+                        label += f"; recipient: {recipients}"
+                    labels.append(label)
+                prefix = " ".join(f"[{label}]" for label in labels)
+                belief_texts.append(f"{prefix} {content}".strip())
             rendered_selection.append(b)
             token_count += est_tokens
             this_pulse_beliefs.add(content)

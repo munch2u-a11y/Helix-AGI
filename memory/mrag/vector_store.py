@@ -12,7 +12,7 @@ indexes in sync for no retrieval benefit.
 """
 
 import logging
-from typing import List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -127,6 +127,30 @@ class HelixVectorStore:
             logger.warning("SemanticIndex search failed: %s", e)
             return []
         return [(r["id"], r["similarity"]) for r in results]
+
+    def query_top_k_filtered(
+        self,
+        query_embedding: np.ndarray,
+        *,
+        k: int = 20,
+        filter_fn: Optional[Callable[[str, Dict], bool]] = None,
+    ) -> List[Tuple[str, float]]:
+        """Exact semantic search over a typed metadata view.
+
+        ``SemanticIndex`` applies the predicate before ranking, so a rare
+        outbound message or tool result cannot disappear merely because the
+        untyped global top-k was crowded with thoughts.  This remains one
+        canonical vector index; the predicate is only a disposable read view.
+        """
+        index = self._index
+        if index is None or index.count == 0:
+            return []
+        try:
+            results = index.search(query_embedding, k=k, filter_fn=filter_fn)
+        except Exception as exc:
+            logger.warning("Filtered semantic search failed: %s", exc)
+            return []
+        return [(record["id"], record["similarity"]) for record in results]
 
     def query_top_k_batch(
         self,

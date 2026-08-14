@@ -37,6 +37,22 @@ def _record(item_id, session_id, content):
 
 
 class CaseMemoryOfficeTests(unittest.TestCase):
+    def test_outbound_record_links_helix_to_recipient(self):
+        record = _record("sent_1", "s1", "I replied to Mara: Done.")
+        record.update(
+            source="helix_outbound",
+            tags=["outbound", "recipient:Mara"],
+        )
+        subjects = {}
+        relations = {}
+
+        SessionMemoryMaintenance._add_output_links(
+            [record], subjects, relations,
+        )
+
+        self.assertEqual(subjects["sent_1"], ["Helix"])
+        self.assertEqual(relations["sent_1"], [["Helix", "Mara"]])
+
     def test_person_question_routes_to_small_exact_case(self):
         records = [
             _record("mem_1", "s1", "[event] Bob: Pistachio is my favorite ice cream flavor."),

@@ -207,6 +207,7 @@ class Curator:
         for item in self.case_office.corpus.all_items():
             if item.get("tier") != 0 or item.get("source") not in {
                 "pulse_input", "pulse_output", "office_speaker", "focus_worker",
+                "helix_outbound", "tool_use", "task_cognition",
             }:
                 continue
             created = str(item.get("created_at") or "")

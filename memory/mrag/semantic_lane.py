@@ -448,7 +448,12 @@ class SemanticLane:
         characters produces the same boundaries `\\b` does.
         """
         self._content_index = [
-            (item["id"], strip_timestamp_prefix(item.get("content", "")).lower())
+            (
+                item["id"],
+                strip_timestamp_prefix(
+                    item.get("retrieval_text") or item.get("content", "")
+                ).lower(),
+            )
             for item in self._corpus.all_items()
         ]
         token_index: Dict[str, set] = {}

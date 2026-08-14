@@ -509,7 +509,15 @@ class DualPulseLoop:
                             memory_type="conversation",
                             source="helix_outbound",
                             importance=0.6,
-                            tags=["reply", "outbound", recipient.lower()],
+                            tags=[
+                                "reply", "outbound", "conversation", recipient.lower(),
+                                f"recipient:{recipient}",
+                            ],
+                            record_metadata={
+                                "record_kind": "outbound_message",
+                                "recipients": [recipient],
+                                "action_status": "delivered",
+                            },
                         )
                     self._inject_event(f"[System] Verbatim reply sent to {recipient}: \"{response_text[:100]}...\"")
                 else:

@@ -356,7 +356,9 @@ class SessionMemoryMaintenance:
         relations: Dict[str, List[List[str]]],
     ) -> None:
         for record in records:
-            if record.get("source") not in {"office_speaker", "pulse_output"}:
+            if record.get("source") not in {
+                "office_speaker", "pulse_output", "helix_outbound",
+            }:
                 continue
             item_id = str(record.get("id") or "")
             if not item_id:

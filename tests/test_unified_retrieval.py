@@ -22,6 +22,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -124,6 +125,94 @@ class TestSemanticPrimaryMerge(unittest.TestCase):
 
         merged = u._semantic_primary_merge(semantic, spatial, complement_quota=2)
         self.assertEqual([item["id"] for item in merged], ["a", "s0", "s1"])
+
+
+class TestEvidenceRoleRouting(unittest.TestCase):
+    def test_filtered_semantic_view_fills_missing_outbound_role(self):
+        thought = _item("thought", "I should answer Mara", tier=0)
+        thought["record_kind"] = "thought"
+        sent = _item("sent", "I replied to Mara: Done", tier=0)
+        sent.update(
+            record_kind="outbound_message",
+            retrieval_text="Delivered outbound message to Mara: Done",
+        )
+        u = _build([thought, sent])
+
+        class _VectorStore:
+            @staticmethod
+            def embed_text(_query):
+                return np.ones(2)
+
+            @staticmethod
+            def query_top_k_filtered(_embedding, *, k, filter_fn):
+                metadata = {
+                    "type": "memory",
+                    "content": sent["content"],
+                    "memory_type": "conversation",
+                    "source": "helix_outbound",
+                    "tags": ["outbound", "recipient:Mara"],
+                }
+                return [("sent", 0.81)] if filter_fn("sent", metadata) else []
+
+        u.vector_store = _VectorStore()
+        u.lane_a = SimpleNamespace(min_semantic_similarity=0.12)
+        work_order = SimpleNamespace(
+            target_record_kinds=("outbound_message",),
+            thought_policy="exclude",
+            search_terms=("mara", "done"),
+        )
+
+        routed = u._route_record_roles(
+            "What did you tell Mara?", [thought], work_order,
+        )
+
+        self.assertEqual([item["id"] for item in routed], ["sent"])
+        self.assertTrue(routed[0]["typed_evidence_match"])
+
+    def test_factual_policy_excludes_thought_without_excluding_delivery(self):
+        thought = _item("thought", "I should message Mara", tier=0)
+        thought["record_kind"] = "thought"
+        sent = _item("sent", "I replied to Mara: Done", tier=0)
+        sent["record_kind"] = "outbound_message"
+        work_order = SimpleNamespace(
+            thought_policy="exclude", target_record_kinds=("outbound_message",),
+        )
+
+        selected = UnifiedRetrieval._apply_record_policy(
+            [thought, sent], work_order,
+        )
+
+        self.assertEqual([item["id"] for item in selected], ["sent"])
+
+    def test_cognition_policy_keeps_thought_primary(self):
+        thought = _item("thought", "I was weighing the risk", tier=0)
+        thought["record_kind"] = "thought"
+        work_order = SimpleNamespace(
+            thought_policy="primary", target_record_kinds=("thought",),
+        )
+
+        selected = UnifiedRetrieval._apply_record_policy([thought], work_order)
+
+        self.assertEqual([item["id"] for item in selected], ["thought"])
+
+    def test_episode_neighbor_uses_same_pulse_and_requested_role(self):
+        thought = _item("thought", "I should answer Mara", tier=0)
+        thought.update(record_kind="thought", pulse_id=17, caused_by=[])
+        sent = _item("sent", "I replied to Mara: Done", tier=0)
+        sent.update(record_kind="outbound_message", pulse_id=17, caused_by=[])
+        unrelated = _item("other", "A different event", tier=0)
+        unrelated.update(record_kind="event", pulse_id=17, caused_by=[])
+        u = _build([thought, sent, unrelated])
+        work_order = SimpleNamespace(
+            target_record_kinds=("thought",),
+            related_record_kinds=("outbound_message",),
+        )
+
+        additions = u._episode_additions([thought], work_order, limit=2)
+
+        self.assertEqual([item["id"] for item in additions], ["sent"])
+        self.assertEqual(additions[0]["lane"], "episode")
+        self.assertEqual(additions[0]["episode_anchor"], "thought")
 
 
 class TestAssociativeComplement(unittest.TestCase):

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from memory.cognitive_journal import CognitiveJournal
+from memory.record_envelope import build_record_envelope, envelope_from_metadata
 
 logger = logging.getLogger("helix.memory.manager")
 
@@ -188,7 +189,8 @@ class MemoryManager:
         meta = entry.get("metadata", {})
         memory_id = str(entry.get("id", ""))
         created_at = meta.get("created_at") or entry.get("timestamp")
-        return {
+        envelope = envelope_from_metadata(entry.get("content", ""), meta)
+        formatted = {
             "id": memory_id,
             "point_id": meta.get("point_id", self.point_id(memory_id)),
             "content": entry.get("content", ""),
@@ -206,6 +208,9 @@ class MemoryManager:
             "embedding_384d": entry.get("embedding_384d"),
             "lagrangian_snapshot": entry.get("lagrangian", {}),
         }
+        formatted.update(envelope)
+        formatted["record_envelope"] = envelope
+        return formatted
 
     # ── Primary Write ────────────────────────────────────────────────
     @_serialized_store
@@ -222,6 +227,7 @@ class MemoryManager:
         embedding_384d: Optional[List[float]] = None,
         semantic_embedding_1024d: Optional[List[float]] = None,
         pulse_id: Optional[int] = None,
+        record_metadata: Optional[Dict[str, Any]] = None,
     ) -> int:
         """Append a memory entry to the journal.
 
@@ -244,6 +250,14 @@ class MemoryManager:
             actual_pulse_id = getattr(self._physics, "_pulse_count", 0)
         if actual_pulse_id is None:
             actual_pulse_id = 0
+
+        record_envelope = build_record_envelope(
+            content=content,
+            memory_type=memory_type,
+            source=source,
+            tags=tags,
+            overrides=record_metadata,
+        )
 
         reinforcement_target = self._find_reinforcement_target(
             content=content,
@@ -281,6 +295,8 @@ class MemoryManager:
                 position_8d=canonical_position,
                 tags=tags,
                 belief_ids=belief_ids,
+                retrieval_text=record_envelope["retrieval_text"],
+                record_envelope=record_envelope,
             )
 
         self.journal.append_memory(
@@ -299,6 +315,14 @@ class MemoryManager:
                 "created_at": now,
                 "attention_position_8d": position_8d or [],
                 "point_id": self.point_id(st_id),
+                "record_envelope": record_envelope,
+                "record_schema_version": record_envelope["record_schema_version"],
+                "record_kind": record_envelope["record_kind"],
+                "direction": record_envelope["direction"],
+                "epistemic_role": record_envelope["epistemic_role"],
+                "evidence_scopes": record_envelope["evidence_scopes"],
+                "action_status": record_envelope["action_status"],
+                "retrieval_text": record_envelope["retrieval_text"],
             },
             embedding_384d=canonical_embedding,
         )
@@ -480,6 +504,12 @@ class MemoryManager:
                     "similarity": r.get("similarity", 0.0),
                     "encoding_omega": meta.get("encoding_omega", 0.5),
                 })
+                if "record_kind" not in formatted:
+                    envelope = envelope_from_metadata(
+                        formatted.get("content", ""), meta,
+                    )
+                    formatted.update(envelope)
+                    formatted["record_envelope"] = envelope
                 if "embedding" in r:
                     formatted["embedding"] = r["embedding"]
                 normalized.append(formatted)

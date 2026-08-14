@@ -33,6 +33,8 @@ from typing import Any, Dict, List, Optional, Set
 
 import numpy as np
 
+from memory.record_envelope import envelope_from_metadata
+
 logger = logging.getLogger("helix.memory.mrag.corpus")
 
 # Belief categories that carry a `term` and are precipitated nightly. Presence
@@ -231,6 +233,14 @@ class HelixCorpus:
                 "position_8d": b.get("position_8d") or [],
                 "created_at": b.get("created_at", ""),
                 "source": b.get("source", ""),
+                "record_kind": "belief",
+                "direction": "internal",
+                "visibility": "private",
+                "epistemic_role": "derived_belief",
+                "evidence_scopes": ["derived_belief"],
+                "action_status": "derived",
+                "retrieval_text": content,
+                "caused_by": list(b.get("memory_refs", []) or []),
                 # These fields must survive the mRAG adapter.  The semantic
                 # lane primarily ranks for factual accuracy, while the
                 # associative complement uses the original affect/stability
@@ -303,7 +313,8 @@ class HelixCorpus:
             scope_id, turn_id, event_id, chunk_index = _structured_position(
                 content, tags, created_at, pulse_id,
             )
-            self._memory_items.append({
+            envelope = envelope_from_metadata(content, meta)
+            item = {
                 "id": point_id,
                 "content": content,
                 "tier": 0,
@@ -332,7 +343,11 @@ class HelixCorpus:
                 "turn_id": turn_id,
                 "event_id": event_id,
                 "chunk_index": chunk_index,
-            })
+                "pulse_id": pulse_id,
+                "record_envelope": envelope,
+            }
+            item.update(envelope)
+            self._memory_items.append(item)
 
         # The journal appends a new line per update rather than mutating, so
         # the same id can appear more than once; keep the newest.
@@ -416,7 +431,9 @@ class HelixCorpus:
             try:
                 from memory.mrag.semantic_lane import strip_timestamp_prefix
                 emb = self._physics.embed_semantic_text(
-                    strip_timestamp_prefix(item.get("content", "")),
+                    strip_timestamp_prefix(
+                        item.get("retrieval_text") or item.get("content", "")
+                    ),
                     is_query=False,
                 )
             except Exception as e:
@@ -448,7 +465,9 @@ class HelixCorpus:
         try:
             from memory.mrag.tagger import extract_tags
             from memory.mrag.semantic_lane import strip_timestamp_prefix
-            tags = extract_tags(strip_timestamp_prefix(item.get("content", ""))[:1000])
+            tags = extract_tags(strip_timestamp_prefix(
+                item.get("retrieval_text") or item.get("content", "")
+            )[:1000])
         except Exception as e:
             logger.debug("Tagging failed for %s: %s", item_id, e)
             tags = []

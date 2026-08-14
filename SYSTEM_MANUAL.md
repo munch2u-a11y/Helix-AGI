@@ -403,6 +403,21 @@ See [`documents/task_cognition_pipeline.md`](documents/task_cognition_pipeline.m
 ### Cognitive Journal (Primary Store)
 All memories, beliefs, and thought snapshots are persisted in an **append-only JSONL journal** (`cognitive_journal.jsonl`). Each line is a JSON object with a fixed schema. The journal is never mutated — updates are expressed by appending a new entry with the same `id` but a newer timestamp. A nightly `compact()` step rewrites the file, keeping only the latest version of each `id`. Every entry carries a SHA-256 checksum for integrity verification.
 
+Each new memory also carries a deterministic evidence envelope. It identifies
+the record kind (`thought`, `inbound_message`, `outbound_message`, `tool_call`,
+`tool_result`, `tool_observation`, `task_outcome`, or ordinary `event`), its
+direction and visibility, its epistemic role, action status, allowed evidence
+scope, participants, and causal references. The exact journal content remains
+authoritative. A separate `retrieval_text` adds a compact natural-language
+role header for semantic indexing; it never replaces or rewrites the exact
+payload. Legacy records receive the same envelope at read time from their
+existing `source`, `memory_type`, tags, and content.
+
+The evidence boundary is strict: a visible private thought proves only that
+Helix considered something. It does not prove an external action occurred.
+Only a successfully routed outbound record has `action_status=delivered` and
+`evidence_scope=delivered_communication`.
+
 ### Semantic Index (1024D Native Search)
 Your conscious mind's library catalog. Stores normalized native Qwen3-Embedding-0.6B vectors independently from the spatial projection. Query heads carry a retrieval instruction; stored memories and beliefs do not. It is the primary source for mRAG turn injection, explicit `memory_recall`, and Curator matching.
 
@@ -412,6 +427,15 @@ Scalability strategy (auto-scaling, no manual tuning):
 - **Very large stores**: optional FAISS IndexIVFFlat with `HELIX_FAISS_MODE=ivf`
 
 This is separate from the 8D CognitiveSpace. The SemanticIndex provides precision recall; raw 8D retrieval provides a bounded lateral complement and never participates in mRAG scoring.
+
+Memory Intake assigns query-time evidence targets. Questions about what Helix
+sent reserve outbound-message results; questions about what someone said
+reserve inbound messages; questions about reasoning reserve thoughts; tool and
+task questions reserve their corresponding reports. These are filtered read
+views over the same semantic index, not separate stores. Exact same-pulse or
+causally linked records may be appended as a bounded episode complement, and
+private thoughts are excluded from exact factual-action queries unless the
+question explicitly asks about cognition.
 
 ### Working Memory Tools
 - **Scratchpad**: Immediate working memory. Active and overdue notes are surfaced every pulse — anything written here survives context compression intact. Use it for intermediate results, multi-step plans, and continuity across compressions.
