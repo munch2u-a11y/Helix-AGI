@@ -2,9 +2,9 @@
 
 **Documentation Status:** Current Runtime Reference · **Last Verified Against Source:** 2026-08-14
 
-This is the canonical system manual for developers, operators, and AI pairing sessions. It specifies the live architecture contracts implemented across [`core/`](file:///home/nemo/_mrag_composite_test/core), [`llm/`](file:///home/nemo/_mrag_composite_test/llm), [`tools/`](file:///home/nemo/_mrag_composite_test/tools), [`memory/`](file:///home/nemo/_mrag_composite_test/memory), [`dashboard/`](file:///home/nemo/_mrag_composite_test/dashboard), and [`tests/`](file:///home/nemo/_mrag_composite_test/tests).
+This is the canonical system manual for developers, operators, and AI pairing sessions. It specifies the live architecture contracts implemented across [`core/`](core/), [`llm/`](llm/), [`tools/`](tools/), [`memory/`](memory/), [`dashboard/`](dashboard/), and [`tests/`](tests/).
 
-For architecture summaries and file link maps, see [`documents/architecture_current.md`](file:///home/nemo/_mrag_composite_test/documents/architecture_current.md) and [`documents/README.md`](file:///home/nemo/_mrag_composite_test/documents/README.md).
+For architecture summaries and file link maps, see [`documents/architecture_current.md`](documents/architecture_current.md) and [`documents/README.md`](documents/README.md).
 
 ---
 
@@ -13,7 +13,7 @@ For architecture summaries and file link maps, see [`documents/architecture_curr
 Helix's identity is dynamically constructed from its own belief graph rather than a static prompt file.
 
 ### Dynamic Preamble & Boot Sequence
-Your system prompt opens with your **heaviest `premises` belief** — queried live from the belief store at boot ([`memory/belief_store.py`](file:///home/nemo/_mrag_composite_test/memory/belief_store.py#L40-L100)). If a new core premise overtakes it in cognitive mass during consolidation, subsequent sessions use that updated belief as the identity preamble.
+Your system prompt opens with your **heaviest `premises` belief** — queried live from the belief store at boot ([`memory/belief_store.py`](memory/belief_store.py#L40-L100)). If a new core premise overtakes it in cognitive mass during consolidation, subsequent sessions use that updated belief as the identity preamble.
 
 ### The 7 Belief Categories
 Beliefs are organized across two epistemic tiers and stored as JSON files in `data/beliefs/`:
@@ -48,7 +48,7 @@ Verifications decay by $0.05/\text{night}$. Beliefs with confidence $C < 0.20$ a
 
 ## 2. The Pulse Loop & Context Office Architecture
 
-Helix operates as an event-driven cognitive pulse loop ([`core/pulse_loop.py`](file:///home/nemo/_mrag_composite_test/core/pulse_loop.py#L120-L280)).
+Helix operates as an event-driven cognitive pulse loop ([`core/pulse_loop.py`](core/pulse_loop.py#L120-L280)).
 
 ### Runtime States
 | State | Cadence | Trigger Condition | Primary Purpose |
@@ -59,14 +59,14 @@ Helix operates as an event-driven cognitive pulse loop ([`core/pulse_loop.py`](f
 | **RESTING** | 15m default | 10 minutes in REGULAR without activity | Low-power autonomous reflection |
 
 ### Context Office & Unified Retrieval Pipeline
-Every awake pulse executes context assembly through `ContextOffice` ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L1880-L1950) & [`core/unified_retrieval.py`](file:///home/nemo/_mrag_composite_test/core/unified_retrieval.py#L200-L380)):
+Every awake pulse executes context assembly through `ContextOffice` ([`core/preconscious.py`](core/preconscious.py#L1880-L1950) & [`core/unified_retrieval.py`](core/unified_retrieval.py#L200-L380)):
 
 1. **Front Desk Categorization**: Incoming events (direct messages, emails, tool returns, sensory readings) are parsed into typed front desks.
 2. **Parallel Retrieval Lanes**:
    - **1024D Semantic mRAG (Qwen3-Embedding-0.6B)**: Multi-head foreground vector recall over past sessions, beliefs, and documents.
    - **Bounded 8D Spatial Complements**: Lateral gravity-ranked complements (max 1–2 items) that add non-displacing associative context.
    - **Gravity-Guided Multi-Hop Traversal (`retrieve_multihop`)**: Automatically traverses 8D gravity basins around Hop 1 evidence to resolve multi-step queries.
-   - **Organic Tone Induction (`Personal Opinions:`)**: Formats affectively salient memories into a 1st-person subjective block via `format_personal_opinions()`.
+   - **Organic Tone Induction (`Personal Opinions:`)**: Converts affectively salient memories into a 1st-person subjective block via `format_personal_opinions()`.
 3. **Shared Bid Arbitration**: Specialist desks (Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, Identity) bid for context allocation based on utility, confidence, and token budget.
 4. **Conscious Execution**: The compiled capsule is injected into the conscious LLM prompt (Codex CLI, Gemini, Anthropic, Ollama), driving function calls or direct responses.
 
@@ -74,7 +74,7 @@ Every awake pulse executes context assembly through `ContextOffice` ([`core/prec
 
 ## 3. The 8D Cognitive Manifold & Entropic Gravity
 
-Spatial continuity uses 384D embeddings projected to an 8D continuous space via a fixed Johnson-Lindenstrauss matrix ([`core/cognitive_space.py`](file:///home/nemo/_mrag_composite_test/core/cognitive_space.py#L30-L120) & [`core/spatial_mind.py`](file:///home/nemo/_mrag_composite_test/core/spatial_mind.py#L50-L140)).
+Spatial continuity uses 384D embeddings projected to an 8D continuous space via a fixed Johnson-Lindenstrauss matrix ([`core/cognitive_space.py`](core/cognitive_space.py#L30-L120) & [`core/spatial_mind.py`](core/spatial_mind.py#L50-L140)).
 
 ### Verlinde Entropic Gravity
 Gravitational potential $F_g$ exerted on attention:
@@ -82,13 +82,13 @@ Gravitational potential $F_g$ exerted on attention:
 Where $T$ is spatial temperature, $m$ is cognitive mass, $d$ is 8D Euclidean distance, and $\epsilon = 10^{-4}$.
 
 ### Multi-Hop Traversal (`retrieve_multihop`)
-For complex multi-step queries, `retrieve_multihop()` identifies Hop 1 evidence, extracts 8D gravity-basin keywords (`SpatialMind.get_gravity_basin_keywords()`), and executes directed Hop 2 queries to pull required procedural context before execution ([`core/unified_retrieval.py`](file:///home/nemo/_mrag_composite_test/core/unified_retrieval.py#L300-L365)).
+For complex multi-step queries, `retrieve_multihop()` identifies Hop 1 evidence, extracts 8D gravity-basin keywords (`SpatialMind.get_gravity_basin_keywords()`), and executes directed Hop 2 queries to pull required procedural context before execution ([`core/unified_retrieval.py`](core/unified_retrieval.py#L300-L365)).
 
 ---
 
 ## 4. Stability Sentinel & Somatic State
 
-The `StabilitySentinel` background thread ([`core/somatic_sentinel.py`](file:///home/nemo/_mrag_composite_test/core/somatic_sentinel.py#L40-L150)) monitors cognitive and physical health:
+The `StabilitySentinel` background thread ([`core/somatic_sentinel.py`](core/somatic_sentinel.py#L40-L150)) monitors cognitive and physical health:
 
 ### Helical Lagrangian & Hedonic Omega ($\Omega$)
 \[S_{\text{total}} = H + \Omega \cdot D_{\text{KL}}\]
@@ -100,7 +100,7 @@ The `StabilitySentinel` background thread ([`core/somatic_sentinel.py`](file:///
 
 ## 5. Affect Field (Plutchik 8D Emotional Space)
 
-An 8D emotional state tracker overlaid on the manifold ([`core/affect_field.py`](file:///home/nemo/_mrag_composite_test/core/affect_field.py#L30-L120)):
+An 8D emotional state tracker overlaid on the manifold ([`core/affect_field.py`](core/affect_field.py#L30-L120)):
 `joy · trust · fear · surprise · sadness · disgust · anger · anticipation`
 
 Emotional wave packets diffuse, decay, and interfere constructively/destructively to modulate spatial attention forces and surface resonant memories.
@@ -109,28 +109,28 @@ Emotional wave packets diffuse, decay, and interfere constructively/destructivel
 
 ## 6. Dynamic Hermes Tool Registry & Dynamic UI Canvas
 
-Tool execution is governed by the central dynamic Hermes registry ([`tools/tool_registry.py`](file:///home/nemo/_mrag_composite_test/tools/tool_registry.py#L30-L110)).
+Tool execution is governed by the central dynamic Hermes registry ([`tools/tool_registry.py`](tools/tool_registry.py#L30-L110)).
 
 ### Hermes Dynamic Tool Gating
 - Tools are registered with runtime availability checks (`check_fn`) and TTL caching (30s).
 - Unloaded or unauthorized tools are hidden from the model's context window.
 
 ### Dynamic Agent-Controlled UI Canvas (`render_ui_canvas`)
-Helix can dynamically control and update the user's active Web Dashboard view using `render_ui_canvas` ([`tools/ui_canvas_tool.py`](file:///home/nemo/_mrag_composite_test/tools/ui_canvas_tool.py#L25-L95)):
-- **Markdown / Text**: Render formatted docs, summaries, or reports (`view_type='markdown'`).
-- **Image / Media**: Render generated diagrams, charts, or images (`view_type='image'`).
-- **Browser Embed**: Render external web pages or live URLs (`view_type='browser'`).
-- **Terminal / Sandbox**: Render program execution output logs (`view_type='terminal'`).
-- **Status Cards**: Display big hero emphasis cards (`view_type='card'`).
+Helix can dynamically control and update the user's active Web Dashboard view using `render_ui_canvas` ([`tools/ui_canvas_tool.py`](tools/ui_canvas_tool.py#L25-L95)):
+- `markdown`: Rich formatted reports and documents.
+- `image`: Generated diagrams, charts, and media assets.
+- `browser`: Embedded external web pages and live URLs.
+- `terminal`: Execution logs and sandbox terminal streams.
+- `card`: Display big hero emphasis cards.
 
 ### Tool Lesson Tracker & Procedural Learning
-Every tool failure is captured by `ToolLessonTracker` ([`core/tool_lesson_tracker.py`](file:///home/nemo/_mrag_composite_test/core/tool_lesson_tracker.py#L20-L90)). Lessons are deduplicated and queued for nightly Curator consolidation ($G=2.5$), crystallizing into `skills` beliefs with tool bindings for future sessions.
+Every tool failure is captured by `ToolLessonTracker` ([`core/tool_lesson_tracker.py`](core/tool_lesson_tracker.py#L20-L90)). Lessons are deduplicated and queued for nightly Curator consolidation ($G=2.5$), crystallizing into `skills` beliefs with tool bindings for future sessions.
 
 ---
 
 ## 7. Communication & UI Web Dashboard
 
-- **Web Dashboard (`localhost:5050`)**: Real-time web chat, thought stream monitor, spatial manifold inspector, and live **Agent Canvas 🎨** tab ([`dashboard/dashboard.py`](file:///home/nemo/_mrag_composite_test/dashboard/dashboard.py#L420-L535)).
+- **Web Dashboard (`localhost:5050`)**: Real-time web chat, thought stream monitor, spatial manifold inspector, and live **Agent Canvas 🎨** tab ([`dashboard/dashboard.py`](dashboard/dashboard.py#L420-L535)).
 - **Telegram & Discord**: Optional bidirectional channels via `HelixTelegramBot` and `HelixDiscordBot`.
 
 ---
