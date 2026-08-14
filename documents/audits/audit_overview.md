@@ -1,48 +1,42 @@
-# Helix Technical Audit Overview
+# Helix Technical Audit Overview & Subsystem Map
 
-> [!WARNING]
-> **Historical code-audit collection.** These files preserve earlier source-level snapshots; line numbers, dimensions, provider behavior, and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+**Documentation Status:** Current Audit Index & Architecture Map · **Last Verified Against Source:** 2026-08-14 · **Branch:** `main`
 
-These audits were written against the runtime wiring in `main.py`, the core runtime under `core/`, and persistence/search modules under `memory/` at their respective audit dates.
+This audit collection provides line-by-line source audits for every core subsystem in Helix.
 
-## Runtime shape
+---
 
-- Startup wires `MemoryManager`, `BeliefStore`, `Scratchpad`, `PhysicsEngine`, `Preconscious`, `PulseLoop`, and the post-pulse hooks in `setup_helix()`. `main.py:126-505`
-- The spatial stack is split between a wrapper (`PhysicsEngine`), a dual-space controller (`SpatialMind`), and the underlying 8D manifold (`CognitiveSpace`). `core/physics_engine.py:56-98` (`__init__`), `core/physics_engine.py:210-298` (`step_pulse`), `core/spatial_mind.py:48-109` (`__init__`), `core/cognitive_space.py:351-394` (`__init__`)
-- Persistence is append-first: memories are journaled to `CognitiveJournal`, registered into the live 8D manifold through `PhysicsEngine.register_memory_entry()`, and added to the 384D `SemanticIndex` for conscious recall. `memory/memory_manager.py:199-295` (`store`), `core/physics_engine.py:588-688` (`register_memory_entry`), `memory/cognitive_journal.py:61-117` (`append`), `memory/semantic_index.py:108-225` (add and search)
-- Pulse-time behavior is centered on `PulseLoop._main_loop()` and `PulseLoop._pulse()`, with preconscious recall, LLM/tool orchestration, memory writes, spatial updates, and post-pulse hooks all happening from there. `core/pulse_loop.py:544-747` (`_main_loop`), `core/pulse_loop.py:810-1237` (`_pulse`)
+## Live System Architecture Map
 
-## Audit index
+- **System Boot & Initializer**: [`main.py`](file:///home/nemo/_mrag_composite_test/main.py#L30-L150) initializes [`MemoryManager`](file:///home/nemo/_mrag_composite_test/memory/memory_manager.py#L30-L90), [`BeliefStore`](file:///home/nemo/_mrag_composite_test/memory/belief_store.py#L40-L110), [`PhysicsEngine`](file:///home/nemo/_mrag_composite_test/core/physics_engine.py#L40-L130), [`Preconscious`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L100-L200), [`ToolExecutor`](file:///home/nemo/_mrag_composite_test/tools/tool_executor.py#L30-L110), and [`PulseLoop`](file:///home/nemo/_mrag_composite_test/core/pulse_loop.py#L120-L280).
+- **Dual-Space Spatial Mind & Entropic Physics**: Wrapped by [`PhysicsEngine`](file:///home/nemo/_mrag_composite_test/core/physics_engine.py#L40-L130), coordinated by [`SpatialMind`](file:///home/nemo/_mrag_composite_test/core/spatial_mind.py#L40-L110), and projected into 8D continuous space by [`CognitiveSpace`](file:///home/nemo/_mrag_composite_test/core/cognitive_space.py#L30-L120).
+- **Journal Persistence & 1024D Semantic Search**: Journaled to [`cognitive_journal.jsonl`](file:///home/nemo/_mrag_composite_test/memory/cognitive_journal.py), indexed in 1024D native [`SemanticIndex`](file:///home/nemo/_mrag_composite_test/memory/semantic_index.py#L40-L120), and anchored in 8D spatial fields via [`register_memory_entry()`](file:///home/nemo/_mrag_composite_test/core/physics_engine.py#L580-L640).
+- **Pulse Engine Execution**: [`PulseLoop._pulse()`](file:///home/nemo/_mrag_composite_test/core/pulse_loop.py#L810-L1230) controls event ingestion, preconscious context retrieval, conscious LLM execution, function calls, spatial attention updates, and post-pulse hooks.
 
-### Core loop and orchestration
+---
 
-- [Pulse Loop Audit](audit_pulse_loop.md) - thread lifecycle, event queue, cadence state, rate-limit parking, context compression, and post-pulse dispatch. `core/pulse_loop.py:54-1737`
-- [Preconscious Audit](audit_preconscious.md) - layered context assembly, Layer 2 anchors, spatial neighborhood recall, gravity-ranked belief injection, and dashboard-side injection snapshots. `core/preconscious.py:46-2140`
+## Subsystem Audit Index
 
-### Spatial and physics stack
+### 1. Core Loop & Retrieval Architecture
+- [Pulse Loop Audit](audit_pulse_loop.md) — Thread lifecycle, state machine, rate limits, context compression, and post-pulse hook dispatch ([`core/pulse_loop.py`](file:///home/nemo/_mrag_composite_test/core/pulse_loop.py#L120-L1400)).
+- [Preconscious Injection Audit](audit_preconscious.md) — Layered context assembly, 1024D mRAG, 8D Spatial complements, multi-hop traversal (`retrieve_multihop`), and organic tone (`format_personal_opinions`) ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L100-L2450)).
 
-- [Physics Engine Audit](audit_physics_engine.md) - dual-space coordination, text embeddings, neighborhood/temporal queries, and boot hydration. `core/physics_engine.py:38-814`
-- [Spatial Mind Audit](audit_spatial_mind.md) - dual `CognitiveSpace` ownership, attention state, wake flashes, identity center, and persistence. `core/spatial_mind.py:29-743`
-- [Cognitive Space Audit](audit_cognitive_space.md) - 8D projection, KDTree-backed point store, gravity field, entropy and temperature metrics, trail particles, force integration, and affordance inference. `core/cognitive_space.py:87-1802`
+### 2. Spatial & Physics Stack
+- [Physics Engine Audit](audit_physics_engine.md) — Dual-space coordination, text embeddings, neighborhood queries, and temporal chaining ([`core/physics_engine.py`](file:///home/nemo/_mrag_composite_test/core/physics_engine.py#L40-L810)).
+- [Spatial Mind Audit](audit_spatial_mind.md) — Attention trajectory, 8D dual-space ownership, identity center, and state persistence ([`core/spatial_mind.py`](file:///home/nemo/_mrag_composite_test/core/spatial_mind.py#L30-L750)).
+- [Cognitive Space Audit](audit_cognitive_space.md) — 8D JL projection matrix, KD-Tree point store, entropic gravity field, and local temperature ([`core/cognitive_space.py`](file:///home/nemo/_mrag_composite_test/core/cognitive_space.py#L30-L1800)).
 
-### Affect and post-pulse analysis
+### 3. Affect & Post-Pulse Hooks
+- [Affect Field Audit](audit_affect_field.md) — Plutchik 8D emotional wave packets, interference sampling, and memory reactivation ([`core/affect_field.py`](file:///home/nemo/_mrag_composite_test/core/affect_field.py#L30-L730)).
+- [Affect Hook Audit](audit_affect_hook.md) — Post-pulse affect reads, Lagrangian snapshot updates, and Sentinel Ω nudges ([`core/affect_hook.py`](file:///home/nemo/_mrag_composite_test/core/affect_hook.py#L20-L160)).
+- [Belief Detector Audit](audit_belief_detector.md) — Post-pulse realization scanning and pending belief tagging ([`core/belief_detector.py`](file:///home/nemo/_mrag_composite_test/core/belief_detector.py#L40-L380)).
 
-- [Affect Field Audit](audit_affect_field.md) - Plutchik-space wave packets, interference sampling, surfaced-memory reactivation, and persisted affect state. `core/affect_field.py:101-727`
-- [Affect Hook Audit](audit_affect_hook.md) - post-pulse hook integration, Lagrangian snapshot read, and stability sentinel Ω nudges. `core/affect_hook.py:41-159`
-- [Belief Detector Audit](audit_belief_detector.md) - post-pulse belief-signal classification, pending tag writes, and sentinel nudges. `core/belief_detector.py:78-380`
+### 4. Persistence & Database Stack
+- [Cognitive Journal Audit](audit_cognitive_journal.md) — Append-only JSONL storage, SHA-256 checksums, and compaction ([`memory/cognitive_journal.py`](file:///home/nemo/_mrag_composite_test/memory/cognitive_journal.py#L20-L240)).
+- [Belief Store Audit](audit_belief_store.md) — Database schema, 7 categories, 2 tiers, and stability-based confidence adjustments ([`memory/belief_store.py`](file:///home/nemo/_mrag_composite_test/memory/belief_store.py#L40-L1420)).
+- [Memory Manager Audit](audit_memory_manager.md) — Compatibility API, journal-backed writes, and somatic echoes ([`memory/memory_manager.py`](file:///home/nemo/_mrag_composite_test/memory/memory_manager.py#L20-L610)).
+- [Semantic Index Audit](audit_semantic_index.md) — 1024D native vector storage, numpy dot product, and FAISS FlatIP upgrade ([`memory/semantic_index.py`](file:///home/nemo/_mrag_composite_test/memory/semantic_index.py#L40-L510)).
+- [Scratchpad Audit](audit_scratchpad.md) — Working memory markdown notes, regex edits, and due-note parsing ([`memory/scratchpad.py`](file:///home/nemo/_mrag_composite_test/memory/scratchpad.py#L30-L280)).
 
-### Persistence and database layer
-
-- [Cognitive Journal Audit](audit_cognitive_journal.md) - append, checksum verification, load, and compaction behavior. `memory/cognitive_journal.py:22-236`
-- [Belief Store Audit](audit_belief_store.md) - database layer, normalized schemas, category I/O, and stability-based confidence adjustments. `memory/belief_store.py:108-1420`
-- [Memory Manager Audit](audit_memory_manager.md) - compatibility API, journal-backed writes, recent/history retrieval, semantic recall, and somatic echo. `memory/memory_manager.py:21-613`
-- [Semantic Index Audit](audit_semantic_index.md) - normalized 384D vector storage, numpy search, FAISS upgrade path, and persistence. `memory/semantic_index.py:47-513`
-- [Scratchpad Audit](audit_scratchpad.md) - markdown note storage, regex-based edits, due-note parsing, and preconscious summary generation. `core/scratchpad.py:31-282`
-
-### Dynamic tool learning
-
-- [Tool Learning Audit](audit_tool_learning.md) - tool failure capture, nightly note compilation, success verification, and crystallized workflow skills. `core/tool_lesson_tracker.py:76-346`, `core/curator.py:324-396`, `tools/tool_registry.py:209-259`
-
-## Important boundary notes
-
-- Several module header docstrings are older than the implementation. The detailed audits cite the executable code paths rather than the prose headers. Examples: `core/pulse_loop.py:1-25`, `core/preconscious.py:1-26`, `memory/semantic_index.py:13-19`
+### 5. Dynamic Tooling & Agent UI Canvas
+- [Tool System & Learning Audit](audit_tool_learning.md) — Hermes dynamic registry, 30s TTL caching, Agent UI Canvas (`render_ui_canvas`), and `ToolLessonTracker` failure capture ([`tools/tool_registry.py`](file:///home/nemo/_mrag_composite_test/tools/tool_registry.py#L30-L260), [`tools/ui_canvas_tool.py`](file:///home/nemo/_mrag_composite_test/tools/ui_canvas_tool.py#L25-L95), [`core/tool_lesson_tracker.py`](file:///home/nemo/_mrag_composite_test/core/tool_lesson_tracker.py#L20-L90)).

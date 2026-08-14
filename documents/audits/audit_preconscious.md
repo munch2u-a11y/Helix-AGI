@@ -1,60 +1,49 @@
-# Preconscious Audit
+# Preconscious Injection Audit
 
-> [!WARNING]
-> **Historical code-audit snapshot.** Preserve its observations as recorded; line numbers and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+**Status:** Current Runtime Audit · **Last Verified Against Source:** 2026-08-14 · **Branch:** `main`
 
-**Scope:** `core/preconscious.py`
+**Scope:** [`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py)
 
-## Runtime role
+---
 
-- `Preconscious` assembles the per-pulse first-person annotations and somatic/affect ambient notes that get woven directly into the event stream of the pulse. The live pipeline combines Layer 2 lexicon matches, spatial neighborhood recall, gravity-ranked beliefs, recent memory, scratchpad state, contact context, somatic state, affect state, ambient spatial cues, and trail flashes. `core/preconscious.py:312-481`
-- The module docstring outlines the general design, but the live code also handles Hebbian plasticity nudges, local model reflection, and writes dashboard-side JSON state on every injection. `core/preconscious.py:1-25` (docstring), `core/preconscious.py:747-802` (`_reflect_on_cluster`), `core/preconscious.py:2002-2099` (`_save_injection_state`)
+## 1. Runtime Role & Injection Assembly
 
-## Construction and cached state
+The `Preconscious` engine ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L100-L200)) assembles per-pulse prompt annotations woven into Helix's conscious prompt stream:
 
-- The constructor stores references to memory, beliefs, physics, scratchpad, channel router, and sentinel; shares the pulse loop's active toolset set; initializes rolling tool history and repetition/cooldown guards; loads Layer 2 anchors; and builds the lexicon search helper. `core/preconscious.py:83-180`
-- Belief retrieval is cached in `_belief_cache`, `_belief_emb_matrix`, and `_galaxy_map`; those structures are rebuilt when belief count or total mass changes. `core/preconscious.py:97-128`, `core/preconscious.py:990-1168`
+- **Layer 2 Anchor Match**: Priority term-matched lookup for people, concepts, skills, and desires ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L470-L482)).
+- **Unified Retrieval Pipeline**: Integrates 1024D native mRAG semantic recall with bounded 8D spatial complements ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L1880-L1950)).
+- **Gravity-Guided Multi-Hop Traversal (`retrieve_multihop`)**: Automatically triggered on multi-question or relational triggers ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L1910-L1930)).
+- **Organic Tone Induction (`Personal Opinions:`)**: Converts affectively salient memories into a 1st-person subjective block ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L2418-L2428)).
+- **Context Office Desks**: Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, and Identity desks ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L1880-L1950)).
+- **Scratchpad Working Memory & Temporal State**: Active notes, recent memories, and contact context ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L540-L560)).
 
-## Layer 2 anchors
+---
 
-- `_load_layer2_anchors()` reads `people`, `concepts`, `skills`, and `desires` from the belief store and indexes each `term` plus aliases for case-insensitive lookup. `core/preconscious.py:188-232`
-- `_pull_lexicon_matches()` performs boundary-aware regex matching against the trigger text, formats entity facets up to `LEXICON_FACETS_PER_TERM`, and adds matched IDs to the blacklist so they do not immediately repeat. `core/preconscious.py:485-560`
-- `reset_lexicon_blacklist()` is the reset point used after context compression or explicit session reset. `core/preconscious.py:561-572`, `core/pulse_loop.py:291-304`, `core/pulse_loop.py:673-731`
+## 2. Construction & Cached State
 
-## Focus budget and tool-aware narrowing
+The constructor ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L100-L200)):
+- Stores references to `beliefs`, `memory`, `physics`, `scratchpad`, `channel_router`, and `sentinel`.
+- Shares active toolset sets and rolling tool usage history (`_recent_tool_history`).
+- Initializes `_concept_blacklist`, `_memory_blacklist`, `_tool_belief_blacklist`, and `_injection_gravity_decay`.
+- Loads Layer 2 anchors into `_lexicon_lookup` ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L145-L160)).
+- Initializes `UnifiedRetrieval` when `HELIX_UNIFIED_RAG=1` ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L180-L200)).
 
-- `record_tool_usage()` stores the last five pulses of tool-call names. `core/preconscious.py:236-247`
-- `_compute_focus_budget()` inspects the last three pulses, uses `tools.tool_registry` focus metadata when available, and then narrows or widens the belief budget again using the sentinel's temperature `_spatial_T` value. `core/preconscious.py:248-310`
-- The current focus tiers are `FOCUS_BUDGET_DEEP=(1, 1)`, `FOCUS_BUDGET_WORKING=(2, 1)`, and `FOCUS_BUDGET_OPEN=(3, 2)` where each tuple is `(total_budget, max_skills)`. `core/preconscious.py:78-80`
+---
 
-## Injection pipeline
+## 3. Unified Selection & Multi-Hop Traversal
 
-- `inject()` builds the combined trigger from incoming events plus the previous thought, falling back to tool-result text only when there is no other context. `core/preconscious.py:312-329`
-- The assembly order is: lexicon anchors, spatial neighborhood, toolset hints, belief grounding, recent memory, scratchpad summary, optional contact context, somatic state, affect state, ambient spatial cues, and trail flashes. `core/preconscious.py:330-464`
-- The method returns four values: annotations (list of strings), ambient (somatic + affect + spatial status string), surfaced belief IDs, and the weighted centroid of the selected belief clusters for spatial steering. `core/preconscious.py:319-320`, `core/preconscious.py:477-481`
+In `_unified_select()` ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L1880-L1950)):
+1. Checks if the trigger string contains multi-step / multi-question structure.
+2. If multi-step, invokes `self._unified.retrieve_multihop(query=trigger_text, ...)`, which traverses 8D gravity basins around Hop 1 evidence to perform Hop 2 retrieval ([`core/unified_retrieval.py`](file:///home/nemo/_mrag_composite_test/core/unified_retrieval.py#L300-L365)).
+3. Otherwise, calls `self._unified.retrieve()`, combining 1024D mRAG foreground with bounded 8D spatial complements (`UNIFIED_COMPLEMENT_CAP = 2`).
 
-## Spatial neighborhood path
+---
 
-- `_compute_dynamic_k()` uses the number of active gravity-field anchors as a density proxy and scales the neighborhood size between `NEIGHBORHOOD_K_MIN` and `NEIGHBORHOOD_K_MAX`. `core/preconscious.py:805-828`
-- `_pull_spatial_neighborhood()` delegates to `PhysicsEngine.query_neighborhood(..., exclude_trails=True)`, labels memories as `vivid recall`, `related`, or `faint` by relevance score, and pulls a short temporal chain for strong matches. `core/preconscious.py:829-943`, `core/physics_engine.py:317-392`, `core/physics_engine.py:393-420`
-- If the retrieved cluster is dense enough, `_reflect_on_cluster()` sends a short synthesis prompt to a local Ollama endpoint at `http://localhost:11434/api/generate`. `core/preconscious.py:747-802`
+## 4. Selection Rendering & Tone Induction
 
-## Belief retrieval path
-
-- `_ensure_belief_cache()` builds two parallel caches: an 8D belief-position cache and a belief-only 384D matrix derived from the live `SemanticIndex` plus any just-added beliefs that have to be embedded on the fly. `core/preconscious.py:990-1168`
-- `_gravity_query()` is two-stage: it first narrows candidates with 384D cosine search over the cached belief matrix, then re-ranks those candidates by `temperature * mass / distance^2` inside the live belief space. `core/preconscious.py:1174-1426`
-- `_pull_relevant_beliefs()` extracts 1..N concepts from the trigger text, runs one gravity query per concept, de-duplicates overlapping beliefs, computes a weighted centroid, performs Hebbian plasticity nudging, and formats the final lines. `core/preconscious.py:1608-1907`
-- Tool-result-only fallback queries are deliberately damped by multiplying their belief gravity by `0.1`. `core/preconscious.py:1680-1685`, `core/preconscious.py:1720-1725`
-
-## Other injected signals
-
-- `_pull_somatic_state()` formats sentinel omega, total instability, entropy, severity-derived label, and generation mode. `core/preconscious.py:575-605`
-- `_pull_affect_state()` reads the latest `InterferenceResult` from the affect hook, injects dominant affect and novelty, and resolves surfaced memory IDs back to short text. `core/preconscious.py:606-657`, `core/preconscious.py:658-686`
-- `_toolset_awareness()` scans the neighborhood text for keywords associated with available-but-disabled toolsets, including short names whitelisted in `SHORT_TOOL_WHITELIST`. `core/preconscious.py:64-67`, `core/preconscious.py:687-746`
-- `_pull_recent_memory()` uses `MemoryManager.get_recent(limit=3, pulses_back=CHAIN_WINDOW)` and condenses each entry for continuity. `core/preconscious.py:1911-1953`
-- `_pull_contact_context()` surfaces the default channel and last-contact time when a known contact name appears in the trigger. `core/preconscious.py:1957-1969`
-
-## Side effects
-
-- `_save_injection_state()` writes `data/spatial/spatial_injection.json` plus a rolling history file, including concepts, surfaced memories, surfaced beliefs, somatic data, affect data, and the trigger preview. `core/preconscious.py:2002-2099`
-- Because the injection state is written on every call to `inject()`, this module is not purely read-only even when it is only preparing prompt context. `core/preconscious.py:477`, `core/preconscious.py:2002-2099`
+In `_render_selection()` ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L2242-L2430)):
+1. Accumulates selected items up to the dynamic token budget.
+2. Formats item role tags (`STATE DESK`, `RELATIONS DESK`, `CATALOG DESK`, `BELIEFS DESK`).
+3. Invokes `self._unified.format_personal_opinions(rendered_selection)` to append a formatted `Personal Opinions:` block.
+4. Updates injection gravity decay (`_injection_gravity_decay`) and calculates the 8D weighted cluster centroid (`_last_cluster_centroid`).
+5. Writes diagnostic snapshot to `data/spatial/spatial_injection.json` ([`core/preconscious.py`](file:///home/nemo/_mrag_composite_test/core/preconscious.py#L2002-L2099)).

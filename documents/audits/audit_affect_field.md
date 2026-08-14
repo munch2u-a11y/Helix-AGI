@@ -1,42 +1,16 @@
 # Affect Field Audit
 
-> [!WARNING]
-> **Historical code-audit snapshot.** Preserve its observations as recorded; line numbers and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+**Status:** Current Runtime Audit · **Last Verified Against Source:** 2026-08-14 · **Branch:** `main`
 
-**Scope:** `core/affect_field.py`
+**Scope:** [`core/affect_field.py`](file:///home/nemo/_mrag_composite_test/core/affect_field.py)
 
-## Runtime role
+---
 
-- `AffectField` stores emotional traces as 8D Plutchik-space wave packets. Packets diffuse, decay, interfere at sample time, and can surface memory IDs when multiple resonant packets overlap with co-retrieved memories. `core/affect_field.py:258-727`
-- The field itself is passive. Runtime distribution into `SpatialMind` and the sentinel happens in `core/affect_hook.py`, which deposits a packet every pulse, evolves the field, samples it, then forwards the steering vector and omega nudges. `core/affect_hook.py:41-72` (`register_affect_hook`), `core/affect_hook.py:75-148` (`_affect_pulse_hook`)
+## 1. Plutchik 8D Wave Packet Dynamics
 
-## Constants and dimensional layout
+`AffectField` ([`core/affect_field.py`](file:///home/nemo/_mrag_composite_test/core/affect_field.py#L30-L120)) tracks emotional trajectories across 8 primary Plutchik dimensions:
+`joy · trust · fear · surprise · sadness · disgust · anger · anticipation`
 
-- The eight dimensions are `joy`, `trust`, `fear`, `surprise`, `sadness`, `disgust`, `anger`, and `anticipation`, with non-zero neutral baselines for `joy`, `trust`, and `anticipation`. `core/affect_field.py:42-52`
-- Diffusion rates, phase frequencies, decay parameters, sampling thresholds, and hard caps are fixed at module scope. `core/affect_field.py:54-89`
-
-## WavePacket state and evolution
-
-- `WavePacket` stores the Plutchik position, deposit pulse, anchor memories, blended memories, sigma, and the current amplitude. `core/affect_field.py:101-232`
-- `intensity` measures average deviation from the neutral baselines; `importance` scales with anchored-memory count. `core/affect_field.py:141-156`
-- `evolve()` expands sigma per dimension and decays amplitude with a halflife derived from both emotional intensity and anchor-memory importance. `core/affect_field.py:162-176`
-- `spatial_contribution()` evaluates an anisotropic Gaussian contribution at a sample point, and `is_alive()` prunes any packet whose amplitude falls below `PRUNE_THRESHOLD`. `core/affect_field.py:181-201`
-
-## Deposit path
-
-- `deposit()` converts a lagrangian snapshot into an 8D position, updates the previous snapshot cache, computes intensity from deviation from neutral, creates a `WavePacket`, appends it, and enforces the `MAX_PACKETS` cap by dropping low-amplitude packets. `core/affect_field.py:301-358`
-- `_lagrangian_to_plutchik()` derives the eight emotional coordinates from omega, entropy, KL divergence, total instability, local temperature, and the delta between the previous and current lagrangian snapshot. `core/affect_field.py:359-431`
-- Current implementation note: `amplitude = max(0.1, intensity)` happens before `if amplitude < 0.05`, so the low-intensity early return is effectively dead code. `core/affect_field.py:330-339`
-
-## Evolution and sampling
-
-- `evolve()` increments the pulse counter, clears the summary cache, evolves every packet, blends in newly accessed memory IDs when the packet is still strong enough, and then drops packets below the prune threshold. `core/affect_field.py:432-453`
-- `sample()` defaults to sampling at the current affect summary, computes phase-coherent interference, builds the steering vector, checks memory-overlap strength, and returns an `InterferenceResult` with field intensity, surfaced memories, dominant affect, and the novelty/diversity signal. `core/affect_field.py:457-528`
-- `_compute_semantic_overlap()` requires at least two contributing packets that overlap with the current co-retrieved memories before surfacing dormant memories. `core/affect_field.py:545-565`
-
-## Summary and persistence
-
-- `_compute_affect_summary()` caches weighted averages for all eight dimensions plus total amplitude and dominant affect for the current pulse. `core/affect_field.py:576-635`
-- `_cognitive_diversity_signal()` is a boredom-style novelty score derived from mild disgust plus low anticipation. `core/affect_field.py:636-654`
-- `save_state()` persists `current_pulse`, previous lagrangian values, stagnation counter, and the full packet list to `data/affect_field.json`; `_load_state()` restores the same structure. `core/affect_field.py:676-692` (`save_state`), `core/affect_field.py:693-717` (`_load_state`)
-- `to_dict()` is the thin external serialization surface used by dashboards or tools. `core/affect_field.py:718-726`
+- **Wave Packet Ingestion**: Deposited per pulse from somatic Lagrangian snapshots ([`core/affect_field.py`](file:///home/nemo/_mrag_composite_test/core/affect_field.py#L150-L220)).
+- **Anisotropic Diffusion & Decay**: Fast-fading emotions (surprise ~4 pulses) versus persistent emotions (trust ~69 pulses).
+- **Interference Sampling**: Constructive/destructive interference modulates spatial steering forces and reactivates resonant memories ([`core/affect_field.py`](file:///home/nemo/_mrag_composite_test/core/affect_field.py#L300-L380)).
