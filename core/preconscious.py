@@ -1909,14 +1909,23 @@ class Preconscious:
             raw_spatial = gravity_candidates
 
         try:
-            items = self._unified.retrieve(
-                trigger_text=trigger_text,
-                spatial_candidates=raw_spatial,
-                complement_quota=complement_quota,
-                max_items=self._unified_item_limit(),
-                token_budget=self._unified.effective_token_budget(),
-                exclude=exclude,
-            )
+            # Check if trigger text contains multi-step / multi-question structure
+            is_multihop = bool("?" in trigger_text and (trigger_text.count("?") > 1 or len(trigger_text.split()) > 15 or "and" in trigger_text.lower()))
+            if is_multihop:
+                items = self._unified.retrieve_multihop(
+                    query=trigger_text,
+                    top_k_per_hop=max(3, self._unified_item_limit() // 2),
+                    max_total=self._unified_item_limit(),
+                )
+            else:
+                items = self._unified.retrieve(
+                    trigger_text=trigger_text,
+                    spatial_candidates=raw_spatial,
+                    complement_quota=complement_quota,
+                    max_items=self._unified_item_limit(),
+                    token_budget=self._unified.effective_token_budget(),
+                    exclude=exclude,
+                )
         except Exception as e:
             logger.warning("Unified retrieval failed, using gravity ranking: %s", e)
             return sorted(
@@ -2409,6 +2418,10 @@ class Preconscious:
         if unified is not None and render_mode in ("verbatim", "structured"):
             lines = ["Recalled context (historical memory, possibly with distractors):"]
             lines.extend(f"- {text}" for text in belief_texts)
+            opinions_block = unified.format_personal_opinions(rendered_selection)
+            if opinions_block:
+                lines.append("")
+                lines.append(opinions_block)
             annotation = "*(" + "\n".join(lines) + ")*"
         else:
             # A small local summarizer preserves a tight local-model context,
