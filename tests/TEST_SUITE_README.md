@@ -1,6 +1,6 @@
 # Helix Test Suite
 
-**Documentation status:** current test guide · **Last verified against source:** 2026-08-10
+**Documentation status:** current test guide · **Last verified against source:** 2026-08-15
 
 Use the repository virtual environment for every command. Some retrieval tests
 mock the semantic encoder; end-to-end semantic runs require local Ollama with
@@ -52,6 +52,9 @@ commands as equivalent coverage or release criteria.
 | Sandboxed LongMemEval ingestion, selection, and review artifacts | `test_longmemeval_sandbox.py` |
 | Exact RAGOffice exam parity and scoring | `test_ragoffice_parity_sandbox.py` |
 | Codex App Server provider and host tools | `test_codex_cli_provider.py` |
+| Clarify-plan-act-verify action contract | `test_action_protocol.py`, `test_action_planner.py`, `test_action_path_exam.py` |
+| Provider-neutral identity and affect capsule | `test_self_state.py` |
+| Codex one-switch setup | `test_codex_agent_setup.py` |
 | Event-driven tasks, orchestrators, focus, and procedures | `test_task_cognition.py` |
 | Preconscious context assembly | `test_preconscious_injection.py` |
 | Maintained session/subject/topic/relation logs and canonical-ID deduplication | `test_case_memory_office.py` |
@@ -64,6 +67,33 @@ commands as equivalent coverage or release criteria.
 The current architecture and documentation precedence are defined in
 [`documents/architecture_current.md`](../documents/architecture_current.md)
 and [`documents/README.md`](../documents/README.md).
+
+## Action-Path Smokes
+
+The deterministic exam has no external side effects:
+
+```bash
+venv/bin/python tests/run_action_path_exam.py
+```
+
+The local-model smoke uses a virtual tool world, so it exercises real model
+planning without changing host files or accounts:
+
+```bash
+venv/bin/python tests/run_action_path_local_smoke.py \
+  --model granite4.1:8b --json
+```
+
+The Codex smoke creates a real authenticated App Server thread, but keeps its
+workspace read-only, disables network and approvals, and exposes no host tools:
+
+```bash
+venv/bin/python tests/run_codex_helix_smoke.py --json
+```
+
+It distinguishes a successful App Server handshake from model inference. A
+subscription usage limit therefore reports `transport_ready: true` with an
+inference blocker instead of being misreported as a wiring failure.
 
 ## Progressive Deep-Memory Evaluation
 

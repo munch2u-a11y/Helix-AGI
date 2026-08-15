@@ -10,7 +10,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QGroupBox, QLineEdit, QScrollArea, QFormLayout,
-    QMessageBox,
+    QMessageBox, QCheckBox,
 )
 from PyQt6.QtCore import Qt
 
@@ -100,6 +100,45 @@ class ModelsTab(QWidget):
         model_row.addWidget(self.detect_btn)
         provider_form.addRow("Active Model:", model_row)
 
+        # ── Local mode ────────────────────────────────────────────────
+        # A local model cannot hold 80 tool schemas in an 8K window, and
+        # Ollama has no native tool channel at all. Orchestrated mode puts
+        # one line per toolset in the main window and runs the actual work
+        # in directed passes, one toolset at a time.
+        self.local_mode_check = QCheckBox(
+            "Local mode — orchestrated tool use (no API key needed)"
+        )
+        self.local_mode_check.setToolTip(
+            "Gives a local model the full toolset without the full manifest.\n"
+            "Tools run in directed passes; slower than native function\n"
+            "calling, but works entirely offline."
+        )
+        self.local_mode_check.toggled.connect(self._on_local_mode_toggled)
+        provider_form.addRow(self.local_mode_check)
+
+        self.local_mode_desc = QLabel()
+        self.local_mode_desc.setWordWrap(True)
+        self.local_mode_desc.setStyleSheet("font-size: 11px; color: #8888aa;")
+        provider_form.addRow(self.local_mode_desc)
+
+        # Codex agent mode keeps identity/memory/task continuity in Helix and
+        # uses App Server only as the replaceable conscious/focus substrate.
+        # Main thought remains schema-free; one scoped worker sees one toolset.
+        self.cli_agent_check = QCheckBox(
+            "Helix agent mode — durable self, scoped tools, verified actions"
+        )
+        self.cli_agent_check.setToolTip(
+            "Recommended for Codex CLI. Enables durable task cognition, exact\n"
+            "clarifying questions, scoped focus workers, receipts, and verification\n"
+            "without loading the main thought thread with the tool catalog."
+        )
+        provider_form.addRow(self.cli_agent_check)
+
+        self.cli_agent_desc = QLabel()
+        self.cli_agent_desc.setWordWrap(True)
+        self.cli_agent_desc.setStyleSheet("font-size: 11px; color: #8888aa;")
+        provider_form.addRow(self.cli_agent_desc)
+
         settings_layout.addWidget(provider_group)
 
         # ── Credentials & Endpoints Group ──────────────────────────────
@@ -166,6 +205,42 @@ class ModelsTab(QWidget):
 
     def _on_provider_changed(self, provider: str):
         self._update_provider_desc(provider)
+        is_local = provider in ("ollama", "llama_cpp")
+        self.local_mode_check.setEnabled(is_local)
+        if not is_local and self.local_mode_check.isChecked():
+            # Hosted providers call tools natively; orchestration would only
+            # add latency and lose the provider's own tool validation.
+            self.local_mode_check.setChecked(False)
+        self._on_local_mode_toggled(self.local_mode_check.isChecked())
+
+        is_codex = provider == "codex_cli"
+        self.cli_agent_check.setEnabled(is_codex)
+        if is_codex:
+            if "cli_agent_mode" not in self.app.config:
+                self.cli_agent_check.setChecked(True)
+            self.cli_agent_desc.setText(
+                "Codex supplies reasoning; Helix owns identity, affect, memory, "
+                "task continuity, host tools, and completion verification."
+            )
+        else:
+            self.cli_agent_desc.setText(
+                "Currently available for the Codex App Server backend."
+            )
+
+    def _on_local_mode_toggled(self, enabled: bool):
+        if not self.local_mode_check.isEnabled():
+            self.local_mode_desc.setText(
+                "Available for the ollama and llama_cpp providers."
+            )
+        elif enabled:
+            self.local_mode_desc.setText(
+                "Tools run one toolset at a time in directed passes. "
+                "Helix keeps the full toolset without holding every schema."
+            )
+        else:
+            self.local_mode_desc.setText(
+                "Without this, a local provider has no tool access at all."
+            )
         self._update_models_list()
 
     def _update_models_list(self):
@@ -189,18 +264,17 @@ class ModelsTab(QWidget):
             detect_ollama_models,
             detect_gguf_models,
             fetch_gemini_models,
-            codex_login_status,
+            codex_app_server_probe,
         )
         detected = []
         if provider == "codex_cli":
-            status = codex_login_status()
-            if status:
+            ready, status = codex_app_server_probe()
+            if ready:
                 detected = ["account-default"]
                 QMessageBox.information(self, "Codex CLI", status)
             else:
                 QMessageBox.warning(
-                    self, "Codex Login Required",
-                    "Install the Codex CLI and run `codex login`, then try again.",
+                    self, "Codex App Server Unavailable", status,
                 )
         elif provider == "ollama":
             url = self.ollama_url.text().strip() or "http://localhost:11434"
@@ -244,6 +318,18 @@ class ModelsTab(QWidget):
         provider = creds.get("HELIX_PROVIDER", "gemini")
         self.provider_combo.setCurrentText(provider)
 
+        self.local_mode_check.setChecked(
+            self.app.config.get("tool_format") == "orchestrated"
+        )
+        self.cli_agent_check.setChecked(
+            bool(self.app.config.get(
+                "cli_agent_mode",
+                provider == "codex_cli"
+                and self.app.config.get("task_cognition_mode") != "off",
+            ))
+        )
+        self._on_provider_changed(provider)
+
         self._update_models_list()
 
     def _save_settings(self):
@@ -257,13 +343,37 @@ class ModelsTab(QWidget):
         cfg["llm_provider"] = self.provider_combo.currentText()
         cfg["llm_model"] = self.model_combo.currentText().strip()
 
+        previous_cli_agent = bool(cfg.get("cli_agent_mode", False))
+        cli_agent_mode = (
+            cfg["llm_provider"] == "codex_cli"
+            and self.cli_agent_check.isChecked()
+        )
+        cfg["cli_agent_mode"] = cli_agent_mode
+        if cfg["llm_provider"] == "codex_cli":
+            cfg["task_cognition_mode"] = "active" if cli_agent_mode else "observe"
+        elif previous_cli_agent and cfg.get("task_cognition_mode") == "active":
+            cfg["task_cognition_mode"] = "observe"
+
         # Update legacy parameters
         if cfg["llm_provider"] == "ollama":
             cfg["ollama_model"] = cfg["llm_model"]
 
+        # Local mode: the pulse loop reads tool_format to decide whether the
+        # session gets native declarations or an orchestrated tool layer.
+        if self.local_mode_check.isChecked():
+            cfg["tool_format"] = "orchestrated"
+            cfg["local_provider"] = cfg["llm_provider"]
+            cfg["local_model"] = cfg["llm_model"]
+        elif cfg.get("tool_format") == "orchestrated":
+            cfg["tool_format"] = "api"
+
         # Write credentials.env file
         try:
             self.app._write_credentials()
+            # tool_format lives in config.json, which credentials.env does
+            # not cover — the pulse loop reads it at session creation.
+            from wizard.app import save_config
+            save_config(cfg)
             QMessageBox.information(self, "Saved", "Model settings saved and synchronized successfully!")
         except Exception as e:
             QMessageBox.critical(self, "Error Saving", f"Failed to write configuration: {e}")

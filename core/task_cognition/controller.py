@@ -114,6 +114,9 @@ class TaskCognitionController:
         """Post-pulse hook: persist committed intentions and optionally run them."""
         if not self.enabled:
             return
+        resumed_waiting = False
+        if self.active and self.focus is not None:
+            resumed_waiting = self._resume_waiting_from_events(ctx)
         if self.active and self.focus is not None and not self._pending_resumed:
             self._pending_resumed = True
             for pending in self.store.open_tasks():
@@ -134,7 +137,8 @@ class TaskCognitionController:
                             ],
                         )
                     self.focus.submit(pending, set(ctx.active_toolsets))
-        for candidate in self.detector.detect(ctx.thought, ctx.events):
+        candidates = [] if resumed_waiting else self.detector.detect(ctx.thought, ctx.events)
+        for candidate in candidates:
             record = TaskRecord(
                 objective=candidate.objective,
                 details=candidate.evidence,
@@ -177,6 +181,14 @@ class TaskCognitionController:
         task = self.store.get(outcome.task_id)
         if task is None:
             return
+        if outcome.waiting_for_input:
+            self.pulse_loop.emit("task_question", {
+                "task_id": task.task_id,
+                "objective": task.objective,
+                "question": outcome.question,
+            })
+            self.pulse_loop.wake(trigger="task_question")
+            return
         if outcome.success:
             content = f"I completed a task I formed: {task.objective}. Outcome: {outcome.summary}"
             try:
@@ -196,6 +208,72 @@ class TaskCognitionController:
             "result": outcome.summary or outcome.error,
         })
         self.pulse_loop.wake(trigger="task_result")
+
+    def provide_input(
+        self,
+        task_id: str,
+        answer: str,
+        active_toolsets: Optional[set[str]] = None,
+    ) -> bool:
+        """Attach a user's clarification answer and resume the same task."""
+        if not self.active or self.focus is None:
+            return False
+        task = self.store.get(task_id)
+        answer = str(answer or "").strip()
+        if task is None or task.status.value != "waiting_input" or not answer:
+            return False
+        metadata = dict(task.metadata)
+        history = list(metadata.get("clarification_history", []))
+        history.append({"question": task.question, "answer": answer})
+        metadata["clarification_history"] = history[-5:]
+        source_events = list(task.source_events)
+        source_events.append(f"Clarification answer: {answer}")
+        task = self.store.update(
+            task.task_id,
+            question="",
+            required_inputs=[],
+            source_events=source_events[-8:],
+            metadata=metadata,
+        )
+        active = set(
+            active_toolsets
+            if active_toolsets is not None
+            else getattr(self.pulse_loop, "_active_toolsets", {"core"})
+        )
+        return self.focus.submit(task, active)
+
+    def _resume_waiting_from_events(self, ctx) -> bool:
+        """Resume one unambiguous waiting task from the next direct answer.
+
+        The standard pulse path currently carries translated event strings.
+        We only bind automatically when exactly one task is waiting and a new
+        direct-message event is present; multiple waiting questions require an
+        explicit ``provide_input(task_id, answer)`` call.
+        """
+        waiting = [
+            task for task in self.store.open_tasks()
+            if task.status.value == "waiting_input"
+        ]
+        if len(waiting) != 1:
+            return False
+        answers = []
+        for event in list(getattr(ctx, "events", ()) or ()):
+            text = str(event or "")
+            marker = "They said: \""
+            if " is talking to me via " not in text or marker not in text:
+                continue
+            answer = text.split(marker, 1)[1]
+            if answer.endswith('"'):
+                answer = answer[:-1]
+            if answer.strip():
+                answers.append(answer.strip())
+        if not answers:
+            return False
+        return self.provide_input(
+            waiting[0].task_id,
+            answers[-1],
+            set(getattr(ctx, "active_toolsets", {"core"})),
+        )
 
     def shutdown(self) -> None:
         if self.focus is not None:

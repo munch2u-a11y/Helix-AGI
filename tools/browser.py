@@ -18,6 +18,7 @@ logger = logging.getLogger("helix.tools.browser")
 # Shared browser state (module-level)
 _browser = None
 _browser_page = None
+_browser_refs = {}
 
 # Base directory for relative paths
 _BASE_DIR = Path(__file__).parent.parent.resolve()
@@ -116,6 +117,68 @@ def _get_browser_page():
     return _browser_page
 
 
+def _page_snapshot(page, body_chars: int = 3000, max_elements: int = 40) -> str:
+    """Return text plus stable short refs for the current interactive DOM."""
+    global _browser_refs
+    _browser_refs = {}
+
+    try:
+        body = page.locator("body")
+        text = body.inner_text() if body.count() > 0 else ""
+    except Exception:
+        text = "Failed to extract body text."
+
+    lines = []
+    try:
+        candidates = page.locator(
+            "a, button, input, textarea, select, [role=button], [role=link], video"
+        )
+        count = min(candidates.count(), max_elements * 3)
+        for index in range(count):
+            element = candidates.nth(index)
+            try:
+                if not element.is_visible():
+                    continue
+                tag = str(element.evaluate("el => el.tagName.toLowerCase()") or "element")
+                role = str(element.get_attribute("role") or "")
+                label = (
+                    element.get_attribute("aria-label")
+                    or element.get_attribute("placeholder")
+                    or element.get_attribute("title")
+                    or element.inner_text(timeout=500)
+                    or element.get_attribute("value")
+                    or ""
+                )
+                label = " ".join(str(label).split())[:160]
+                ref = f"e{len(lines) + 1}"
+                _browser_refs[ref] = element
+                kind = role or tag
+                lines.append(f"[{ref}] {kind}" + (f' "{label}"' if label else ""))
+                if len(lines) >= max_elements:
+                    break
+            except Exception:
+                continue
+    except Exception as exc:
+        lines.append(f"(Interactive elements unavailable: {exc})")
+
+    elements = "\n".join(lines) if lines else "(No visible interactive elements found.)"
+    return (
+        f"Page: {page.title()}\n"
+        f"URL: {page.url}\n\n"
+        f"Visible text:\n{text[:body_chars]}\n\n"
+        f"Interactive elements (use a ref or CSS selector):\n{elements}"
+    )
+
+
+def _resolve_element(page, selector: str):
+    ref = str(selector or "").strip()
+    if ref.startswith("[") and ref.endswith("]"):
+        ref = ref[1:-1].strip()
+    if ref in _browser_refs:
+        return _browser_refs[ref]
+    return page.locator(selector).first
+
+
 # ── Tool Functions ────────────────────────────────────────────────────
 
 
@@ -146,18 +209,7 @@ def browse(url: str, wait_for: str = "") -> str:
         except PlaywrightTimeoutError:
             logger.warning(f"Playwright navigation timeout on {url}. Salvaging partial DOM.")
 
-        title = page.title()
-        try:
-            body_loc = page.locator("body")
-            text = body_loc.inner_text() if body_loc.count() > 0 else ""
-        except Exception:
-            text = "Failed to extract body text."
-
-        return (
-            f"Page loaded: {title}\n"
-            f"URL: {page.url}\n\n"
-            f"{text[:3000]}"
-        )
+        return "Page loaded.\n" + _page_snapshot(page)
     except Exception as e:
         return f"Browser navigation failed: {e}"
 
@@ -177,21 +229,22 @@ def browse_interact(selector: str, action: str, value: str = "") -> str:
 
     try:
         page = _browser_page
+        element = _resolve_element(page, selector)
 
         if action == "click":
-            page.click(selector, timeout=5000)
+            element.click(timeout=5000)
             return f"Clicked: {selector}"
         elif action == "type":
-            page.fill(selector, value, timeout=5000)
+            element.fill(value, timeout=5000)
             return f"Typed '{value}' into {selector}"
         elif action == "scroll":
-            page.eval_on_selector(selector, "el => el.scrollIntoView()")
+            element.scroll_into_view_if_needed(timeout=5000)
             return f"Scrolled to: {selector}"
         elif action == "select":
-            page.select_option(selector, value, timeout=5000)
+            element.select_option(value, timeout=5000)
             return f"Selected '{value}' in {selector}"
         elif action == "submit":
-            page.click(selector, timeout=5000)
+            element.click(timeout=5000)
             try:
                 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
                 page.wait_for_load_state("domcontentloaded", timeout=5000)
@@ -199,10 +252,29 @@ def browse_interact(selector: str, action: str, value: str = "") -> str:
             except PlaywrightTimeoutError:
                 pass
             return f"Submitted form via {selector}. New page: {page.title()}"
+        elif action == "press":
+            element.press(value, timeout=5000)
+            return f"Pressed '{value}' on {selector}"
+        elif action == "play":
+            element.evaluate("el => el.play()")
+            return f"Started media playback: {selector}"
         else:
-            return f"Unknown action '{action}'. Use: click, type, scroll, select, submit"
+            return (
+                f"Unknown action '{action}'. Use: click, type, scroll, select, "
+                "submit, press, play"
+            )
     except Exception as e:
         return f"Browser interaction failed: {e}"
+
+
+def browse_observe() -> str:
+    """Read the current rendered page and refresh its short element refs."""
+    if _browser_page is None:
+        return "No page loaded. Use BROWSE first."
+    try:
+        return _page_snapshot(_browser_page)
+    except Exception as e:
+        return f"Browser observation failed: {e}"
 
 
 def browse_screenshot(full_page: bool = False) -> str:

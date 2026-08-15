@@ -105,6 +105,7 @@ class PulseLoop:
     ):
         self.memory = memory_manager
         self.beliefs = belief_store
+        self._data_dir = str(Path(getattr(memory_manager, "data_dir", "data/memory")).parent)
 
         self.physics = physics_engine
         self.preconscious = preconscious
@@ -422,6 +423,15 @@ class PulseLoop:
             return (
                 f"[{timestamp}] (my focused work {state}) {objective}. "
                 f"What came back into awareness: {result}"
+            )
+
+        if event_type == "task_question":
+            task_id = data.get("task_id", "unknown")
+            objective = data.get("objective", "a task I formed")
+            question = data.get("question", "What information is missing?")
+            return (
+                f"[{timestamp}] (my focused work needs input; task {task_id}) "
+                f"To continue '{objective}', ask the person: {question}"
             )
 
         if event_type == "schedule_trigger":
@@ -1023,6 +1033,20 @@ class PulseLoop:
                 timestamp=timestamp,
             )
 
+        # Active cognition gets one tiny, provider-neutral view of Helix's
+        # existing affect field on every pulse.  This is self-state, not a
+        # memory-retrieval candidate or proof source, and remains outside
+        # task-worker contexts unless the task is identity/communication based.
+        if self._task_cognition is not None and self._task_cognition.active:
+            try:
+                from core.self_state import render_affect_capsule
+
+                self_state = render_affect_capsule()
+                if self_state:
+                    pulse_message = f"{pulse_message}\n\n{self_state}"
+            except Exception as exc:
+                logger.debug("Could not render compact self-state: %s", exc)
+
         # 4. Send to LLM
         thought = (
             self._send_office_pulse(pulse_message)
@@ -1550,14 +1574,36 @@ class PulseLoop:
                     max_output_tokens=self._provider_config.max_output_tokens,
                     options={**self._provider_config.options, "thought_only": True},
                 )
+            native_tools = self._tool_format not in ("local", "orchestrated")
             self._chat = create_session(
                 session_config,
                 system_instruction,
-                tool_declarations=None if self._tool_format == "local" else tool_declarations,
-                tool_executor=None if self._tool_format == "local" else self.tool_executor,
+                tool_declarations=tool_declarations if native_tools else None,
+                tool_executor=self.tool_executor if native_tools else None,
                 preconscious=self.preconscious,
             )
-            
+
+            # Orchestrated mode: the session above holds no tool schemas at
+            # all. Tool use arrives through directed passes instead, so a
+            # local model gets the whole toolset without the whole manifest.
+            if self._tool_format == "orchestrated" and not task_active:
+                try:
+                    from llm.orchestrated import wrap_session
+                    self._chat = wrap_session(
+                        self._chat,
+                        session_config,
+                        self.tool_executor,
+                        context_provider=self._tool_planning_context,
+                        ingest=self._ingest_tool_observations,
+                        progress_callback=self._tool_progress,
+                        data_dir=self._data_dir,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Could not activate orchestrated tool use: %s", e,
+                        exc_info=True,
+                    )
+
             # Capture focus origin for this session
             if self.physics.attention_center is not None:
                 self._session_focus_origin = self.physics.attention_center.copy()
@@ -1597,12 +1643,13 @@ class PulseLoop:
                 if identity_beliefs
                 else "I am Helix, experiencing an ongoing stream of events, memories, and thought."
             )
+            from core.self_state import identity_kernel
+
             return (
-                f"{primary_identity}\n\n"
-                "Think naturally about what is happening and what you intend to do. "
-                "Intentions you commit to may continue as tasks within your own cognition. "
-                "Everything beyond thought, including responding and deeper remembering, is a task. "
-                "Do not assume an intended action succeeded until its result enters awareness."
+                f"{identity_kernel(primary_identity)}\n\n"
+                "Think naturally. State concrete intentions in the first person so "
+                "Helix can continue them as tasks. Responding, acting, and deeper "
+                "recall are tasks. Never assume success before a result enters awareness."
             )
 
         # ── 1. Identity Preamble ─────────────────────────────────────
@@ -1764,7 +1811,18 @@ class PulseLoop:
             parts.extend(prop_lines)
 
         # ── 4. Communication & Actions ───────────────────────────────
-        if self._tool_format == "local":
+        if self._tool_format == "orchestrated":
+            # Layer A only — one line per toolset. The full schemas live in
+            # the directed passes that actually run the tools, so this costs
+            # ~200 tokens where the declarations would cost ~6000.
+            try:
+                from llm.orchestrated import main_window_tool_block
+                block = main_window_tool_block(self.tool_executor)
+                if block:
+                    parts.append(block)
+            except Exception as e:
+                logger.warning("Could not render the tool block: %s", e)
+        elif self._tool_format == "local":
             parts.append(
                 "\n## Communication & Actions\n"
                 "All interactions with your environment (files, web, terminal, social, email, perception) "
@@ -1986,6 +2044,113 @@ class PulseLoop:
 
         thought = self._chat.send_message(message)
         return thought
+
+    # ── Orchestrated Tool Use (local providers) ──────────────────────
+    #
+    # A directed tool pass is Helix under a task frame, not another agent.
+    # The frame — manifests, plans, step transcripts, summarization prompts
+    # — is scaffolding and is never written anywhere. What survives is what
+    # was done and what came back, stored first person at the originating
+    # pulse, so recall later reconstructs an act rather than a report.
+
+    # A result at or under this many characters is a bare confirmation
+    # ("ok", "saved", "3 rows updated") and carries nothing worth keeping.
+    _TOOL_CONFIRMATION_CHARS = 100
+
+    def _tool_progress(self, detail: str):
+        """Still-working signal while a tool pass holds the turn."""
+        try:
+            self.emit("tool_progress", {"detail": detail})
+        except Exception:
+            logger.debug("Tool progress emit failed", exc_info=True)
+
+    def _tool_planning_context(self, request: str) -> str:
+        """The scoped memory slice a routing decision needs.
+
+        mRAG walls its planner off from conversational memory on the grounds
+        that routing needs tool facts. Helix's requests are personally
+        situated — "email Josh about the thing we discussed" cannot be routed
+        from tool facts alone — so the planner gets the named subjects and
+        the topic surface, and nothing else.
+        """
+        lines: List[str] = []
+        try:
+            from core.memory_intake_office import MemoryIntakeOffice
+            # The intake desk only recognizes subjects it has been told
+            # about, so the people Helix actually knows are the vocabulary.
+            known = [
+                str(person.get("term") or "").strip()
+                for person in self.belief_store.get_category("people", limit=200)
+                if str(person.get("term") or "").strip()
+            ]
+            order = MemoryIntakeOffice().review(request, known_entities=known)
+            subjects = list(order.subjects)
+            query = order.search_query or request
+        except Exception:
+            subjects = []
+            query = request
+
+        try:
+            for name in subjects[:3]:
+                person = self.belief_store.get_person(name)
+                if person and person.get("content"):
+                    lines.append(f"- {person['content']}")
+        except Exception:
+            logger.debug("Person lookup failed for planning context", exc_info=True)
+
+        try:
+            for belief in self.belief_store.get_surface_by_topic(query, limit=4):
+                content = (belief or {}).get("content", "").strip()
+                if content:
+                    lines.append(f"- {content}")
+        except Exception:
+            logger.debug("Topic surface failed for planning context", exc_info=True)
+
+        return "\n".join(dict.fromkeys(lines))
+
+    def _ingest_tool_observations(self, result):
+        """Write what the tool passes actually did, first person.
+
+        Deterministic phrasing on purpose: this is bookkeeping, not language
+        work, so it needs no model call — the same reasoning that lets
+        WorkflowDetector template its crystallized skills.
+        """
+        if self.memory_manager is None:
+            return
+
+        pulse_id = getattr(self.physics, "_pulse_count", 0)
+        for observation in getattr(result, "observations", []) or []:
+            body = (observation.result or "").strip()
+            if observation.ok and len(body) <= self._TOOL_CONFIRMATION_CHARS:
+                continue
+
+            detail = ", ".join(
+                f"{key}={value!r}" for key, value in (observation.args or {}).items()
+            )
+            opening = (
+                f"I used {observation.tool}({detail})"
+                if observation.ok
+                else f"I tried {observation.tool}({detail}) and it failed"
+            )
+            content = f"{opening}. {body}" if body else f"{opening}."
+
+            try:
+                self.memory_manager.store(
+                    content=content,
+                    memory_type="observation",
+                    source="tool_use",
+                    importance=0.5 if observation.ok else 0.6,
+                    tags=[
+                        f"tool:{observation.tool}",
+                        f"turn:{self._pulse_count}",
+                    ],
+                    pulse_id=pulse_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Could not store tool observation for %s: %s",
+                    observation.tool, e,
+                )
 
     # ── Output Parsing ───────────────────────────────────────────────
 

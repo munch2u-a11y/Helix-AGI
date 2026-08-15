@@ -1,48 +1,87 @@
 # Helix Technical Audit Overview
 
-> [!WARNING]
-> **Historical code-audit collection.** These files preserve earlier source-level snapshots; line numbers, dimensions, provider behavior, and cross-subsystem claims may no longer match the live runtime. Use the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md) for current behavior.
+> [!NOTE]
+> **Definitive code-audit collection.** These files document the source-level architecture of Helix AGI, tracing the core loop, spatial manifold, task cognition subsystem, action path execution, and typed memory retrieval layers. For high-level roadmap and current specifications, see the [current architecture](../architecture_current.md) and [system manual](../../SYSTEM_MANUAL.md).
 
-These audits were written against the runtime wiring in `main.py`, the core runtime under `core/`, and persistence/search modules under `memory/` at their respective audit dates.
+These audits map the runtime wiring in `main.py`, the core runtime under `core/`, task cognition in `core/task_cognition/`, and persistence/search modules under `memory/`.
 
-## Runtime shape
+## Runtime Architecture Map
 
-- Startup wires `MemoryManager`, `BeliefStore`, `Scratchpad`, `PhysicsEngine`, `Preconscious`, `PulseLoop`, and the post-pulse hooks in `setup_helix()`. `main.py:126-505`
-- The spatial stack is split between a wrapper (`PhysicsEngine`), a dual-space controller (`SpatialMind`), and the underlying 8D manifold (`CognitiveSpace`). `core/physics_engine.py:56-98` (`__init__`), `core/physics_engine.py:210-298` (`step_pulse`), `core/spatial_mind.py:48-109` (`__init__`), `core/cognitive_space.py:351-394` (`__init__`)
-- Persistence is append-first: memories are journaled to `CognitiveJournal`, registered into the live 8D manifold through `PhysicsEngine.register_memory_entry()`, and added to the 384D `SemanticIndex` for conscious recall. `memory/memory_manager.py:199-295` (`store`), `core/physics_engine.py:588-688` (`register_memory_entry`), `memory/cognitive_journal.py:61-117` (`append`), `memory/semantic_index.py:108-225` (add and search)
-- Pulse-time behavior is centered on `PulseLoop._main_loop()` and `PulseLoop._pulse()`, with preconscious recall, LLM/tool orchestration, memory writes, spatial updates, and post-pulse hooks all happening from there. `core/pulse_loop.py:544-747` (`_main_loop`), `core/pulse_loop.py:810-1237` (`_pulse`)
+```mermaid
+flowchart TD
+    subgraph Core Loop & Consciousness
+        PL[PulseLoop]
+        PC[Preconscious]
+        CC[ContextCompressor]
+    end
 
-## Audit index
+    subgraph Task Cognition & Action Path
+        TCC[TaskCognitionController]
+        AP[ActionPlanner]
+        TP[ActionProtocol]
+        SS[SelfState]
+        TOR[ToolOrchestrator]
+    end
 
-### Core loop and orchestration
+    subgraph Memory & Typed Evidence Layer
+        RE[RecordEnvelope]
+        UR[UnifiedRetrieval]
+        MM[MemoryManager]
+        CJ[(CognitiveJournal JSONL)]
+        MLO[MemoryLogOffice]
+    end
 
-- [Pulse Loop Audit](audit_pulse_loop.md) - thread lifecycle, event queue, cadence state, rate-limit parking, context compression, and post-pulse dispatch. `core/pulse_loop.py:54-1737`
-- [Preconscious Audit](audit_preconscious.md) - layered context assembly, Layer 2 anchors, spatial neighborhood recall, gravity-ranked belief injection, and dashboard-side injection snapshots. `core/preconscious.py:46-2140`
+    subgraph Spatial & Affect Engine
+        CS[CognitiveSpace 8D]
+        SM[SpatialMind]
+        AF[AffectField]
+        ST[StabilitySentinel]
+    end
 
-### Spatial and physics stack
+    %% Wiring
+    PL -->|Pulse Event| PC
+    PL -->|User Intention| TCC
+    TCC --> AP
+    AP --> TP
+    TP --> TOR
+    TOR -->|Verified Receipts| RE
+    RE --> CJ
+    RE --> UR
+    PC -->|Gravity Query| SM
+    SM --> CS
+    ST -->|Somatics| CS
+```
 
-- [Physics Engine Audit](audit_physics_engine.md) - dual-space coordination, text embeddings, neighborhood/temporal queries, and boot hydration. `core/physics_engine.py:38-814`
-- [Spatial Mind Audit](audit_spatial_mind.md) - dual `CognitiveSpace` ownership, attention state, wake flashes, identity center, and persistence. `core/spatial_mind.py:29-743`
-- [Cognitive Space Audit](audit_cognitive_space.md) - 8D projection, KDTree-backed point store, gravity field, entropy and temperature metrics, trail particles, force integration, and affordance inference. `core/cognitive_space.py:87-1802`
+## Audit Index
 
-### Affect and post-pulse analysis
+### 1. Core Loop, Task Cognition & Action Execution
+- **[Pulse Loop Audit](audit_pulse_loop.md)** - thread lifecycle, event queue, cadence state, rate-limit parking, context compression, and post-pulse dispatch. `core/pulse_loop.py`
+- **[Preconscious Audit](audit_preconscious.md)** - layered context assembly, Layer 2 anchors, spatial neighborhood recall, gravity-ranked belief injection, and typed evidence injection. `core/preconscious.py`
+- **[Action Path & Action Planner Audit](audit_action_planner.md)** [NEW] - small-context task planning, 4-leg limits, clarification questions (`NEED_INPUT:`), `ToolOrchestrator`, `ToolTaskRunner`, and verification receipts. `core/action_planner.py`, `core/action_protocol.py`, `core/tool_orchestrator.py`
+- **[Task Cognition Subsystem Audit](audit_task_cognition.md)** [NEW] - intention detection (`inception.py`), focus worker arbitration (`focus.py`), capability routing (`capabilities.py`), and procedural memory (`procedures.py`). `core/task_cognition/`
 
-- [Affect Field Audit](audit_affect_field.md) - Plutchik-space wave packets, interference sampling, surfaced-memory reactivation, and persisted affect state. `core/affect_field.py:101-727`
-- [Affect Hook Audit](audit_affect_hook.md) - post-pulse hook integration, Lagrangian snapshot read, and stability sentinel Ω nudges. `core/affect_hook.py:41-159`
-- [Belief Detector Audit](audit_belief_detector.md) - post-pulse belief-signal classification, pending tag writes, and sentinel nudges. `core/belief_detector.py:78-380`
+### 2. Spatial Physics, Attention & Affect
+- **[Physics Engine Audit](audit_physics_engine.md)** - dual-space coordination, text embeddings, neighborhood/temporal queries, and boot hydration. `core/physics_engine.py`
+- **[Spatial Mind Audit](audit_spatial_mind.md)** - dual `CognitiveSpace` ownership, attention state, wake flashes, identity center, and persistence. `core/spatial_mind.py`
+- **[Cognitive Space Audit](audit_cognitive_space.md)** - 8D projection, KDTree-backed point store, gravity field, entropy and temperature metrics, trail particles, and force integration. `core/cognitive_space.py`
+- **[Affect Field Audit](audit_affect_field.md)** - Plutchik-space wave packets, interference sampling, surfaced-memory reactivation, and persisted affect state. `core/affect_field.py`
+- **[Affect Hook Audit](audit_affect_hook.md)** - post-pulse hook integration, Lagrangian snapshot read, and stability sentinel Ω nudges. `core/affect_hook.py`
+- **[Belief Detector Audit](audit_belief_detector.md)** - post-pulse belief-signal classification, pending tag writes, and sentinel nudges. `core/belief_detector.py`
 
-### Persistence and database layer
+### 3. Persistence & Typed Evidence Layer
+- **[Record Envelope & Typed Retrieval Audit](audit_record_envelope.md)** [NEW] - provider-free memory envelopes (`RecordEnvelope`), evidence assertions, multi-lane retrieval (`unified_retrieval.py`), and memory log maintenance (`MemoryLogOffice`). `memory/record_envelope.py`, `core/unified_retrieval.py`
+- **[Cognitive Journal Audit](audit_cognitive_journal.md)** - append-only JSONL storage, checksum verification, load, and sidecar compaction behavior. `memory/cognitive_journal.py`
+- **[Belief Store Audit](audit_belief_store.md)** - database layer, normalized schemas, category I/O, and stability-based confidence adjustments. `memory/belief_store.py`
+- **[Memory Manager Audit](audit_memory_manager.md)** - compatibility API, journal-backed writes, recent/history retrieval, semantic recall, and somatic echo. `memory/memory_manager.py`
+- **[Semantic Index Audit](audit_semantic_index.md)** - normalized 384D vector storage, numpy search, FAISS upgrade path, and persistence. `memory/semantic_index.py`
+- **[Scratchpad Audit](audit_scratchpad.md)** - markdown note storage, regex-based edits, due-note parsing, and preconscious summary generation. `core/scratchpad.py`
 
-- [Cognitive Journal Audit](audit_cognitive_journal.md) - append, checksum verification, load, and compaction behavior. `memory/cognitive_journal.py:22-236`
-- [Belief Store Audit](audit_belief_store.md) - database layer, normalized schemas, category I/O, and stability-based confidence adjustments. `memory/belief_store.py:108-1420`
-- [Memory Manager Audit](audit_memory_manager.md) - compatibility API, journal-backed writes, recent/history retrieval, semantic recall, and somatic echo. `memory/memory_manager.py:21-613`
-- [Semantic Index Audit](audit_semantic_index.md) - normalized 384D vector storage, numpy search, FAISS upgrade path, and persistence. `memory/semantic_index.py:47-513`
-- [Scratchpad Audit](audit_scratchpad.md) - markdown note storage, regex-based edits, due-note parsing, and preconscious summary generation. `core/scratchpad.py:31-282`
+### 4. Dynamic Tool Learning & Desktop Interface
+- **[Tool Learning Audit](audit_tool_learning.md)** - tool failure capture, nightly note compilation, success verification, and crystallized workflow skills. `core/tool_lesson_tracker.py`, `core/curator.py`, `tools/tool_registry.py`
 
-### Dynamic tool learning
+---
 
-- [Tool Learning Audit](audit_tool_learning.md) - tool failure capture, nightly note compilation, success verification, and crystallized workflow skills. `core/tool_lesson_tracker.py:76-346`, `core/curator.py:324-396`, `tools/tool_registry.py:209-259`
+## Boundary Notes & Execution Principles
 
-## Important boundary notes
-
-- Several module header docstrings are older than the implementation. The detailed audits cite the executable code paths rather than the prose headers. Examples: `core/pulse_loop.py:1-25`, `core/preconscious.py:1-26`, `memory/semantic_index.py:13-19`
+- **Verification Receipts:** Communication and host actions are considered complete only after authoritative receipts (read-back verification, DOM observation, or observer steps).
+- **Provider Independence:** Context assembly, record envelope decoration, and action planning enforce strict provider-neutral contracts.

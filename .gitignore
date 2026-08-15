@@ -56,6 +56,7 @@ test_pca.py
 
 # Python
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *$py.class
 *.egg-info/
@@ -64,6 +65,7 @@ build/
 *.egg
 .eggs/
 venv/
+.venv
 .env
 
 # IDE

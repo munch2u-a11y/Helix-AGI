@@ -345,17 +345,17 @@ BROWSER_TOOLS = [
     },
     {
         "name": "browse_interact",
-        "description": "Interact with an element on the current browser page.",
+        "description": "Interact with an element on the current rendered page using a short ref returned by browse/browse_observe (such as e3) or a CSS selector.",
         "parameters": {
             "type": "object",
             "properties": {
                 "selector": {
                     "type": "string",
-                    "description": "CSS selector for the element",
+                    "description": "Short element ref such as e3, or a CSS selector",
                 },
                 "action": {
                     "type": "string",
-                    "description": "Action to perform: click, type, select",
+                    "description": "Action: click, type, select, submit, scroll, press, or play",
                 },
                 "value": {
                     "type": "string",
@@ -363,6 +363,15 @@ BROWSER_TOOLS = [
                 },
             },
             "required": ["selector", "action"],
+        },
+    },
+    {
+        "name": "browse_observe",
+        "description": "Observe the current rendered page without navigating. Returns title, URL, visible text, and refreshed short refs for interactive elements. Use after interaction to verify page state.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
         },
     },
     {
@@ -1149,6 +1158,17 @@ DESKTOP_TOOLS = [
                 "app": {"type": "string", "description": "Application name to launch"},
             },
             "required": ["app"],
+        },
+    },
+    {
+        "name": "desktop_open_url",
+        "description": "Open an HTTP(S) URL in the person's visible default browser. Prefer this over the headless browser when the person asks to watch or interact with media. For playback, observe the active window, use desktop_key (usually space), then observe or screenshot again.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Complete http or https URL"},
+            },
+            "required": ["url"],
         },
     },
     {

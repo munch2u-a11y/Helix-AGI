@@ -14,6 +14,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.task_cognition.capabilities import CapabilityRegistry
+from core.task_cognition.controller import TaskCognitionController
 from core.task_cognition.focus import FocusManager
 from core.task_cognition.inception import IntentionDetector
 from core.task_cognition.models import TaskRecord, TaskStatus
@@ -72,6 +73,25 @@ class IntentionDetectorTests(unittest.TestCase):
             ['Mara is talking to me via dashboard. They said: "Please update the project file."'],
         )
         self.assertEqual(found[0].authorization_scope, "explicit")
+
+    def test_direct_request_becomes_task_without_model_commitment_phrase(self):
+        found = IntentionDetector().detect(
+            "This request is clear.",
+            ['[12:00] Alex is talking to me via dashboard. They said: "Please find the report and email it to me."'],
+        )
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].task_type, "action")
+        self.assertEqual(found[0].authorization_scope, "explicit")
+        self.assertIn("find the report", found[0].objective)
+
+    def test_non_action_direct_message_only_authorizes_response(self):
+        found = IntentionDetector().detect(
+            "I understand the question.",
+            ['[12:00] Alex is talking to me via dashboard. They said: "How are you feeling today?"'],
+        )
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].task_type, "respond")
+        self.assertEqual(found[0].authorization_scope, "direct_response")
 
 
 class TaskStoreTests(unittest.TestCase):
@@ -194,6 +214,50 @@ class _FocusSession:
         self.closed = True
 
 
+class _ScriptedFocusSession:
+    """Provider session that returns explicit calls/results per turn."""
+
+    def __init__(self, turns):
+        self.turns = list(turns)
+        self.calls = []
+        self.results = []
+        self.closed = False
+
+    def send_message(self, _message):
+        thought, calls, results = self.turns.pop(0)
+        self.calls = list(calls)
+        self.results = list(results)
+        return thought
+
+    def get_last_tool_calls(self):
+        return list(self.calls)
+
+    def get_pending_tool_results(self):
+        results, self.results = self.results, []
+        return results
+
+    def close(self):
+        self.closed = True
+
+
+def _focus_manager(tmp, registry, executor, max_depth=3):
+    task_dir = os.path.join(tmp, "tasks")
+    store = TaskStore(task_dir)
+    manager = FocusManager(
+        store=store,
+        capabilities=CapabilityRegistry(registry),
+        orchestrators=OrchestratorSpace(task_dir, semantic_dim=32),
+        procedures=ProceduralMemory(task_dir),
+        context_builder=_Context(),
+        provider_config=ProviderConfig("codex_cli", "", context_window=128_000),
+        tool_executor=executor,
+        identity="I am Helix.",
+        max_workers=1,
+        max_depth=max_depth,
+    )
+    return store, manager
+
+
 class FocusManagerTests(unittest.TestCase):
     def test_identity_kernel_is_conditional(self):
         manager = FocusManager.__new__(FocusManager)
@@ -259,6 +323,209 @@ class FocusManagerTests(unittest.TestCase):
             self.assertEqual(executor.calls[0][0], "reply")
             self.assertEqual(store.get(task.task_id).status, TaskStatus.COMPLETE)
             self.assertTrue(session.closed)
+
+    def test_plain_model_claim_with_no_receipt_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ToolRegistry()
+            registry.register(
+                name="reply", toolset="core", schema=_reply_schema(),
+                handler=lambda args: "Sent to Mara.",
+            )
+            executor = _Executor()
+            store, manager = _focus_manager(tmp, registry, executor, max_depth=1)
+            task = store.create(TaskRecord(
+                objective="reply to Mara",
+                task_type="respond",
+                authorization_scope="direct_response",
+            ))
+            session = _ScriptedFocusSession([
+                ("Done — I sent it.", [], []),
+            ])
+            with patch("core.task_cognition.focus.create_session", return_value=session):
+                outcome = manager._run(task.task_id, {"core"})
+            manager.shutdown()
+
+            self.assertFalse(outcome.success)
+            self.assertEqual(outcome.verification["status"], "no_action")
+            self.assertEqual(store.get(task.task_id).status, TaskStatus.FAILED)
+            self.assertEqual(executor.calls, [])
+
+    def test_failed_attempt_can_recover_before_verification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ToolRegistry()
+            registry.register(
+                name="reply", toolset="core", schema=_reply_schema(),
+                handler=lambda args: "unused",
+            )
+            executor = _Executor()
+            store, manager = _focus_manager(tmp, registry, executor, max_depth=3)
+            task = store.create(TaskRecord(
+                objective="reply to Mara",
+                task_type="respond",
+                authorization_scope="direct_response",
+            ))
+            failed_args = {"recipient": "unknown", "message": "Hi"}
+            good_args = {"recipient": "Mara", "message": "Hi"}
+            session = _ScriptedFocusSession([
+                (
+                    "I tried the remembered address.",
+                    [{"name": "reply", "args": failed_args}],
+                    [{"name": "reply", "args": failed_args, "result": "Error: invalid recipient"}],
+                ),
+                (
+                    "I corrected the recipient.",
+                    [{"name": "reply", "args": good_args}],
+                    [{"name": "reply", "args": good_args, "result": "Sent to Mara."}],
+                ),
+                ("The reply is now delivered.", [], []),
+            ])
+            with patch("core.task_cognition.focus.create_session", return_value=session):
+                outcome = manager._run(task.task_id, {"core"})
+            manager.shutdown()
+
+            self.assertTrue(outcome.success)
+            self.assertEqual(outcome.verification["status"], "verified")
+            self.assertEqual(len(outcome.receipts), 2)
+            self.assertEqual(store.get(task.task_id).status, TaskStatus.COMPLETE)
+
+    def test_missing_material_input_pauses_without_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ToolRegistry()
+            registry.register(
+                name="reply", toolset="core", schema=_reply_schema(),
+                handler=lambda args: "Sent.",
+            )
+            executor = _Executor()
+            store, manager = _focus_manager(tmp, registry, executor, max_depth=1)
+            task = store.create(TaskRecord(
+                objective="send the report to Alex",
+                task_type="respond",
+                authorization_scope="direct_response",
+            ))
+            session = _ScriptedFocusSession([
+                ("NEED_INPUT: Which Alex should receive the report?", [], []),
+            ])
+            with patch("core.task_cognition.focus.create_session", return_value=session):
+                outcome = manager._run(task.task_id, {"core"})
+            manager.shutdown()
+
+            stored = store.get(task.task_id)
+            self.assertTrue(outcome.waiting_for_input)
+            self.assertEqual(stored.status, TaskStatus.WAITING_INPUT)
+            self.assertEqual(stored.question, "Which Alex should receive the report?")
+            self.assertEqual(executor.calls, [])
+
+    def test_unverified_file_write_is_partial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ToolRegistry()
+            schema = {
+                "name": "write_file",
+                "description": "Write and update a local file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                    "required": ["path", "content"],
+                },
+            }
+            registry.register(
+                name="write_file", toolset="files", schema=schema,
+                handler=lambda args: "ok",
+            )
+            executor = _Executor()
+            store, manager = _focus_manager(tmp, registry, executor, max_depth=2)
+            task = store.create(TaskRecord(
+                objective="update the project file",
+                task_type="action",
+                authorization_scope="explicit",
+            ))
+            args = {"path": "/tmp/project.txt", "content": "updated"}
+            session = _ScriptedFocusSession([
+                (
+                    "I wrote the file.",
+                    [{"name": "write_file", "args": args}],
+                    [{"name": "write_file", "args": args, "result": "ok"}],
+                ),
+                ("Done.", [], []),
+            ])
+            with patch("core.task_cognition.focus.create_session", return_value=session):
+                outcome = manager._run(task.task_id, {"files"})
+            manager.shutdown()
+
+            self.assertFalse(outcome.success)
+            self.assertEqual(outcome.verification["status"], "partial")
+            self.assertEqual(store.get(task.task_id).status, TaskStatus.PARTIAL)
+
+
+class ClarificationResumeTests(unittest.TestCase):
+    class _Focus:
+        def __init__(self):
+            self.submissions = []
+
+        def submit(self, task, active):
+            self.submissions.append((task.task_id, set(active)))
+            return True
+
+    def test_answer_resumes_same_durable_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TaskStore(tmp)
+            task = store.create(TaskRecord(objective="send report to Alex"))
+            store.transition(
+                task.task_id,
+                TaskStatus.WAITING_INPUT,
+                question="Which Alex?",
+            )
+            focus = self._Focus()
+            controller = TaskCognitionController.__new__(TaskCognitionController)
+            controller.mode = "active"
+            controller.focus = focus
+            controller.store = store
+            controller.pulse_loop = SimpleNamespace(_active_toolsets={"email"})
+
+            self.assertTrue(controller.provide_input(task.task_id, "Alex Rivera"))
+            restored = store.get(task.task_id)
+            self.assertEqual(restored.status, TaskStatus.WAITING_INPUT)
+            self.assertEqual(restored.question, "")
+            self.assertIn("Alex Rivera", restored.source_events[-1])
+            self.assertEqual(focus.submissions, [(task.task_id, {"email"})])
+
+    def test_resumed_answer_does_not_spawn_a_second_reply_task(self):
+        controller = TaskCognitionController.__new__(TaskCognitionController)
+        controller.mode = "active"
+        controller.focus = self._Focus()
+        controller._pending_resumed = True
+        controller._resume_waiting_from_events = lambda _ctx: True
+
+        class _Detector:
+            def detect(self, _thought, _events):
+                raise AssertionError("clarification answer was detected as a new task")
+
+        controller.detector = _Detector()
+        ctx = SimpleNamespace(thought="Alex Rivera", events=[], active_toolsets={"email"})
+        controller.observe_pulse(ctx)
+
+
+class ProceduralMemoryVerificationTests(unittest.TestCase):
+    def test_only_verified_routes_become_recommendations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            memory = ProceduralMemory(tmp)
+            task = TaskRecord(objective="email Mara the weekly report", task_type="action")
+            memory.observe(
+                task, ["desktop_open", "desktop_type"],
+                success=False, verified=False, error_codes=["window_not_found"],
+            )
+            memory.observe(
+                task, ["email_send"], success=True, verified=True,
+            )
+            routes = memory.relevant(task)
+            recommended = [item for item in routes if item.get("recommended")]
+            avoided = [item for item in routes if item.get("avoid")]
+
+            self.assertEqual(recommended[0]["tool_sequence"], ["email_send"])
+            self.assertEqual(avoided[0]["tool_sequence"], ["desktop_open", "desktop_type"])
+            self.assertIn("window_not_found", avoided[0]["error_codes"])
 
 
 class PulseIntegrationTests(unittest.TestCase):

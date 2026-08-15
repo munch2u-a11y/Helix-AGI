@@ -20,6 +20,7 @@ import os
 import glob
 import logging
 import subprocess
+from urllib.parse import urlparse
 from datetime import datetime
 from pathlib import Path
 
@@ -88,11 +89,16 @@ def desktop_click(x: int, y: int, button: str = "left", double: bool = False) ->
     button_map = {"left": "1", "right": "3", "middle": "2"}
     btn = button_map.get(button, "1")
 
-    _run_xdotool("mousemove", str(x), str(y))
+    moved = _run_xdotool("mousemove", str(x), str(y))
+    if moved:
+        return moved
     if double:
-        _run_xdotool("click", "--repeat", "2", btn)
+        clicked = _run_xdotool("click", "--repeat", "2", btn)
     else:
-        _run_xdotool("click", btn)
+        clicked = _run_xdotool("click", btn)
+
+    if clicked:
+        return clicked
 
     return f"Clicked at ({x}, {y}) button={button}{' (double)' if double else ''}"
 
@@ -107,7 +113,9 @@ def desktop_scroll(direction: str = "down", clicks: int = 3) -> str:
     """Scroll up or down."""
     # xdotool: button 4 = scroll up, button 5 = scroll down
     button = "4" if direction == "up" else "5"
-    _run_xdotool("click", "--repeat", str(clicks), button)
+    result = _run_xdotool("click", "--repeat", str(clicks), button)
+    if result:
+        return result
     return f"Scrolled {direction} {clicks} clicks"
 
 
@@ -133,7 +141,9 @@ def desktop_focus(title: str) -> str:
         return f"No window found matching '{title}'."
 
     first_id = window_id.split("\n")[0].strip()
-    _run_xdotool("windowactivate", first_id)
+    activated = _run_xdotool("windowactivate", first_id)
+    if activated:
+        return activated
     name = _run_xdotool("getwindowname", first_id)
 
     return f"Focused window: {name} (ID: {first_id})"
@@ -161,6 +171,35 @@ def desktop_open(app: str) -> str:
         return f"Application '{app}' not found."
     except Exception as e:
         return f"Failed to launch '{app}': {e}"
+
+
+def desktop_open_url(url: str) -> str:
+    """Open an HTTP(S) URL in the person's default visible browser."""
+    value = str(url or "").strip()
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return "A complete http or https URL is required."
+
+    try:
+        from tools.browser import _is_domain_allowed
+        if not _is_domain_allowed(value):
+            return f"Domain not on whitelist. Access denied for: {value}"
+    except Exception:
+        logger.debug("Could not apply browser domain policy", exc_info=True)
+
+    try:
+        subprocess.Popen(
+            ["xdg-open", value],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=_get_gui_env(),
+        )
+        return f"Opened URL in the default browser: {value}"
+    except FileNotFoundError:
+        return "Application not found: xdg-open"
+    except Exception as e:
+        return f"Failed to open URL: {e}"
 
 
 def desktop_screenshot() -> str:

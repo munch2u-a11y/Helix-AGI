@@ -345,6 +345,21 @@ Codex built-in shell/filesystem/web tools are not authoritative: its isolated
 working directory is read-only and all real side effects remain subject to
 Helix's safety and availability checks.
 
+The supported one-switch setup is `python setup.py --non-interactive
+--subscription-cli codex_cli`, or `codex_cli` plus **Helix agent mode** in the
+Models tab. Setup safely upserts only `HELIX_PROVIDER` and `HELIX_MODEL` in an
+existing credentials file and enables active task cognition in `config.json`.
+The Models tab probes the real App Server initialize/thread handshake. A login
+status by itself is not considered a ready transport.
+
+Active consciousness uses a compact provider-neutral self contract. The model
+is named as a replaceable reasoning substrate; continuity remains in Helix's
+canonical memories, beliefs, durable tasks, and affect field. Each pulse may
+include a short numerical felt-orientation capsule. It can influence attention
+and tone, but never functions as evidence and cannot override authorization,
+safety, or action verification. Communication and identity-dependent focus
+tasks may receive the same small capsule; unrelated tool workers do not.
+
 `codex_cli` also routes auxiliary belief extraction, formatting, consolidation,
 and compression through isolated subscription-backed sessions. This removes a
 hidden Gemini-key dependency but increases ChatGPT/Codex subscription usage.

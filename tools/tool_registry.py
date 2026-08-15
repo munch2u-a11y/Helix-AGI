@@ -493,6 +493,164 @@ class ToolRegistry:
 
         return result
 
+    # ── Two-Layer Schema Rendering (orchestrated local tool use) ──────
+    #
+    # An API provider is handed every active declaration and selects from
+    # them natively. A 3-4B local model at an 8K window cannot hold 80+
+    # schemas, so the same registry is rendered at two depths:
+    #
+    #   Layer A — one line per toolset: what exists at all. Tens of tokens.
+    #   Layer B — the full schemas for ONE toolset, given to a directed
+    #             tool pass working inside that toolset. Hundreds.
+    #
+    # Learned notes need no special handling: apply_learned_notes folds them
+    # into entry.schema["description"], so Layer B carries them already.
+
+    def _available_toolsets(
+        self, include_unavailable: bool = False,
+    ) -> Dict[str, List[ToolEntry]]:
+        """Group entries by toolset, dropping ones whose check_fn fails."""
+        with self._lock:
+            entries = list(self._tools.values())
+            checks = dict(self._toolset_checks)
+
+        grouped: Dict[str, List[ToolEntry]] = {}
+        for entry in entries:
+            grouped.setdefault(entry.toolset, []).append(entry)
+
+        if include_unavailable:
+            return grouped
+
+        return {
+            name: members
+            for name, members in grouped.items()
+            if name not in checks or _check_fn_cached(checks[name])
+        }
+
+    def toolset_brief(
+        self,
+        call_format: str = "",
+        include_unavailable: bool = False,
+    ) -> str:
+        """Layer A: the slim toolset list a model keeps in its main window.
+
+        Args:
+            call_format: Optional instruction describing how to request a
+                toolset. Supplied by the caller because it is provider
+                specific — a grammar-constrained local model and a
+                JSON-parsed one are told different things.
+            include_unavailable: Advertise toolsets whose check_fn fails
+                (missing API key, service down). Off by default so the
+                model is never offered something that cannot run.
+        """
+        grouped = self._available_toolsets(include_unavailable)
+        if not grouped:
+            return ""
+
+        with self._lock:
+            descriptions = dict(self._toolset_descriptions)
+
+        lines: List[str] = []
+        if call_format:
+            lines.append(call_format)
+        for name in sorted(grouped):
+            count = len(grouped[name])
+            summary = descriptions.get(name, "")
+            suffix = f": {summary}" if summary else ""
+            lines.append(f"• {name} ({count} tools){suffix}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_parameters(schema: dict) -> List[str]:
+        """Render a JSON-Schema parameter block as readable bullet lines.
+
+        Dumping raw JSON costs roughly twice the tokens and reads worse to a
+        small model than a plain list of named arguments.
+        """
+        params = schema.get("parameters") or {}
+        properties = params.get("properties") or {}
+        if not properties:
+            return []
+
+        required = set(params.get("required") or [])
+        lines = ["Arguments:"]
+        for pname, pspec in properties.items():
+            if not isinstance(pspec, dict):
+                pspec = {}
+            ptype = pspec.get("type", "any")
+            marker = ", required" if pname in required else ""
+            line = f"  - {pname} ({ptype}{marker})"
+            desc = str(pspec.get("description", "") or "").strip()
+            if desc:
+                line += f": {desc}"
+            enum = pspec.get("enum")
+            if enum:
+                line += f" [one of: {', '.join(str(v) for v in enum)}]"
+            lines.append(line)
+        return lines
+
+    def toolset_manifest(
+        self,
+        toolset: str,
+        include_unavailable: bool = False,
+    ) -> str:
+        """Layer B: full schemas for one toolset, for a directed tool pass."""
+        grouped = self._available_toolsets(include_unavailable)
+        members = grouped.get(toolset)
+        if not members:
+            return ""
+
+        with self._lock:
+            summary = self._toolset_descriptions.get(toolset, "")
+
+        header = f"TOOLSET '{toolset}'"
+        if summary:
+            header += f": {summary}"
+        lines: List[str] = [header, ""]
+
+        check_results: Dict[Callable, bool] = {}
+        for entry in sorted(members, key=lambda e: e.name):
+            if entry.check_fn and not include_unavailable:
+                if entry.check_fn not in check_results:
+                    check_results[entry.check_fn] = _check_fn_cached(entry.check_fn)
+                if not check_results[entry.check_fn]:
+                    continue
+            lines.append(f"### {entry.name}")
+            description = str(
+                entry.schema.get("description", "") or entry.description or ""
+            ).strip()
+            if description:
+                lines.append(description)
+            lines.extend(self._render_parameters(entry.schema))
+            lines.append("")
+
+        return "\n".join(lines).strip()
+
+    def toolset_tool_names(
+        self,
+        toolset: str,
+        include_unavailable: bool = False,
+    ) -> List[str]:
+        """Names in one toolset, filtered the same way the manifest is.
+
+        The grammar handed to a constrained local model must match the
+        manifest it was shown, or the model can be masked away from a tool
+        it was just told about.
+        """
+        grouped = self._available_toolsets(include_unavailable)
+        members = grouped.get(toolset) or []
+
+        names: List[str] = []
+        check_results: Dict[Callable, bool] = {}
+        for entry in members:
+            if entry.check_fn and not include_unavailable:
+                if entry.check_fn not in check_results:
+                    check_results[entry.check_fn] = _check_fn_cached(entry.check_fn)
+                if not check_results[entry.check_fn]:
+                    continue
+            names.append(entry.name)
+        return sorted(names)
+
     # ── Turn-based Usage Tracking (for auto-disengage) ────────────────
 
     def record_tool_use(self, name: str, turn: int):

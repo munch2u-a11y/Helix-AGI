@@ -132,3 +132,31 @@ def codex_login_status() -> str:
         return ""
     output = (proc.stdout or proc.stderr or "").strip()
     return output if proc.returncode == 0 else ""
+
+
+def codex_app_server_probe(timeout: int = 20) -> tuple[bool, str]:
+    """Verify login plus the App Server initialize/thread handshake.
+
+    Login status alone does not prove that the installed CLI supports the
+    production transport Helix uses.  This opens no turn, calls no host tool,
+    and closes the ephemeral read-only thread immediately.
+    """
+    login = codex_login_status()
+    if not login:
+        return False, "Install the Codex CLI and run `codex login`."
+    session = None
+    try:
+        from core.self_state import identity_kernel
+        from llm.providers.codex_cli_provider import CodexCliSession
+
+        session = CodexCliSession(
+            system_instruction=identity_kernel("I am Helix."),
+            options={"timeout": timeout, "thought_only": True, "effort": "low"},
+        )
+        return True, f"{login}\nCodex App Server handshake: ready."
+    except Exception as exc:
+        logger.warning("Codex App Server probe failed: %s", exc)
+        return False, f"Codex login is present, but App Server failed: {exc}"
+    finally:
+        if session is not None:
+            session.close()

@@ -27,6 +27,10 @@ _EXPLICIT_REQUEST = re.compile(
     r"go\s+ahead\s+and|create|write|update|edit|run|search|find|send|post)\b",
     re.IGNORECASE,
 )
+_DIRECT_MESSAGE = re.compile(
+    r"\bis talking to me via\b.*?\bThey said:\s*\"(?P<message>.*)\"\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -113,7 +117,41 @@ class IntentionDetector:
                 ))
                 if len(candidates) >= self.max_tasks:
                     return candidates
+
+        # Do not depend on the provider choosing the phrase "I will". When no
+        # natural commitment was voiced, a direct message becomes either an
+        # explicitly authorized action or a narrowly authorized reply. Merely
+        # speculative wording never receives mutation authority here.
+        if not candidates:
+            direct = self._latest_direct_message(event_list)
+            if direct:
+                explicit = bool(_EXPLICIT_REQUEST.search(direct))
+                task_type = self._classify(direct) if explicit else "respond"
+                if task_type in {"remember", "deliberate", "plan"}:
+                    scope = "internal"
+                elif explicit and task_type == "action":
+                    scope = "explicit"
+                else:
+                    task_type = "respond"
+                    scope = "direct_response"
+                objective = direct[:1000].strip()
+                candidates.append(TaskCandidate(
+                    objective=objective,
+                    task_type=task_type,
+                    commitment=1.0,
+                    authorization_scope=scope,
+                    signature=self.signature(task_type, objective),
+                    evidence=f"Direct user request: {objective}",
+                ))
         return candidates
+
+    @staticmethod
+    def _latest_direct_message(events: List[str]) -> str:
+        for event in reversed(events):
+            match = _DIRECT_MESSAGE.search(str(event or ""))
+            if match:
+                return match.group("message").strip()
+        return ""
 
     @staticmethod
     def _clean_objective(text: str) -> str:

@@ -295,12 +295,14 @@ def test_verification_ttl_expiry(h: ToolLearningTestHarness):
         "tools": ["write_to_file"],
     }])
 
-    # Manually expire the injection by backdating
+    # Manually expire the injection by backdating beyond the configured TTL.
+    # Local orchestrated runs intentionally use a longer window than a
+    # single API call, so this test must follow the runtime contract.
     import core.tool_lesson_tracker as tlt
     with tlt._state_lock:
         for note in tlt._recent_injections:
             if note["belief_id"] == bid:
-                note["t"] = time.time() - 700  # 700s > 600s TTL
+                note["t"] = time.time() - (tlt._VERIFICATION_TTL_SECONDS + 1)
 
     # Tool success after TTL expiry
     h.tlt.observe_tool_result(

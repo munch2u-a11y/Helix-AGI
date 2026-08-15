@@ -33,6 +33,7 @@ propagated — this must never break a tool call.
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -52,7 +53,17 @@ _FAILURE_RE = re.compile(r"^(Tool error \(|Error\b|Unknown tool)")
 _SIGNATURE_COOLDOWN_SECONDS = 6 * 3600
 
 # A success verifies an injected lesson only within this window.
-_VERIFICATION_TTL_SECONDS = 600
+#
+# Sized originally for a single API tool call, where the gap between
+# injecting a lesson and the tool succeeding is seconds. An orchestrated
+# local run is plan → several directed passes → tail summary, all on one
+# consumer GPU, and can take far longer than ten minutes end to end. At the
+# old ceiling those successes landed after expiry, so lessons that were
+# working never earned verifications and decayed out of the belief store as
+# if they had failed.
+_VERIFICATION_TTL_SECONDS = max(
+    60, int(os.environ.get("HELIX_TOOL_LESSON_TTL_SECONDS", "2700"))
+)
 
 # Cap on how much of args/error text goes into a candidate.
 _ARGS_CHARS = 150
@@ -145,7 +156,13 @@ def observe_tool_result(tool_name: str, args: Optional[dict], result: str):
     """Classify a tool result and route it. Called by the executor on
     EVERY function call — must be cheap and must never raise."""
     try:
-        if result and _FAILURE_RE.match(result):
+        # Use the same typed boundary as task verification.  The historical
+        # prefix-only expression missed real handler returns such as
+        # ``Search failed: ...`` and ``Could not deliver ...``, causing a
+        # failed path to verify its lesson as though it had succeeded.
+        from core.action_protocol import classify_tool_result
+        receipt = classify_tool_result(tool_name, args, result)
+        if not receipt.ok:
             _record_failure(tool_name, args, result)
         else:
             _record_success(tool_name)

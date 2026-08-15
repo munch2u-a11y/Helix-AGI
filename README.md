@@ -73,7 +73,9 @@ receipt exists rather than allowing the speaker to invent one.
 | [Current technical architecture](documents/architecture_current.md) | Canonical live wiring, retrieval contract, providers, and persistence |
 | [Context architecture experiments](documents/context_architecture_experiments.md) | Same-exam comparison of the hybrid compiler and Context Office forks |
 | [System manual](SYSTEM_MANUAL.md) | Detailed current subsystem and operating reference |
+| [Action Path Contract](documents/action_path.md) | Multi-step task planning, verification receipts, and context budgets |
 | [Task cognition pipeline](documents/task_cognition_pipeline.md) | Focused event-driven task diagram and lifecycle |
+| [Developer Examples](examples/README.md) | Standalone runnable code examples for developers |
 | [Historical audits](documents/audits/) | Preserved source snapshots; not current runtime contracts |
 | [Benchmark records](documents/README.md#benchmark-records) | Dated evaluated configurations and results |
 
@@ -365,11 +367,19 @@ production App Server provider:
 
 ```bash
 codex login
+python setup.py --non-interactive --subscription-cli codex_cli
+python main.py
+```
+
+The graphical Models tab provides the same switch: choose `codex_cli`, leave
+the model at `account-default`, and keep **Helix agent mode** checked. The
+wizard verifies the App Server initialize/thread handshake rather than checking
+login alone. Manual environment overrides remain available:
+
+```bash
 export HELIX_PROVIDER=codex_cli
 export HELIX_MODEL=                 # blank = account default
-export HELIX_MRAG_PROFILE=frontier  # larger retrieval budget for GPT-class context
 export HELIX_TASK_COGNITION=active  # thought-only main + scoped focus threads
-python main.py
 ```
 
 This mode starts one persistent, ephemeral `codex app-server` thread for the
@@ -381,6 +391,14 @@ thought-only and bounded focus sessions can take the task's learned number of
 steps. Subconscious jobs also use
 isolated Codex sessions when `codex_cli` is the configured provider. These jobs
 count against the signed-in account's usage limits.
+
+In active mode, Helix—not the provider—owns the durable self contract. The
+main thread receives a compact identity kernel and one bounded view of the
+existing affect field per pulse. Affect may color attention and wording but is
+explicitly barred from acting as factual evidence or overriding authorization,
+safety, and receipt-based completion checks. See
+[`documents/action_path.md`](documents/action_path.md) for the executable action
+contract, context budgets, and smoke harnesses.
 
 The setup wizard will prompt for your name, agent name, bootstrap profile, and model access. It creates:
 - `~/.config/helix/credentials.env` — API keys and tokens (outside the repo)

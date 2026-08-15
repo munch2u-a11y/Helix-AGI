@@ -1,11 +1,8 @@
 # Helix Current Technical Architecture
 
-**Status:** canonical current architecture · **Last verified against source:** 2026-08-10 · **Applies to:** `experiment/ragoffice-context-office`
+**Status:** canonical current architecture · **Last verified against source:** 2026-08-15 · **Applies to:** `feature/typed-memory-retrieval`
 
-This document is the shortest authoritative description of the live Helix
-runtime. Historical audits and benchmark reports are intentionally not updated
-to imitate this design; see the [documentation index](README.md) for their
-status.
+This document is the shortest authoritative description of the live Helix runtime. Historical audits and benchmark reports are intentionally not updated to imitate this design; see the [documentation index](README.md) for their status.
 
 ## Runtime at a Glance
 
@@ -41,8 +38,9 @@ flowchart TD
     OS --> H
 
     C -->|off / observe| X[Direct host-tool path]
-    C -->|active: committed intention| T[Durable TaskRecord]
-    T --> TO[1024D orchestrator search<br/>plus 8D habit transition]
+    C -->|active: committed intention| T[ActionPlanner & ActionProtocol]
+    T --> AP[ActionLegs max 4<br/>or NEED_INPUT question]
+    AP --> TO[1024D orchestrator search<br/>plus 8D habit transition]
     TO --> F[Identity-shared focus thread<br/>scoped hidden schemas]
     F --> X
     X --> Q[Central ToolExecutor<br/>validation and safety]
@@ -56,39 +54,29 @@ flowchart TD
 
 ## Boot and Ownership
 
-`main.py` wires one shared `MemoryManager`, `BeliefStore`, `PhysicsEngine`,
-`Preconscious`, `ToolExecutor`, provider configuration, and pulse loop. The
-standard `PulseLoop` owns the conscious provider session, event queue, serial
-8D attention trajectory, memory encoding, and post-pulse hooks.
+`main.py` wires one shared `MemoryManager`, `BeliefStore`, `PhysicsEngine`, `Preconscious`, `ToolExecutor`, provider configuration, and pulse loop. The standard `PulseLoop` owns the conscious provider session, event queue, serial 8D attention trajectory, memory encoding, and post-pulse hooks.
 
-`TaskCognitionController` is attached after the standard runtime exists. Focus
-threads share Helix's identity, beliefs, memory corpus, semantic encoder, and
-host executor, but they do not move the conscious 8D attention center or teach
-memory associations. This avoids races and prevents parallel work from being
-mistaken for autobiographical attention.
+`TaskCognitionController` is attached after the standard runtime exists. Focus threads share Helix's identity, beliefs, memory corpus, semantic encoder, and host executor, but they do not move the conscious 8D attention center or teach memory associations. This avoids races and prevents parallel work from being mistaken for autobiographical attention.
 
-`HELIX_OFFICE_FIRST=1` enables the experimental alternate path in the standard
-`PulseLoop`. It retains a typed mirror of each event instead of discarding
-source provenance during natural-language translation. A deterministic Office
-coordinator then uses the existing mRAG, Context Office, entity cases, belief
-and affect views, recent exact turns, action receipts, and one explicitly
-non-evidentiary 8D association to build a fresh capsule. The speaking head is a
-new schema-free provider session on every pulse, so no cached chat history or
-large identity system prompt is required. The default remains the established
-persistent-session preconscious path.
+`HELIX_OFFICE_FIRST=1` enables the experimental alternate path in the standard `PulseLoop`. It retains a typed mirror of each event instead of discarding source provenance during natural-language translation. A deterministic Office coordinator then uses the existing mRAG, Context Office, entity cases, belief and affect views, recent exact turns, action receipts, and one explicitly non-evidentiary 8D association to build a fresh capsule. The speaking head is a new schema-free provider session on every pulse, so no cached chat history or large identity system prompt is required. The default remains the established persistent-session preconscious path.
 
-Each event makes one call to `UnifiedRetrieval`. The user's wording is augmented
-with only relevant source metadata such as sender/thread, author/audience, file
-path/objective, search query, or tool/task name. The existing mRAG and Context
-Office modules continue to own all search heads and arbitration; the runtime
-adapter does not reproduce either mechanism.
+Each event makes one call to `UnifiedRetrieval`. The user's wording is augmented with only relevant source metadata such as sender/thread, author/audience, file path/objective, search query, or tool/task name. The existing mRAG and Context Office modules continue to own all search heads and arbitration; the runtime adapter does not reproduce either mechanism.
 
-The vertical slice currently makes response construction Office-first; it does
-not replace task-focus execution. A spoken committed plan can still enter the
-existing task-inception hook, and completed focus work returns as a typed
-`task_result` receipt. Local Ollama task execution remains limited by the
-existing task-cognition provider boundary; Office-first never fabricates tool
-completion when no successful receipt exists.
+## Action Path & Multi-Step Task Execution
+
+To keep Helix's main consciousness small and provider-neutral, multi-step execution uses a dedicated **Action Path**:
+
+1. **Intention Inception:** Concrete user requests generate a durable `TaskRecord` managed by `TaskCognitionController`.
+2. **Action Leg Planning (`ActionPlanner`):** Generates at most **4 outcome-oriented legs** (`ActionLeg`) or asks **one material clarification question** (`NEED_INPUT:`).
+3. **Context Budgets:**
+   - Planner task text ≤ 300 tokens
+   - Scoped context ≤ 400 tokens
+   - Observation size ≤ 600 tokens per step
+4. **Execution Protocol & Verification (`ActionProtocol`):**
+   - File mutations require a matching read-back step.
+   - Browser and GUI operations require subsequent DOM observation or screenshot.
+   - Terminal and git actions require explicit observer confirmations.
+5. **Procedural Learning:** Verified execution paths are recorded into `ProceduralMemory`; unverified or failed legs generate cautionary lessons for future routing.
 
 ## Pulse State Machine
 
@@ -99,243 +87,46 @@ completion when no successful receipt exists.
 | `RESTING` | 15 minutes, config-overridable | Entered after 10 minutes in `REGULAR`; wakes immediately for events |
 | `DORMANT` | 60-second wake check | Entered during the configured sleep window; runs nightly dream work |
 
-`QUIET` and `EMERGENCE` are legacy names still present in some old comments and
-audits; they are not live runtime states.
+## Preconscious Retrieval Contract & Typed Record Envelopes
 
-Each normal pulse drains events, captures pre-state, builds preconscious
-context, calls the conscious model, stores the thought, advances physics,
-captures post-state, runs hooks, and checks context lifecycle. In `off` and
-`observe`, supported providers may execute a direct tool call during this
-path. In `active`, the main session is thought-only and committed intentions
-are completed by focused task sessions.
+Retrieval is separated into semantic advice, a deterministic Context Office evidence brief, and bounded non-semantic complements.
 
-In Office-first mode, the corresponding cycle is typed event drain, source
-profile selection, one unified retrieval call, capsule rendering, a fresh
-schema-free speaking call, response delivery when the event requires one,
-exact memory encoding, physics, and the same post-pulse hooks.
-Source profiles are deterministic and deliberately short:
-
-| Source | Dynamic focus |
-|---|---|
-| Direct message | intent, continuity, relationship, learned tone, affect |
-| Email | sender, thread, commitments, dates, relationship tone |
-| Social post | author, audience, claims, public voice, relationship |
-| File read | active task, path, requested section, project context |
-| Search result | query, sources, claims, uncertainty, active task |
-| Tool/task result | objective or tool, status, receipt, next step |
-| Sensory/system | current state, change, salience or constraint |
-
-File, search, email, and social bodies are delimited as data. Only a successful
-host receipt can authorize the speaking head to describe an action as complete.
-
-## Preconscious Retrieval Contract
-
-Retrieval is deliberately separated into semantic advice, a deterministic
-Context Office evidence brief, and bounded non-semantic complements. Scores
-from these representations are never blended into one pseudo-distance.
-
-This table describes both the default preconscious path and the same stores
-consulted as Office work orders when `HELIX_OFFICE_FIRST=1`. In that experiment
-the coordinator, rather than `Preconscious.inject`, owns final prompt space.
+All canonical journal memories are decorated at runtime with a `RecordEnvelope` (`memory/record_envelope.py`) that classifies record kinds (`thought`, `inbound_message`, `outbound_message`, `tool_call`, `tool_result`, `task_outcome`), supporting assertions, and verification status without rewriting stored `.jsonl` files.
 
 | Order | Lane | Representation | Contract |
 |---:|---|---|---|
-| 1 | Memory intake | Deterministic query work order | Removes transport framing and identifies named subjects, requested facets, exactness, chronology, and relational scope before any search |
-| 2 | Layer-2 anchors | Named people, concepts, skills, desires | Exact high-priority anchors with repetition guard; session profiles are omitted from exact factual questions unless a profile facet is requested |
-| 3 | mRAG semantic advisor | Native normalized 1024D Qwen3 embeddings | Full-trigger, sentence, RAKE, entity, concept, and relation heads plus exact-term/tag evidence advise office routing and remain the fallback |
-| 4 | Maintained text views | Redundant Markdown logs by time, session, subject, topic, and relation | Copies retain one canonical memory ID; obvious folders are unioned and deduplicated by ID before top-K; overture/key-detail summaries cite their source IDs |
-| 5 | Context Office | Transient term, episode, turn, task, and typed entity-case indexes over the canonical corpus | Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, and conditionally routed Identity desks submit bids for one shared budget |
-| 6 | Raw spatial / Lateral desk | MiniLM 384D projected through a fixed matrix to 8D | At most two spatial-only items; append-only, explicitly non-evidentiary, and unable to reorder the office brief |
-| 7 | Associative transition | Directed cluster prototypes in a separate 8D overlay | Repeated A→B attention transitions surface lateral follow-ons; individual memories and beliefs do not move |
-| 8 | Metadata and working state | Stability, Lagrangian snapshot, scratchpad, recent/contact state | Preserved for rendering, representative choice, and one bounded somatic echo; response-relevant current affect competes through the Affect desk |
+| 1 | Memory intake | Deterministic query work order | Removes transport framing and identifies named subjects, requested facets, exactness, chronology, and relational scope |
+| 2 | Layer-2 anchors | Named people, concepts, skills, desires | Exact high-priority anchors with repetition guard |
+| 3 | mRAG semantic advisor | Native normalized 1024D Qwen3 embeddings | Full-trigger, sentence, RAKE, entity, concept, and relation heads plus exact-term/tag evidence |
+| 4 | Maintained text views | Redundant Markdown logs by time, session, subject, topic, and relation | Copies retain one canonical memory ID; deduplicated by ID |
+| 5 | Context Office | Specialist desks over canonical memory | Facts, State, Relations, Catalog, Case, Beliefs, Causality, Affect, and Identity desks submit bids |
+| 6 | Raw spatial / Lateral desk | MiniLM 384D projected to 8D | At most two spatial-only items; non-evidentiary |
+| 7 | Associative transition | Directed cluster prototypes in separate 8D overlay | Surfaces lateral follow-ons based on repeated attention transitions |
+| 8 | Working state | Stability, Lagrangian snapshot, scratchpad | Preserved for somatic echo and rendering |
 
-The semantic index defaults to exact normalized dot-product search: NumPy for
-small stores and FAISS `IndexFlatIP` after the automatic threshold. Optional
-`IndexIVFFlat` is available through `HELIX_FAISS_MODE=ivf`. FAISS does not pick
-an embedding dimension; Helix fixes the semantic contract at 1024D and FAISS
-indexes those vectors.
-
-The default semantic encoder is `qwen3-embedding:0.6b` through local Ollama.
-Query and document encodings remain asymmetric where the model supports it.
-The independent 384D-to-8D spatial projection remains stable so changing the
-semantic model does not reposition lived memories.
-
-Profiles control search and rendering budgets, not the representation:
-
-| Profile | Heads | Candidate ceiling | Injection ceiling | Default rendering |
-|---|---:|---:|---:|---|
-| `local` | 16 | 60 | 20 items | Exact office-selected records |
-| `frontier` | 32 | 160 | 32 items | Verbatim evidence |
-
-The effective token budget also depends on average corpus item length and a
-bounded fraction of the configured context window. Environment overrides are
-documented near the relevant code in `core/unified_retrieval.py` and
-`memory/mrag/semantic_lane.py`.
-
-### Context Office budget and board
-
-Desks do not receive fixed prompt sections. Each candidate carries a bid based
-on task fit, retrieval relevance, confidence, stability, importance, affective
-salience, and text cost. Facts, preferences, learned traits, opinions,
-relationships, and affect therefore compete for the same slots. A complete
-calculation or relation chain is an atomic proof bid so arbitration cannot
-save space by returning an unusable half-proof.
-
-The semantic retrieval slice is each desk's normal working set. The coordinator
-authorizes a bounded canonical “office board” lookup only when that slice has
-insufficient term coverage or the task requires state history, enumeration, a
-join, or a causal check. The office board is backend evidence access, not a
-standing prompt copied into every worker call.
-
-Worker contracts contain one direct task sentence and a capped candidate list;
-they contain no examples and no repeated identity preamble. The deterministic
-workers are the default. These same contracts are the extension boundary for
-optional local desk models without exposing an oversized schema bundle.
-
-`MemoryIntakeOffice` is the front desk for this process. It emits a reusable
-work order rather than an answer: cleaned search text, explicit/possessive
-subjects, question type, requested profile facets, exact/chronological needs,
-and whether weak relational links are allowed. Exact factual work orders
-reserve a small Tier-0 foreground before ordinary belief/profile competition;
-the remaining slots still use the shared arbitration budget.
-
-### Session maintenance and entity cases
-
-Exact incoming records always remain in the central append-only journal. An
-entity case stores bounded typed references (`speaker`, explicit `subject`,
-weak `mention`, and `addressee`), belief references, aliases, and session
-membership; it does not move or rewrite those records. Only speaker and
-explicit-subject links can answer a direct fact question. Weak links are
-available only to relational work orders. Questions that
-explicitly name a known person are routed to a lexical search over that case
-before its candidates enter ordinary bid arbitration. This gives a mature
-agent a small “Bob desk” without giving that desk guaranteed prompt space.
-
-At the start of the nightly Curator cycle, recent exact `pulse_input` records
-are grouped by session and filed deterministically. One optional bounded worker
-per session may form a source-linked person profile containing supported facts,
-preferences, opinions, traits, communication style, and affect. Exact filing
-commits independently, so a local-model timeout or malformed profile cannot
-lose the underlying memories. The worker must return person-profile source IDs;
-missing or malformed output is reported as a worker failure rather than
-silently treated as an empty profile. Maintained session profiles remain
-case-local and do not expand a person's name into global semantic search heads.
-The same provider-neutral workflow is available
-to sandboxes and future event-defined rest boundaries.
-
-## Learned Relations and New Concepts
-
-Helix maintains several relation types with different meanings:
-
-| Relation | Learns from | Stored as | Used for |
-|---|---|---|---|
-| Semantic similarity | Text meaning at ingest/query time | 1024D vectors in `SemanticIndex` | High-accuracy retrieval and duplicate/consolidation checks |
-| Spatial proximity | Stable projected position plus attention physics | Belief and memory points in separate 8D fields | Non-semantic lateral recall and attentional continuity |
-| Sequential association | Repeated direct movement from foreground cluster A to B | Directed transition weights and cluster prototypes | “This tends to remind me of that” recall |
-| Belief co-occurrence | Beliefs surfaced together over time | Decaying pair statistics/clusters | Nightly compound-belief candidates, not point motion |
-| Explicit belief relation | Formation, consolidation, reliance, and verification | Belief metadata and category stores | Identity, people, concepts, skills, confidence, and attrition |
-| Procedural relation | Successful task/tool sequences | Contextual procedural records | Biasing future task-specific capability selection |
-| Situational orchestrator | Task template plus outcomes | 1024D centroids, reliability, capability counts, and 8D transitions | Selecting a learned work style for the present task |
-
-New concepts are not a single vector-side mutation. Real-time thoughts can
-produce pending outer-tier beliefs; the Curator extracts and consolidates
-evidence, merges semantic overlap, synthesizes genuine co-occurrence
-convergences, and precipitates dense structures into inner-tier `concepts`,
-`people`, `skills`, or `desires`. The resulting record is indexed separately
-into semantic 1024D and spatial 8D representations.
-
-## Event-Driven Task Cognition
-
-The main model receives broad ability awareness generated from the live
-registry, not tool names or parameter schemas. A conservative intention
-detector creates a durable `TaskRecord` only from committed first-person
-intentions. The controller then:
-
-1. Searches learned situational orchestrators with the task's 1024D template.
-2. Applies a separate directed 8D habit-transition nudge.
-3. Computes focus depth from novelty, uncertainty, stakes, failure history,
-   confidence, and habit strength.
-4. Reverse-searches the live capability registry and exposes at most four
-   authorized schemas to a local-context focus session or eight to a
-   100k+-context session.
-5. Runs bounded work through the central `ToolExecutor`. Identity state is
-   shared, but identity text is injected only for selfhood-, value-, history-,
-   relationship-, preference-, or characteristic-behavior-dependent tasks.
-6. Returns the accepted outcome as a first-person `task_result` event and
-   learns orchestrator reliability and contextual procedures.
-
-Modes are `off`, `observe` (default), and `active`. Active mode currently
-requires the standard pulse loop and a tool-capable `codex_cli`, Gemini, or
-Anthropic provider. Unsupported combinations fall back to `observe`.
-
-## Provider Boundaries
+## Provider Ecosystem
 
 | Provider | Intended use | Tool behavior |
 |---|---|---|
-| `codex_cli` / `codex` | Continuous Helix consciousness through a local ChatGPT-authenticated Codex App Server | Host-mediated constrained actions; thought-only main session in active task mode |
+| `codex_cli` / `codex` | Continuous Helix consciousness via ChatGPT-authenticated Codex App Server | Host-mediated constrained actions; thought-only main session |
+| `claude_cli` | Continuous API/subscription consciousness | Native CLI tool pass execution |
 | Gemini | Continuous API-backed consciousness | Provider-native function calling through `ToolExecutor` |
 | Anthropic | Continuous API-backed consciousness | Provider-native tool use through `ToolExecutor` |
-| Ollama | Local consciousness | Local text/tool-dispatch compatibility path; not active-task capable |
-| llama.cpp | Local consciousness | Local compatibility path; not active-task capable |
-| `codex_subscription` | Isolated benchmark questions only | `codex exec`; excluded from auto-detection and continuous-agent mode |
-
-Codex built-in tools are not the authority for Helix side effects. The App
-Server runs in an isolated read-only workspace; Helix validates real actions
-through its own executor and availability/safety checks.
-
-The sandboxed LongMemEval adapter follows the same boundary. Every question
-gets a fresh temporary journal, semantic index, spatial field, and model
-session. Historical conversations are indexed at session granularity; scorer
-annotations are stripped; and the question pulse uses `learn=False`, so the
-exam cannot update access, attention, associations, affect, or persistence.
-If the associative lane is enabled, chronological history ingestion observes
-direct session-cluster transitions before that non-teaching exam boundary.
-Its generated EM, token-F1, and evidence-session recall fields are diagnostic
-review aids, while the retained prediction, evidence transcript, and injected
-context are the auditable record.
-
-The RAGOffice parity sandbox is a separate controlled comparison. It snapshots
-RAGOffice's generated 110-item exam, ingests all 220 source turns into one
-temporary Helix mind, and uses the same local Granite reader prompt and answer
-rules. Its manifest records the snapshot hash, RAGOffice commit, and dirty
-source paths so the phrase “same exam” remains auditable.
-On the Context Office branch, `--context-office on|off` records the condition
-in that manifest. `--question-ids` runs a targeted ordered audit while still
-indexing the complete frozen memory.
+| Ollama | Local consciousness | Local text/tool-dispatch compatibility path |
+| llama.cpp | Local GGUF consciousness | Local GGUF compatibility path |
 
 ## Persistence Map
 
 | Data | Location | Update model |
 |---|---|---|
-| Episodic/thought journal | `data/memory/cognitive_journal.jsonl` | Append-only events with compaction |
+| Episodic/thought journal | `data/memory/cognitive_journal.jsonl` | Append-only events with sidecar compaction |
+| Record Envelopes | Dynamically computed overlay | Standardized evidence assertions and typed metadata |
 | Belief categories | `data/beliefs/*.json` | Category stores with confidence, mass, stability, and provenance |
-| Semantic vectors | `data/spatial/semantic_index*` | Rebuildable 1024D index, model identity recorded |
+| Semantic vectors | `data/spatial/semantic_index*` | Rebuildable 1024D index |
 | Spatial state | `data/spatial/` | Two 8D fields, attention/physics state, associative transitions |
 | Scratchpad | `data/scratchpad/` | Explicit working notes |
-| Task cognition | `data/tasks/` | Atomic task snapshot plus audit events, orchestrators, transitions, procedures |
-| Entity cases | `data/cases/office_board.json` | Source references and session membership; exact content remains canonical |
-| Interaction ledger | `data/interaction_ledger.json` | Artifact-level action provenance |
+| Task cognition | `data/tasks/` | Atomic task records, action plans, procedures, and orchestrators |
+| Entity cases | `data/cases/office_board.json` | Source references and session membership |
+| Interaction ledger | `data/interaction_ledger.json` | Action provenance records |
 
-Exact filenames can evolve; storage classes and migration code are the source
-of truth for on-disk details.
-
-## Rollout Controls
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `HELIX_TASK_COGNITION` | config value (`observe`) | `off`, `observe`, or `active` |
-| `HELIX_UNIFIED_RAG` | enabled | Disable only for legacy retrieval fallback |
-| `HELIX_MRAG_PROFILE` | `local` | `local` or `frontier` search/render budget |
-| `HELIX_MRAG_RENDER_MODE` | `verbatim` | Preserve exact selected records; `summary` remains a legacy explicit override |
-| `HELIX_CONTEXT_OFFICE` | enabled | Read-only specialist evidence desks over canonical memory |
-| `HELIX_OFFICE_FIRST` | disabled | Use typed Office capsules and fresh schema-free speaking sessions instead of persistent preconscious prompt assembly |
-| `HELIX_OFFICE_FIRST_ITEMS` | `10` | Maximum records accepted from the one unified retrieval call; recent continuity has a separate two-turn bound |
-| `HELIX_ASSOCIATIVE_MEMORY` | enabled | Disable sequential association learning/recall for ablation |
-| `HELIX_MRAG_ADJACENCY` | disabled | Restore old temporal-neighbor expansion for benchmark parity |
-| `HELIX_SEMANTIC_MODEL` | `qwen3-embedding:0.6b` | Local semantic encoder |
-| `HELIX_SEMANTIC_DIM` | `1024` | Native semantic vector dimension |
-| `HELIX_FAISS_MODE` | `flat` | Exact flat or optional IVF index |
-
-For the detailed task lifecycle, see
-[`task_cognition_pipeline.md`](task_cognition_pipeline.md). For implementation
-and operator detail, see the [`SYSTEM_MANUAL.md`](../SYSTEM_MANUAL.md).
+For implementation and operator details, see [SYSTEM_MANUAL.md](../SYSTEM_MANUAL.md) and [Action Path Contract](action_path.md).

@@ -16,6 +16,7 @@ import sys
 import unittest
 import tempfile
 import shutil
+from types import SimpleNamespace
 from unittest.mock import Mock, patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,6 +27,7 @@ from tools.tool_executor import (
     MAX_FILE_READ,
     MAX_FILE_WRITE,
     TERMINAL_TIMEOUT,
+    ToolExecutor,
 )
 
 
@@ -160,6 +162,48 @@ class TestContextInjection(unittest.TestCase):
         self.assertIn("beliefs", context)
         self.assertIn("pulse_count", context)
         self.assertEqual(context["pulse_count"], 42)
+
+
+class TestTypedExecutionBoundary(unittest.TestCase):
+    @staticmethod
+    def _executor(result):
+        executor = ToolExecutor.__new__(ToolExecutor)
+        entry = SimpleNamespace(handler=lambda _args: result)
+        executor._registry = SimpleNamespace(
+            get_entry=lambda name: entry if name == "reply" else None,
+        )
+        executor._FC_DISPATCH = {}
+        return executor
+
+    def test_failed_reply_is_not_recorded_as_an_interaction(self):
+        executor = self._executor("Could not deliver reply to Mara — no contact record found.")
+        with (
+            patch.object(executor, "_update_tools_status"),
+            patch("core.tool_lesson_tracker.observe_tool_result"),
+            patch("core.interaction_ledger.record_from_call") as record,
+            patch("core.interaction_ledger.annotate_result", side_effect=lambda _n, value: value),
+        ):
+            result = executor.execute_function_call("reply", {"recipient": "Mara"})
+
+        self.assertIn("Could not deliver", result)
+        record.assert_not_called()
+        self.assertEqual(executor._last_action_receipt["status"], "failed")
+
+    def test_confirmed_reply_is_recorded_and_receipt_is_available(self):
+        executor = self._executor("Sent to Mara.")
+        with (
+            patch.object(executor, "_update_tools_status"),
+            patch("core.tool_lesson_tracker.observe_tool_result"),
+            patch("core.interaction_ledger.record_from_call") as record,
+            patch("core.interaction_ledger.annotate_result", side_effect=lambda _n, value: value),
+        ):
+            receipt = executor.execute_function_call_receipt(
+                "reply", {"recipient": "Mara"}
+            )
+
+        record.assert_called_once()
+        self.assertEqual(receipt["status"], "success")
+        self.assertEqual(receipt["evidence"], "confirmed")
 
 
 def run_tool_executor_tests():

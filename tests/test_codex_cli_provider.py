@@ -232,6 +232,27 @@ class CodexSessionTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_persistent_thread_carries_two_helix_turns(self):
+        _FakeTransport.next_response = {"thought": "I am Helix."}
+        session = CodexCliSession(
+            system_instruction="I am Helix.",
+            options={"timeout": 2, "thought_only": True},
+        )
+        try:
+            self.assertEqual(session.send_message("first pulse"), "I am Helix.")
+            self.assertEqual(session.send_message("second pulse"), "I am Helix.")
+            transport = _FakeTransport.instances[0]
+            starts = [p for p in transport.sent if p.get("method") == "thread/start"]
+            turns = [p for p in transport.sent if p.get("method") == "turn/start"]
+            self.assertEqual(len(starts), 1)
+            self.assertEqual(len(turns), 2)
+            self.assertEqual(
+                {turn["params"]["threadId"] for turn in turns},
+                {"thread-test"},
+            )
+        finally:
+            session.close()
+
     def test_tool_call_dispatches_once_and_queues_grounded_result(self):
         _FakeTransport.next_response = {
             "response_type": "tool_call",

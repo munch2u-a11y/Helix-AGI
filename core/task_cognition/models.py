@@ -17,9 +17,12 @@ class TaskStatus(str, Enum):
     CREATED = "created"
     FOCUSING = "focusing"
     READY = "ready"
+    WAITING_INPUT = "waiting_input"
     EXECUTING = "executing"
+    VERIFYING = "verifying"
     REFLECTING = "reflecting"
     COMPLETE = "complete"
+    PARTIAL = "partial"
     FAILED = "failed"
     BLOCKED = "blocked"
     CANCELLED = "cancelled"
@@ -27,6 +30,7 @@ class TaskStatus(str, Enum):
 
 TERMINAL_STATUSES = {
     TaskStatus.COMPLETE,
+    TaskStatus.PARTIAL,
     TaskStatus.FAILED,
     TaskStatus.BLOCKED,
     TaskStatus.CANCELLED,
@@ -35,26 +39,38 @@ TERMINAL_STATUSES = {
 
 VALID_TRANSITIONS = {
     TaskStatus.CREATED: {
-        TaskStatus.FOCUSING, TaskStatus.CANCELLED, TaskStatus.BLOCKED,
+        TaskStatus.FOCUSING, TaskStatus.WAITING_INPUT,
+        TaskStatus.CANCELLED, TaskStatus.BLOCKED,
     },
     TaskStatus.FOCUSING: {
-        TaskStatus.READY, TaskStatus.EXECUTING, TaskStatus.FAILED,
+        TaskStatus.READY, TaskStatus.WAITING_INPUT, TaskStatus.EXECUTING,
+        TaskStatus.FAILED,
         TaskStatus.BLOCKED, TaskStatus.CANCELLED,
     },
     TaskStatus.READY: {
-        TaskStatus.EXECUTING, TaskStatus.FOCUSING, TaskStatus.BLOCKED,
+        TaskStatus.EXECUTING, TaskStatus.FOCUSING, TaskStatus.WAITING_INPUT,
+        TaskStatus.BLOCKED,
         TaskStatus.CANCELLED,
     },
+    TaskStatus.WAITING_INPUT: {
+        TaskStatus.FOCUSING, TaskStatus.CANCELLED, TaskStatus.BLOCKED,
+    },
     TaskStatus.EXECUTING: {
-        TaskStatus.REFLECTING, TaskStatus.COMPLETE, TaskStatus.FAILED,
+        TaskStatus.VERIFYING, TaskStatus.REFLECTING, TaskStatus.COMPLETE,
+        TaskStatus.PARTIAL, TaskStatus.FAILED, TaskStatus.WAITING_INPUT,
         TaskStatus.BLOCKED,
     },
+    TaskStatus.VERIFYING: {
+        TaskStatus.REFLECTING, TaskStatus.COMPLETE, TaskStatus.PARTIAL,
+        TaskStatus.FAILED, TaskStatus.FOCUSING, TaskStatus.BLOCKED,
+    },
     TaskStatus.REFLECTING: {
-        TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.FOCUSING,
-        TaskStatus.BLOCKED,
+        TaskStatus.COMPLETE, TaskStatus.PARTIAL, TaskStatus.FAILED,
+        TaskStatus.FOCUSING, TaskStatus.WAITING_INPUT, TaskStatus.BLOCKED,
     },
     TaskStatus.BLOCKED: {TaskStatus.FOCUSING, TaskStatus.CANCELLED},
     TaskStatus.FAILED: {TaskStatus.FOCUSING, TaskStatus.CANCELLED},
+    TaskStatus.PARTIAL: {TaskStatus.FOCUSING, TaskStatus.CANCELLED},
     TaskStatus.COMPLETE: set(),
     TaskStatus.CANCELLED: set(),
 }
@@ -84,6 +100,10 @@ class TaskRecord:
     orchestrator_ids: List[str] = field(default_factory=list)
     focus_depth: int = 1
     attempts: int = 0
+    question: str = ""
+    required_inputs: List[str] = field(default_factory=list)
+    receipts: List[Dict[str, Any]] = field(default_factory=list)
+    verification: Dict[str, Any] = field(default_factory=dict)
     result: str = ""
     error: str = ""
     created_at: str = field(default_factory=now_iso)

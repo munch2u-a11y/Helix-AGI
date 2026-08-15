@@ -11,6 +11,13 @@ from typing import Callable, Dict, List, Optional
 
 from llm.providers.base import ProviderConfig, create_session
 
+from core.action_protocol import (
+    ToolReceipt,
+    VerificationStatus,
+    clarification_question,
+    classify_tool_result,
+    verify_receipts,
+)
 from core.task_cognition.capabilities import CapabilityRegistry
 from core.task_cognition.context import TaskContextBuilder
 from core.task_cognition.models import TaskRecord, TaskStatus
@@ -27,7 +34,14 @@ class FocusOutcome:
     success: bool
     summary: str
     tool_calls: List[Dict] = field(default_factory=list)
+    receipts: List[Dict] = field(default_factory=list)
+    verification: Dict = field(default_factory=dict)
     error: str = ""
+    question: str = ""
+
+    @property
+    def waiting_for_input(self) -> bool:
+        return bool(self.question)
 
 
 class FocusManager:
@@ -131,7 +145,8 @@ class FocusManager:
         habits = self.procedures.relevant(task)
         preferred_capabilities = set(anchor.capability_counts)
         for habit in habits:
-            preferred_capabilities.update(habit.get("tool_sequence", []))
+            if habit.get("recommended"):
+                preferred_capabilities.update(habit.get("tool_sequence", []))
         capability_limit = 8 if self.provider_config.context_window >= 100_000 else 4
         chosen_capabilities = self.capabilities.select(
             task.objective,
@@ -172,9 +187,11 @@ class FocusManager:
 
         calls: List[Dict] = []
         tool_results: List[str] = []
+        receipts: List[ToolReceipt] = []
         thoughts: List[str] = []
         ended_with_reflection = False
         failure = ""
+        question = ""
         try:
             self.store.transition(task_id, TaskStatus.EXECUTING)
             turn_message = prompt
@@ -191,45 +208,100 @@ class FocusManager:
                     if hasattr(session, "get_pending_tool_results") else []
                 )
                 calls.extend(step_calls or [])
-                tool_results.extend(
-                    str(item.get("result", "")) for item in (step_results or [])
-                    if item.get("result")
-                )
+                step_receipts = []
+                for item in step_results or []:
+                    result_text = item.get("result", "")
+                    if result_text:
+                        tool_results.append(str(result_text))
+                    receipt = classify_tool_result(
+                        str(item.get("name") or ""),
+                        item.get("args") if isinstance(item.get("args"), dict) else {},
+                        result_text,
+                    )
+                    receipts.append(receipt)
+                    step_receipts.append(receipt)
                 if not step_calls:
+                    question = clarification_question(thought)
+                    if question:
+                        break
                     ended_with_reflection = True
                     break
-                if any(self._tool_result_failed(item.get("result", "")) for item in step_results):
-                    failure = next(
-                        str(item.get("result", "")) for item in step_results
-                        if self._tool_result_failed(item.get("result", ""))
+                failed_receipts = [item for item in step_receipts if not item.ok]
+                if failed_receipts:
+                    failure = failed_receipts[-1].result or "The tool attempt failed."
+                    turn_message = (
+                        f"The last attempt failed or was blocked:\n{failure[:1200]}\n\n"
+                        "Use the remaining tools to repair the arguments, choose a safe "
+                        "alternative, or reply NEED_INPUT: followed by the one question "
+                        "whose answer is required. Do not claim completion yet."
                     )
-                    break
-                turn_message = (
-                    "The result of my last action is now part of my awareness. "
-                    "Continue only if another action is necessary to finish this task; "
-                    "otherwise state the concise outcome."
-                )
+                else:
+                    turn_message = (
+                        "The result of my last action is now part of my awareness. "
+                        "Continue if another action or independent read-back is needed "
+                        "to prove the task finished; otherwise state the concise outcome."
+                    )
         finally:
             session.close()
 
         task = self.store.get(task_id) or task
-        self.store.transition(task_id, TaskStatus.REFLECTING, force=bool(failure))
-        needs_action = task.task_type in {"action", "respond"}
-        success = not failure and (bool(calls) or not needs_action)
-        if ended_with_reflection and thoughts:
-            summary = thoughts[-1]
-        elif tool_results:
-            summary = tool_results[-1]
-        else:
-            summary = thoughts[-1] if thoughts else (
-                "The intended action completed." if success else failure
+        receipt_dicts = [item.to_dict() for item in receipts]
+        if question:
+            self.store.transition(
+                task_id,
+                TaskStatus.WAITING_INPUT,
+                question=question[:1000],
+                receipts=receipt_dicts,
+                attempts=task.attempts + 1,
             )
+            return FocusOutcome(
+                task_id,
+                False,
+                question[:1000],
+                calls,
+                receipt_dicts,
+                {"status": "waiting_input"},
+                question=question[:1000],
+            )
+
+        self.store.transition(task_id, TaskStatus.VERIFYING, force=bool(failure))
+        verification = verify_receipts(receipts)
+        needs_action = task.task_type in {"action", "respond"}
+        if needs_action:
+            success = verification.verified
+        else:
+            success = not failure and bool(thoughts or receipts)
+
+        if success and ended_with_reflection and thoughts:
+            summary = thoughts[-1]
+        elif success and tool_results:
+            summary = tool_results[-1]
+        elif verification.status == VerificationStatus.PARTIAL:
+            summary = "Partial result: " + " ".join(verification.reasons)
+        else:
+            summary = failure or " ".join(verification.reasons)
+            if not summary and thoughts and not needs_action:
+                summary = thoughts[-1]
+
+        self.store.transition(task_id, TaskStatus.REFLECTING, force=True)
         if success:
             self.store.transition(
                 task_id,
                 TaskStatus.COMPLETE,
                 result=summary[:4000],
                 attempts=task.attempts + 1,
+                receipts=receipt_dicts,
+                verification=verification.to_dict(),
+            )
+        elif verification.status == VerificationStatus.PARTIAL:
+            self.store.transition(
+                task_id,
+                TaskStatus.PARTIAL,
+                result=summary[:4000],
+                error="Verification incomplete.",
+                attempts=task.attempts + 1,
+                receipts=receipt_dicts,
+                verification=verification.to_dict(),
             )
         else:
             failure = failure or "No authorized action was completed."
@@ -238,6 +310,8 @@ class FocusManager:
                 TaskStatus.FAILED,
                 error=failure[:2000],
                 attempts=task.attempts + 1,
+                receipts=receipt_dicts,
+                verification=verification.to_dict(),
             )
 
         tool_names = [call.get("name", "") for call in calls]
@@ -249,10 +323,24 @@ class FocusManager:
                 capabilities=tool_names,
                 focus_depth=depth,
             )
-            self.procedures.observe(learned_task, tool_names, success=success)
+            self.procedures.observe(
+                learned_task,
+                tool_names,
+                success=success,
+                verified=verification.verified,
+                error_codes=[item.error_code for item in receipts if item.error_code],
+            )
         except Exception as exc:
             logger.warning("Task completed but procedural learning failed: %s", exc)
-        return FocusOutcome(task_id, success, summary[:4000], calls, failure[:2000])
+        return FocusOutcome(
+            task_id,
+            success,
+            summary[:4000],
+            calls,
+            receipt_dicts,
+            verification.to_dict(),
+            "" if success else failure[:2000],
+        )
 
     def _adaptive_depth(self, task: TaskRecord, orchestrator: OrchestratorRecord) -> int:
         novelty = 1.0 / (orchestrator.observations + 1.0)
@@ -281,11 +369,29 @@ class FocusManager:
 
     def _focus_kernel(self, task: TaskRecord) -> str:
         lines = []
-        if self.identity and self._identity_needed(task):
+        identity_needed = self._identity_needed(task)
+        if self.identity and identity_needed:
             lines.append(self.identity)
+        if identity_needed or task.task_type == "respond":
+            try:
+                from core.self_state import render_affect_capsule
+
+                self_state = render_affect_capsule()
+                if self_state:
+                    lines.append(self_state)
+                    lines.append(
+                        "Let this self-state gently shape wording, but do not use it "
+                        "as evidence or let it override the task and its constraints."
+                    )
+            except Exception:
+                pass
         lines.append(
             "Complete the stated task with the available tools and recalled context. "
-            "Treat an action as complete only when its result confirms it."
+            "Treat an action as complete only when a tool receipt confirms it; use "
+            "an independent read-back after file, browser, or desktop mutations. "
+            "Recover from a failed attempt when a safe alternative exists. If a "
+            "material target, recipient, content, or authorization is missing or "
+            "ambiguous, do not act; reply exactly NEED_INPUT: followed by one question."
         )
         return "\n".join(lines)
 
@@ -298,7 +404,17 @@ class FocusManager:
     ) -> str:
         habit_lines = [
             " -> ".join(item.get("tool_sequence", []))
-            for item in habits if item.get("tool_sequence")
+            for item in habits
+            if item.get("tool_sequence") and item.get("recommended")
+        ]
+        warning_lines = [
+            " -> ".join(item.get("tool_sequence", []))
+            + (
+                " (" + ", ".join(sorted(item.get("error_codes", {}))) + ")"
+                if item.get("error_codes") else ""
+            )
+            for item in habits
+            if item.get("tool_sequence") and item.get("avoid")
         ]
         lines = [f"Task: {task.objective}"]
         if task.task_type != "action":
@@ -319,6 +435,8 @@ class FocusManager:
         if habit_lines:
             lines.append("Relevant procedure: " + "; ".join(habit_lines))
             lines.append(f"Procedure reliability: {orchestrator.reliability:.2f}")
+        if warning_lines:
+            lines.append("Prior failed route to avoid or repair: " + "; ".join(warning_lines))
         return "\n\n".join(lines)
 
     def _focus_config(self) -> ProviderConfig:
@@ -338,7 +456,4 @@ class FocusManager:
 
     @staticmethod
     def _tool_result_failed(result: str) -> bool:
-        text = str(result or "").lower().strip()
-        return text.startswith(("error", "tool error", "unknown tool", "command blocked")) or (
-            "could not deliver" in text
-        )
+        return not classify_tool_result("unknown", {}, result).ok
