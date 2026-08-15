@@ -38,10 +38,15 @@ class AffectOffice:
             return []
 
         explicit = bool(_AFFECT_QUERY.search(str(query or "")))
-        notable = (
-            result.dominant_affect != "neutral"
-            and float(result.field_intensity) >= 0.45
-        )
+        # Presence of a felt state is the gate, not field_intensity.
+        #
+        # field_intensity measures phase COHERENCE between wave packets, not
+        # emotional strength, and it falls as packets accumulate and decohere
+        # — measured 0.286 → 0.061 → 0.032 across one ordinary trajectory.
+        # Gating on it therefore silenced affect exactly when there was most
+        # of it to feel. describe_affect_state() already returns "" unless an
+        # elevation clears FELT_THRESHOLD, which is the real question.
+        notable = bool(getattr(result, "felt_state", ""))
         diverse = float(result.cognitive_diversity_signal) >= 0.55
         existing_salience = max(
             (float(item.get("affective_salience") or 0.0) for item in existing),
@@ -52,27 +57,33 @@ class AffectOffice:
 
         proposals: List[Dict[str, Any]] = []
         if explicit or notable or diverse:
-            parts = [f"current affect is {result.dominant_affect}"]
-            if notable or explicit:
-                parts.append(f"intensity {float(result.field_intensity):.2f}")
-            if diverse:
-                parts.append(
-                    f"novelty pressure {float(result.cognitive_diversity_signal):.2f}"
-                )
-            proposals.append({
-                "id": "office_affect_state",
-                "content": "; ".join(parts) + ".",
-                "tier": -1,
-                "office_role": "affect_state",
-                "office_desk": "affect",
-                "office_verified": False,
-                "relevance": 1.0 if explicit else 0.64,
-                "confidence": 0.98,
-                "stability_index": 0.55,
-                "affective_salience": max(
-                    float(result.field_intensity), existing_salience
-                ),
-            })
+            # Language, not figures. "current affect is trust; intensity 0.97"
+            # asks the model to decode a scale before it can feel anything;
+            # the gradation words carry magnitude on their own.
+            content = getattr(result, "felt_state", "")
+            if not content and result.dominant_affect != "neutral":
+                # A result built without a rendered felt state still knows
+                # which dimension leads. Say it plainly rather than dropping
+                # the emotion — and never return early here, because the
+                # resonant-memory proposals below are a separate concern.
+                content = f"Underneath this, something like {result.dominant_affect}."
+            if content:
+                if diverse:
+                    content += " The same ground is starting to feel well-worn."
+                proposals.append({
+                    "id": "office_affect_state",
+                    "content": content,
+                    "tier": -1,
+                    "office_role": "affect_state",
+                    "office_desk": "affect",
+                    "office_verified": False,
+                    "relevance": 1.0 if explicit else 0.64,
+                    "confidence": 0.98,
+                    "stability_index": 0.55,
+                    "affective_salience": max(
+                        float(result.field_intensity), existing_salience
+                    ),
+                })
 
         present: Set[str] = {str(item.get("id", "")) for item in existing}
         for memory_id in result.surfaced_memories:

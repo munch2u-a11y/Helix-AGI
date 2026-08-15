@@ -417,11 +417,26 @@ def _make_belief(spec: Dict[str, object], ctx: BootstrapContext, now: str) -> Di
         "relations": [],
         "memory_refs": [],
         "position_8d": None,
+        # Measured from a live run rather than assumed. The previous values
+        # (omega 0.5, s_total 0.15, H 0.15, D_KL 0.0) describe a state Helix
+        # never actually occupies: across 54 real pulses, s_total never fell
+        # below 1.38 and omega settled at ~0.90. That mattered because
+        # HelixCorpus._affective_salience derives ranking weight from these
+        # fields, so seeded beliefs and lived memories were being scored on
+        # different scales — a bootstrap belief competed on arithmetic rather
+        # than on content.
+        #
+        # These are the settled-state medians (pulse 4 onward, all_clear), not
+        # the birth state. Being newly instantiated is genuinely destabilising
+        # — pulse 1 measured s_total 3.29 with critical severity — but that
+        # resolves by pulse 4, and seed beliefs should read as calmly-held
+        # prior knowledge rather than as panic-formed.
         "encoding_lagrangian": {
-            "omega": 0.5,
-            "s_total": 0.15,
-            "H": 0.15,
-            "D_KL": 0.0,
+            "omega": 0.90,
+            "s_total": 2.40,
+            "H": 5.58,
+            "D_KL": 0.13,
+            "T": 1.29,
         },
     }
     term = _term_for_spec(spec, ctx)

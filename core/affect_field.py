@@ -51,6 +51,173 @@ NEUTRAL_BASELINES = {
     "sadness": 0.0, "disgust": 0.0, "anger": 0.0, "anticipation": 0.5,
 }
 
+# ── Felt-state vocabulary ────────────────────────────────────────────
+# The blended packet average is the emotional state. These tables name it
+# in language a reader can feel rather than parse: Plutchik's own intensity
+# gradations per primary, and the dyad names for co-elevated pairs.
+#
+# This exists because the injected string is not telemetry — it is the only
+# thing that makes the responding model adopt an appropriate tone. A line
+# like "(affect: trust | intensity=0.97 | packets=7)" describes an emotion
+# from the outside; "a settled admiration" induces one.
+
+AFFECT_GRADATIONS = {
+    "joy":          ("serenity", "joy", "ecstasy"),
+    "trust":        ("acceptance", "trust", "admiration"),
+    "fear":         ("apprehension", "fear", "terror"),
+    "surprise":     ("distraction", "surprise", "amazement"),
+    "sadness":      ("pensiveness", "sadness", "grief"),
+    "disgust":      ("boredom", "disgust", "loathing"),
+    "anger":        ("annoyance", "anger", "rage"),
+    "anticipation": ("interest", "anticipation", "vigilance"),
+}
+
+# Plutchik dyads — what a blend of two co-elevated primaries is called.
+PLUTCHIK_DYADS = {
+    # Primary dyads (adjacent on the wheel)
+    frozenset(("joy", "trust")):            "love",
+    frozenset(("trust", "fear")):           "submission",
+    frozenset(("fear", "surprise")):        "awe",
+    frozenset(("surprise", "sadness")):     "disapproval",
+    frozenset(("sadness", "disgust")):      "remorse",
+    frozenset(("disgust", "anger")):        "contempt",
+    frozenset(("anger", "anticipation")):   "aggressiveness",
+    frozenset(("anticipation", "joy")):     "optimism",
+    # Secondary dyads (one step apart)
+    frozenset(("joy", "fear")):             "guilt",
+    frozenset(("trust", "surprise")):       "curiosity",
+    frozenset(("fear", "sadness")):         "despair",
+    frozenset(("surprise", "disgust")):     "unbelief",
+    frozenset(("sadness", "anger")):        "envy",
+    frozenset(("disgust", "anticipation")): "cynicism",
+    frozenset(("anger", "joy")):            "pride",
+    frozenset(("anticipation", "trust")):   "hope",
+}
+
+# An elevation must clear this before it counts as felt at all.
+FELT_THRESHOLD = 0.10
+# Both primaries must clear this fraction of the leader to read as a blend.
+BLEND_RATIO = 0.60
+# Signed change since the previous pulse that reads as rising or fading.
+DRIFT_THRESHOLD = 0.08
+
+
+def _gradation(name: str, elevation: float) -> str:
+    """Name one primary at the intensity actually present."""
+    words = AFFECT_GRADATIONS.get(name)
+    if not words:
+        return name
+    if elevation >= 0.60:
+        return words[2]
+    if elevation >= 0.28:
+        return words[1]
+    return words[0]
+
+
+def describe_affect_state(
+    summary: dict,
+    previous: Optional[dict] = None,
+) -> Tuple[str, float]:
+    """Render the blended packet average as a felt state.
+
+    Returns (phrase, intensity). The phrase names what is being felt —
+    a Plutchik dyad when two primaries are co-elevated, otherwise a single
+    primary at its actual gradation — and how it is moving relative to the
+    immediately prior pulse. Intensity is the leading elevation.
+
+    Elevation is signed, not absolute: an emotion that sits *below* its
+    neutral baseline is absent, not present. Comparing |val - baseline|
+    ranks a zeroed anticipation (baseline 0.5) above a trust of 0.97, which
+    is how the field came to report the emotion it was feeling least.
+    """
+    elevations = []
+    for name in PLUTCHIK_PRIMARIES:
+        value = float(summary.get(name, 0.0) or 0.0)
+        elevation = value - NEUTRAL_BASELINES.get(name, 0.0)
+        if elevation > 0:
+            elevations.append((elevation, name))
+    elevations.sort(reverse=True)
+
+    if not elevations or elevations[0][0] < FELT_THRESHOLD:
+        return "", 0.0
+
+    lead_elev, lead_name = elevations[0]
+
+    # Blend when a second primary is nearly as strong and the pair is named.
+    phrase = ""
+    if len(elevations) > 1:
+        second_elev, second_name = elevations[1]
+        if second_elev >= lead_elev * BLEND_RATIO:
+            dyad = PLUTCHIK_DYADS.get(frozenset((lead_name, second_name)))
+            if dyad:
+                phrase = dyad
+            else:
+                phrase = (
+                    f"{_gradation(lead_name, lead_elev)} shot through with "
+                    f"{_gradation(second_name, second_elev)}"
+                )
+    if not phrase:
+        phrase = _gradation(lead_name, lead_elev)
+
+    # Movement against the immediately prior moment.
+    if previous:
+        prior = float(previous.get(lead_name, 0.0) or 0.0) - NEUTRAL_BASELINES.get(
+            lead_name, 0.0
+        )
+        drift = lead_elev - prior
+        if drift >= DRIFT_THRESHOLD:
+            phrase += ", rising"
+        elif drift <= -DRIFT_THRESHOLD:
+            phrase += ", fading"
+        elif prior > 0:
+            phrase += ", steady"
+
+    return phrase, round(min(1.0, lead_elev), 3)
+
+
+# How movement reads in words. The gradation word already carries intensity
+# (acceptance → trust → admiration), so nothing here needs a number.
+_DRIFT_WORDS = {
+    "rising": "still building",
+    "fading": "easing off",
+    "steady": "settled",
+}
+
+def render_affect_injection(
+    summary: dict,
+    previous: Optional[dict] = None,
+) -> str:
+    """The affect line as it reaches the model — language, never numbers.
+
+    A figure like `intensity=0.47` makes the model decode a scale before it
+    can feel anything, and decoding is the opposite of tone. Plutchik's
+    gradations already encode magnitude lexically, so the word does that work:
+    `acceptance` and `admiration` are the same dimension at different
+    strengths, and a reader responds to them differently without being told
+    a number.
+
+    The line states an inner condition and stops. It gives no instruction
+    about how to reply, because the aim is that Helix reasons exactly as it
+    otherwise would, in this colour.
+    """
+    phrase, _intensity = describe_affect_state(summary, previous)
+    if not phrase:
+        return ""
+
+    drift = ""
+    for marker, words in _DRIFT_WORDS.items():
+        suffix = f", {marker}"
+        if phrase.endswith(suffix):
+            phrase = phrase[: -len(suffix)]
+            drift = f", {words}"
+            break
+
+    # "something like" rather than an article: these are mass nouns ("a
+    # despair", "a trust" are ungrammatical), and the hedge is also honest —
+    # a blended packet average is an approximation of a feeling, not a
+    # clinical reading of one.
+    return f"Underneath this, something like {phrase}{drift}."
+
 # ── Diffusion Rates (sigma expansion per pulse) ─────────────────────
 # Higher = faster diffusion = emotion fades quicker in that dimension.
 # These model real emotional persistence patterns.
@@ -249,6 +416,10 @@ class InterferenceResult:
     reactivation_strength: float = 0.0
     dominant_affect: str = "neutral"
     cognitive_diversity_signal: float = 0.0
+    # The affect line as it should reach the model: plain language, no
+    # figures. Rendered here because only sample() holds both the current
+    # blended summary and the immediately prior one.
+    felt_state: str = ""
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -282,6 +453,8 @@ class AffectField:
         # Previous snapshot values for delta computation
         self._prev_s_total = 0.0
         self._prev_omega = 0.5
+        # Prior blended summary, so the felt state can report movement.
+        self._prev_summary: Optional[dict] = None
 
         # Stagnation counter (fed from engagement hook or pulse loop)
         self._stagnation_counter = 0
@@ -516,7 +689,15 @@ class AffectField:
         dominant = summary.get("dominant", "neutral")
         diversity = self._cognitive_diversity_signal(summary)
 
+        # Render against the immediately prior pulse, then remember this one
+        # so the next sample can report movement rather than just level.
+        felt_state = render_affect_injection(summary, self._prev_summary)
+        self._prev_summary = {
+            name: summary.get(name, 0.0) for name in PLUTCHIK_PRIMARIES
+        }
+
         return InterferenceResult(
+            felt_state=felt_state,
             field_intensity=field_intensity,
             contributing_packets=len(contributing),
             steering_vector=steering,
@@ -602,12 +783,39 @@ class AffectField:
             self._summary_cache_pulse = self.current_pulse
             return result
 
+        # Per-dimension attenuation by diffusion.
+        #
+        # evolve() grows sigma anisotropically (surprise ~0.16/pulse, trust
+        # ~0.010/pulse) but decays amplitude as a single scalar. Weighting
+        # only by amplitude therefore discarded the per-emotion half-lives
+        # entirely: a shock packet kept its full surprise component in the
+        # average until the whole packet died, so calming down read as a
+        # fresh shock. Attenuating each dimension by how far it has spread
+        # lets fast-diffusing emotions fade out of the felt state on their
+        # documented schedule while slow ones persist — emotions calm
+        # without the state lurching between pulses.
         weighted_sums = [0.0] * AFFECT_DIMS
+        attenuation_sums = [0.0] * AFFECT_DIMS
         for p in self.packets:
             for i in range(min(len(p.position), AFFECT_DIMS)):
                 weighted_sums[i] += p.position[i] * p.amplitude
+                spread = p.sigma[i] if i < len(p.sigma) else INITIAL_SIGMA
+                attenuation_sums[i] += (
+                    INITIAL_SIGMA / max(spread, INITIAL_SIGMA)
+                ) * p.amplitude
 
         weighted_avgs = [ws / total_amplitude for ws in weighted_sums]
+
+        # A diffused emotion has faded back toward neutral, not toward zero,
+        # so the ELEVATION above baseline is what decays. Attenuation is
+        # amplitude-weighted across packets, so a fresh strong packet holds
+        # its dimension up while an old one lets it settle.
+        for i, name in enumerate(PLUTCHIK_PRIMARIES):
+            if i >= len(weighted_avgs):
+                break
+            attenuation = attenuation_sums[i] / total_amplitude
+            baseline = NEUTRAL_BASELINES.get(name, 0.0)
+            weighted_avgs[i] = baseline + (weighted_avgs[i] - baseline) * attenuation
 
         result = {}
         for i, name in enumerate(PLUTCHIK_PRIMARIES):
@@ -615,16 +823,21 @@ class AffectField:
 
         result["total_amplitude"] = total_amplitude
 
-        # Find dominant
+        # Find dominant.
+        #
+        # Elevation is SIGNED. This previously compared abs(val - baseline),
+        # which ranks an emotion that is absent above one that is strongly
+        # present: anticipation at 0.0 deviates 0.5 from its 0.5 baseline and
+        # beats trust at 0.97, which deviates 0.47. The field therefore named
+        # the emotion it was feeling *least*. Only positive elevation counts.
         max_val = 0.0
         max_name = "neutral"
         for i, name in enumerate(PLUTCHIK_PRIMARIES):
             val = weighted_avgs[i] if i < len(weighted_avgs) else 0.0
-            # Compare deviation from baseline
             baseline = NEUTRAL_BASELINES.get(name, 0.0)
-            deviation = abs(val - baseline)
-            if deviation > max_val and deviation > DOMINANT_AFFECT_THRESHOLD:
-                max_val = deviation
+            elevation = val - baseline
+            if elevation > max_val and elevation > DOMINANT_AFFECT_THRESHOLD:
+                max_val = elevation
                 max_name = name
 
         result["dominant"] = max_name

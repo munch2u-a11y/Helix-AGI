@@ -750,20 +750,17 @@ class Preconscious:
 
         parts = []
 
-        # Dominant affect (only if non-neutral)
-        if result.dominant_affect != "neutral":
-            parts.append(
-                f"(affect: {result.dominant_affect}"
-                f" | intensity={result.field_intensity:.2f}"
-                f" | packets={result.contributing_packets})"
-            )
+        # The felt state, in language. Never a figure: a number makes the
+        # model decode a scale before it can feel anything, and decoding is
+        # the opposite of tone. Plutchik's gradations carry magnitude
+        # lexically instead (acceptance → trust → admiration).
+        felt = getattr(result, "felt_state", "")
+        if felt:
+            parts.append(felt)
 
-        # Boredom/novelty signal
+        # Boredom/novelty, said rather than scored.
         if result.cognitive_diversity_signal >= 0.3:
-            parts.append(
-                f"(novelty-signal: {result.cognitive_diversity_signal:.2f}"
-                f" — seeking cognitive diversity)"
-            )
+            parts.append("The same ground is starting to feel well-worn.")
 
         # Surfaced memories from emotional reactivation
         if result.surfaced_memories:
