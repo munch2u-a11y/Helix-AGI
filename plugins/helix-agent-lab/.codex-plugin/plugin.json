@@ -1,0 +1,25 @@
+{
+  "name": "helix-agent-lab",
+  "version": "0.1.0",
+  "description": "Run reproducible coding-agent evaluations through installed first-party CLIs.",
+  "author": {
+    "name": "Helix Agent Lab contributors"
+  },
+  "license": "MIT",
+  "keywords": ["evaluation", "testing", "coding-agents", "helix-agi", "mcp"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Helix Agent Lab",
+    "shortDescription": "Test coding agents with local, reproducible runs",
+    "longDescription": "Run Helix-AGI benchmarks or deterministic prompt-case evaluations through installed Codex, Claude Code, and Gemini CLIs without handling provider credentials.",
+    "developerName": "Helix Agent Lab contributors",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write", "External network"],
+    "defaultPrompt": [
+      "Check which coding agents are ready for testing.",
+      "Run the Helix benchmark with my installed Codex.",
+      "Run my prompt-case suite across available agents."
+    ]
+  }
+}

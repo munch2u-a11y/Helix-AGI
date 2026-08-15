@@ -502,6 +502,54 @@ def create_app():
     def api_status():
         return jsonify(read_status())
 
+    # ── Agent Canvas UI Endpoints ──────────────────────────────────────────
+
+    @app.route("/api/canvas", methods=["GET", "POST"])
+    def api_canvas():
+        """Get or update current Agent-controlled UI Canvas state."""
+        canvas_path = SPATIAL_DIR / "agent_canvas.json"
+        if request.method == "POST":
+            data = request.get_json(force=True, silent=True) or {}
+            try:
+                with open(canvas_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+                return jsonify({"ok": True})
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        if canvas_path.exists():
+            try:
+                with open(canvas_path, "r", encoding="utf-8") as f:
+                    return jsonify(json.load(f))
+            except Exception:
+                pass
+        return jsonify({
+            "view_type": "card",
+            "title": "Agent Canvas",
+            "content": "Helix has not initialized dynamic canvas content yet.",
+            "media_url": None,
+            "auto_switch": False,
+            "timestamp": time.time(),
+        })
+
+    @app.route("/api/canvas_history")
+    def api_canvas_history():
+        """Get recent Agent Canvas UI history."""
+        limit = _coerce_int(request.args.get("limit", 20), default=20, minimum=1, maximum=100)
+        history_path = SPATIAL_DIR / "agent_canvas_history.json"
+        if history_path.exists():
+            try:
+                with open(history_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return jsonify({
+                            "entries": list(reversed(data[-limit:])),
+                            "total": len(data),
+                        })
+            except Exception:
+                pass
+        return jsonify({"entries": [], "total": 0})
+
     # ── Chat Endpoints ────────────────────────────────────────────
 
     @app.route("/api/messages", methods=["POST"])

@@ -476,9 +476,17 @@
       <button data-tab="beliefs">Beliefs</button>
       <button data-tab="spatial">Spatial</button>
       <button data-tab="injections">Injections</button>
+      <button data-tab="canvas">Agent Canvas 🎨</button>
       <button data-tab="chat">Chat</button>
     </div>
     <div id="log-content" class="log-content"></div>
+    <div id="canvas-panel" class="canvas-panel" style="display: none; flex-direction: column; flex: 1; padding: 20px; overflow-y: auto; background: var(--bg-dark);">
+      <div id="canvas-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 12px;">
+        <h2 id="canvas-title" style="font-size: 18px; color: var(--accent); margin: 0;">Agent Canvas</h2>
+        <span id="canvas-badge" style="font-size: 11px; padding: 4px 10px; background: rgba(74, 158, 255, 0.15); border: 1px solid var(--accent); border-radius: 12px; color: var(--accent);">MARKDOWN</span>
+      </div>
+      <div id="canvas-body" style="flex: 1; font-size: 14px; line-height: 1.6; color: var(--text);"></div>
+    </div>
     <div id="chat-panel" class="chat-panel">
       <div id="chat-messages" class="chat-messages"></div>
       <div class="chat-input-bar">
@@ -604,15 +612,21 @@ document.querySelectorAll('.tab-bar button').forEach(btn => {
     btn.classList.add('active');
     currentTab = btn.dataset.tab;
     
+    const canvasPanel = document.getElementById('canvas-panel');
+    
     // Hide all panels
     logContent.style.display = 'none';
     chatPanel.classList.remove('visible');
     toolsPanel.style.display = 'none';
     spatialPanel.style.display = 'none';
     injectionsPanel.style.display = 'none';
+    canvasPanel.style.display = 'none';
     
     if (currentTab === 'chat') {
       chatPanel.classList.add('visible');
+    } else if (currentTab === 'canvas') {
+      canvasPanel.style.display = 'flex';
+      fetchCanvas();
     } else if (currentTab === 'tools') {
       toolsPanel.style.display = 'flex';
       fetchTools();
@@ -630,6 +644,64 @@ document.querySelectorAll('.tab-bar button').forEach(btn => {
     }
   });
 });
+
+let lastCanvasTs = 0;
+
+function fetchCanvas() {
+  fetch('/api/canvas')
+    .then(r => r.json())
+    .then(data => {
+      if (!data) return;
+      const titleEl = document.getElementById('canvas-title');
+      const badgeEl = document.getElementById('canvas-badge');
+      const bodyEl = document.getElementById('canvas-body');
+      
+      titleEl.textContent = data.title || 'Agent Canvas';
+      const vtype = (data.view_type || 'card').toUpperCase();
+      badgeEl.textContent = vtype;
+
+      if (data.auto_switch && data.timestamp > lastCanvasTs && currentTab !== 'canvas') {
+        const btn = document.querySelector('.tab-bar button[data-tab="canvas"]');
+        if (btn) btn.click();
+      }
+      lastCanvasTs = data.timestamp || 0;
+
+      let html = '';
+      const content = data.content || '';
+      const mediaUrl = data.media_url || '';
+
+      if (vtype === 'MARKDOWN' || vtype === 'TEXT') {
+        html = `<div style="white-space: pre-wrap; font-family: inherit;">${escapeHtml(content)}</div>`;
+      } else if (vtype === 'IMAGE' || vtype === 'MEDIA') {
+        html = `<div style="text-align: center; padding: 20px;">
+          ${mediaUrl ? `<img src="${escapeHtml(mediaUrl)}" style="max-width: 100%; max-height: 500px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 16px;" />` : ''}
+          <div style="font-size: 15px; color: var(--text-muted);">${escapeHtml(content)}</div>
+        </div>`;
+      } else if (vtype === 'BROWSER' || vtype === 'IFRAME') {
+        html = `<div style="display: flex; flex-direction: column; height: 100%;">
+          <div style="font-size: 12px; color: var(--accent); margin-bottom: 8px;">Target URL: ${escapeHtml(mediaUrl || content)}</div>
+          <iframe src="${escapeHtml(mediaUrl || content)}" style="width: 100%; height: 500px; border: 1px solid var(--border); border-radius: 8px; background: #fff;"></iframe>
+        </div>`;
+      } else if (vtype === 'TERMINAL' || vtype === 'SANDBOX') {
+        html = `<div style="background: #0d1117; color: #58a6ff; font-family: 'JetBrains Mono', monospace; padding: 16px; border-radius: 8px; border: 1px solid var(--border); white-space: pre-wrap; font-size: 13px;">${escapeHtml(content)}</div>`;
+      } else {
+        html = `<div style="padding: 24px; background: rgba(74, 158, 255, 0.08); border: 1px solid rgba(74, 158, 255, 0.3); border-radius: 12px; text-align: center;">
+          <div style="font-size: 28px; margin-bottom: 12px;">🎨</div>
+          <div style="font-size: 16px; font-weight: 600; color: var(--accent); margin-bottom: 8px;">${escapeHtml(data.title || 'Status Card')}</div>
+          <div style="font-size: 14px; color: var(--text);">${escapeHtml(content)}</div>
+        </div>`;
+      }
+
+      bodyEl.innerHTML = html;
+    })
+    .catch(() => {});
+}
+
+setInterval(() => {
+  if (currentTab === 'canvas') {
+    fetchCanvas();
+  }
+}, 2000);
 
 function fetchLogs() {
   fetch(`/api/logs?tab=${currentTab}&since=${logTotal[currentTab]}`)

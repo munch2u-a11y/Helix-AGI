@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "helix-agent-lab": {
+      "command": "python",
+      "args": ["${PLUGIN_ROOT}/scripts/start_server.py"],
+      "env": {
+        "HELIX_AGENT_LAB_ROOT": "${PLUGIN_ROOT}",
+        "HELIX_AGENT_LAB_DATA": "${PLUGIN_DATA}"
+      }
+    }
+  }
+}

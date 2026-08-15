@@ -15,11 +15,12 @@ This module provides:
 """
 
 import json
+import re
 import time
 import logging
 import numpy as np
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
 from core.cognitive_space import CognitiveSpace, PROJECTION_DIM
 
@@ -502,6 +503,99 @@ class SpatialMind:
     def get_attention_position(self) -> np.ndarray:
         """Return the current 8D attention center (for Lagrangian snapshots)."""
         return self.attention_center.copy()
+
+    def get_salience_metadata(
+        self, point_id: str, candidate_item: Optional[dict] = None
+    ) -> Dict[str, float]:
+        """Expose compact internal salience metadata to the controller.
+
+        Returns a clean 4-attribute dictionary:
+        - stability: float (0.0 to 1.0)
+        - affective_salience: float (0.0 to 1.0)
+        - gravity: float (potential / gravitational pull)
+        - transition_weight: float (associative transition strength)
+        """
+        pt = self.memory_space.get_point(point_id) or self.belief_space.get_point(point_id)
+        candidate_item = candidate_item or {}
+        item_meta = candidate_item.get("metadata", {}) if isinstance(candidate_item.get("metadata"), dict) else {}
+
+        if pt:
+            stability = float(pt.get("stability_index", pt.get("confidence", 0.5)))
+            aff = pt.get("metadata", {}).get("affective_salience", pt.get("importance", 0.5))
+            affective_salience = float(aff)
+            gravity = float(candidate_item.get("gravity", pt.get("volatile_mass", 1.0)))
+            omega = float(pt.get("encoding_omega", 0.5))
+            relations = float(pt.get("relations_count", 0))
+            transition_weight = min(1.0, max(0.0, (omega * 0.6) + (min(relations, 10) / 10.0 * 0.4)))
+        else:
+            stability = float(candidate_item.get("stability_index", item_meta.get("stability", 0.5)))
+            affective_salience = float(candidate_item.get("affective_salience", item_meta.get("affective_salience", candidate_item.get("importance", 0.5))))
+            gravity = float(candidate_item.get("gravity", item_meta.get("gravity", 1.0)))
+            transition_weight = float(candidate_item.get("transition_weight", item_meta.get("transition_weight", 0.5)))
+
+        return {
+            "stability": round(max(0.0, min(1.0, stability)), 2),
+            "affective_salience": round(max(0.0, min(1.0, affective_salience)), 2),
+            "gravity": round(max(0.0, gravity), 2),
+            "transition_weight": round(max(0.0, min(1.0, transition_weight)), 2),
+        }
+
+    def get_gravity_basin_keywords(
+        self, seed_items: List[dict], max_terms: int = 4
+    ) -> List[str]:
+        """Extract multi-hop recall search terms from nearby 8D gravity basins.
+
+        Given first-hop evidence items, query nearby positions in CognitiveSpace
+        for high-gravity memory/belief clusters and extract key concepts that
+        were missed in Hop 1.
+        """
+        seed_ids = {item.get("id") for item in seed_items if item.get("id")}
+        if not seed_items:
+            return []
+
+        # Find 8D positions of seed items
+        positions = []
+        for item in seed_items:
+            iid = item.get("id")
+            if iid:
+                pos = self.memory_space.get_position(iid)
+                if pos is None:
+                    pos = self.belief_space.get_position(iid)
+                if pos is not None:
+                    positions.append(pos)
+
+        if not positions:
+            positions = [self.attention_center]
+
+        mean_pos = np.mean(positions, axis=0)
+
+        # Query nearby candidates in memory and belief spaces
+        mem_near = self.memory_space.gravity_ranked_query(mean_pos, k=15)
+        bel_near = self.belief_space.gravity_ranked_query(mean_pos, k=15)
+
+        basin_points = []
+        for pid, grav, dist in mem_near + bel_near:
+            if pid not in seed_ids:
+                pt = self.memory_space.get_point(pid) or self.belief_space.get_point(pid)
+                if pt and pt.get("content"):
+                    basin_points.append((grav, pt["content"]))
+
+        basin_points.sort(key=lambda x: x[0], reverse=True)
+
+        # Extract words/terms from top basin contents
+        terms = []
+        stop_words = {"the", "a", "an", "in", "on", "of", "and", "or", "to", "is", "was", "for", "with", "that", "this", "it", "at", "by", "from"}
+        for _, text in basin_points[:5]:
+            words = re.findall(r"\b[A-Za-z]{3,}\b", text.lower())
+            for w in words:
+                if w not in stop_words and w not in terms:
+                    terms.append(w)
+                if len(terms) >= max_terms:
+                    break
+            if len(terms) >= max_terms:
+                break
+
+        return terms
 
     def get_cognitive_coherence(self) -> float:
         """Cognitive Coherence Index (CCI) — how grounded and focused is Helix?

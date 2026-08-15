@@ -123,6 +123,9 @@ class UnifiedRetrieval:
         include_memories: bool = True,
         max_memories: Optional[int] = None,
     ):
+        self.belief_store = belief_store
+        self.memory_manager = memory_manager
+        self.physics_engine = physics_engine
         self.corpus = HelixCorpus(
             belief_store=belief_store,
             memory_manager=memory_manager,
@@ -155,6 +158,13 @@ class UnifiedRetrieval:
             )
         except (TypeError, ValueError):
             self.budget_items_multiple = default_multiple
+
+    def _get_spatial_mind(self):
+        if self.physics_engine and hasattr(self.physics_engine, "spatial_mind"):
+            return self.physics_engine.spatial_mind
+        if self.memory_manager and hasattr(self.memory_manager, "_physics") and hasattr(self.memory_manager._physics, "spatial_mind"):
+            return self.memory_manager._physics.spatial_mind
+        return None
 
         # Diagnostics from the most recent retrieve(), read by the benchmark
         # harness for lane attribution.
@@ -288,8 +298,26 @@ class UnifiedRetrieval:
             len(suppressed_ids), len(duplicate_ids),
         )
 
+        spatial_mind = self._get_spatial_mind()
+        for item in selected:
+            if spatial_mind:
+                item["salience_metadata"] = spatial_mind.get_salience_metadata(item.get("id"), item)
+            else:
+                stability = float(item.get("stability_index", item.get("confidence", 0.5)))
+                aff = float(item.get("affective_salience", item.get("importance", 0.5)))
+                grav = float(item.get("gravity", 1.0))
+                rel = float(item.get("relations_count", 0))
+                trans = min(1.0, max(0.0, (0.5 * 0.6) + (min(rel, 10) / 10.0 * 0.4)))
+                item["salience_metadata"] = {
+                    "stability": round(max(0.0, min(1.0, stability)), 2),
+                    "affective_salience": round(max(0.0, min(1.0, aff)), 2),
+                    "gravity": round(max(0.0, grav), 2),
+                    "transition_weight": round(max(0.0, min(1.0, trans)), 2),
+                }
+
         return selected
 
+<<<<<<< HEAD
     # ── Evidence-role routing ───────────────────────────────────────
 
     def _route_record_roles(
@@ -432,6 +460,110 @@ class UnifiedRetrieval:
             if len(additions) >= limit:
                 break
         return additions
+
+    def retrieve_multihop(
+        self,
+        trigger_text: str,
+        spatial_candidates: Optional[List[Dict[str, Any]]] = None,
+        complement_quota: int = 2,
+        max_items: int = DEFAULT_MAX_ITEMS,
+        token_budget: Optional[int] = None,
+        exclude: Optional[Set[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Multi-hop recall using the 8D gravity field to choose the next recall query.
+
+        Hop 1: Semantic mRAG retrieves foreground evidence.
+        Basin lookup: Query 8D gravity field around Hop 1 evidence to discover
+                     nearby high-gravity concept basins missed by initial query.
+        Hop 2: Formulate directed recall query from basin terms and retrieve Hop 2 candidates.
+        """
+        exclude = exclude or set()
+        hop1_selected = self.retrieve(
+            trigger_text=trigger_text,
+            spatial_candidates=spatial_candidates,
+            complement_quota=complement_quota,
+            max_items=max_items,
+            token_budget=token_budget,
+            exclude=exclude,
+        )
+
+        if not hop1_selected:
+            return []
+
+        spatial_mind = self._get_spatial_mind()
+        basin_terms = []
+        if spatial_mind:
+            basin_terms = spatial_mind.get_gravity_basin_keywords(hop1_selected, max_terms=4)
+
+        if not basin_terms:
+            return hop1_selected
+
+        hop1_ids = {item["id"] for item in hop1_selected}
+        next_query = f"{trigger_text} {' '.join(basin_terms)}"
+
+        hop2_exclude = exclude | hop1_ids
+        hop2_selected = self.retrieve(
+            trigger_text=next_query,
+            spatial_candidates=spatial_candidates,
+            complement_quota=complement_quota,
+            max_items=max_items,
+            token_budget=token_budget,
+            exclude=hop2_exclude,
+        )
+
+        combined = list(hop1_selected)
+        for item in hop2_selected:
+            if item["id"] not in hop1_ids and len(combined) < max_items:
+                item["lane"] = "multihop"
+                combined.append(item)
+
+        return combined
+
+    def format_personal_opinions(
+        self, candidates: List[Dict[str, Any]], limit: int = 4
+    ) -> str:
+        """Extract and format 1st-person subjective statements / feelings to induce tone.
+
+        Uses backend salience, affect fields, and category signals (premises, preferences, feelings)
+        to select top subjective opinion statements. Injected cleanly under 'Personal Opinions:'
+        without sending raw numbers or metadata labels to the model.
+        """
+        opinions = []
+        seen_contents = set()
+
+        for item in candidates:
+            content = (item.get("content") or "").strip()
+            if not content or content in seen_contents:
+                continue
+
+            sal = item.get("salience_metadata", {})
+            aff = float(sal.get("affective_salience", item.get("affective_salience", 0.0)))
+            grav = float(sal.get("gravity", item.get("gravity", 0.0)))
+            category = item.get("category", "")
+
+            is_subjective = (
+                any(w in content.lower() for w in ["i ", "my ", "me ", "myself", "we ", "our "])
+                or category in ("premises", "preferences", "people")
+                or aff > 0.5
+                or grav > 1.2
+            )
+
+            if is_subjective:
+                score = (aff * 0.4) + (grav * 0.6) + (0.5 if category == "premises" else 0.0)
+                opinions.append((score, content))
+                seen_contents.add(content)
+
+        opinions.sort(key=lambda x: x[0], reverse=True)
+
+        if not opinions:
+            return ""
+
+        formatted_lines = ["Personal Opinions:"]
+        for _, text in opinions[:limit]:
+            formatted_lines.append(f'- "{text}"')
+
+        return "\n".join(formatted_lines)
+>>>>>>> main
 
     def associative_additions(
         self,
@@ -621,18 +753,18 @@ class UnifiedRetrieval:
             return merged
 
         semantic_ids = {item["id"] for item in lane_a}
-        used = 0
-        for rank, item in enumerate(lane_b):
-            if item["id"] in semantic_ids:
-                continue
+        spatial_only = [item for item in lane_b if item["id"] not in semantic_ids]
+        spatial_only.sort(key=lambda item: (
+            -float(item.get("gravity", 0.0)),
+            -self._metadata_salience(item),
+            item["id"]
+        ))
+        for rank, item in enumerate(spatial_only[:complement_quota]):
             item["lane_a_rank"] = None
-            item["lane_b_rank"] = rank
+            item["lane_b_rank"] = spatial_rank.get(item["id"], rank)
             item["lane"] = "spatial"
             item["rrf_score"] = 0.0
             merged.append(item)
-            used += 1
-            if used >= complement_quota:
-                break
         return merged
 
     def _rrf_merge(
