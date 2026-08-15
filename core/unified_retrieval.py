@@ -317,7 +317,6 @@ class UnifiedRetrieval:
 
         return selected
 
-<<<<<<< HEAD
     # ── Evidence-role routing ───────────────────────────────────────
 
     def _route_record_roles(
@@ -563,7 +562,6 @@ class UnifiedRetrieval:
             formatted_lines.append(f'- "{text}"')
 
         return "\n".join(formatted_lines)
->>>>>>> main
 
     def associative_additions(
         self,

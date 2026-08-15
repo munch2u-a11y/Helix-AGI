@@ -2446,7 +2446,8 @@ class Preconscious:
         if unified is not None and render_mode in ("verbatim", "structured"):
             lines = ["Recalled context (historical memory, possibly with distractors):"]
             lines.extend(f"- {text}" for text in belief_texts)
-            opinions_block = unified.format_personal_opinions(rendered_selection)
+            formatter = getattr(unified, "format_personal_opinions", None)
+            opinions_block = formatter(rendered_selection) if callable(formatter) else ""
             if opinions_block:
                 lines.append("")
                 lines.append(opinions_block)
