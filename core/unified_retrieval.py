@@ -158,6 +158,9 @@ class UnifiedRetrieval:
             )
         except (TypeError, ValueError):
             self.budget_items_multiple = default_multiple
+        self.last_stats: Dict[str, Any] = {}
+        self.last_lane_a_ids: Set[str] = set()
+        self._token_budget_cache: Dict[Tuple[int, int], int] = {}
 
     def _get_spatial_mind(self):
         if self.physics_engine and hasattr(self.physics_engine, "spatial_mind"):
@@ -165,12 +168,6 @@ class UnifiedRetrieval:
         if self.memory_manager and hasattr(self.memory_manager, "_physics") and hasattr(self.memory_manager._physics, "spatial_mind"):
             return self.memory_manager._physics.spatial_mind
         return None
-
-        # Diagnostics from the most recent retrieve(), read by the benchmark
-        # harness for lane attribution.
-        self.last_stats: Dict[str, Any] = {}
-        self.last_lane_a_ids: Set[str] = set()
-        self._token_budget_cache: Dict[Tuple[int, int], int] = {}
 
     # ── Main entry point ─────────────────────────────────────────────
 
@@ -462,12 +459,13 @@ class UnifiedRetrieval:
 
     def retrieve_multihop(
         self,
-        trigger_text: str,
+        trigger_text: str = "",
         spatial_candidates: Optional[List[Dict[str, Any]]] = None,
         complement_quota: int = 2,
         max_items: int = DEFAULT_MAX_ITEMS,
         token_budget: Optional[int] = None,
         exclude: Optional[Set[str]] = None,
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """Multi-hop recall using the 8D gravity field to choose the next recall query.
 
@@ -476,6 +474,8 @@ class UnifiedRetrieval:
                      nearby high-gravity concept basins missed by initial query.
         Hop 2: Formulate directed recall query from basin terms and retrieve Hop 2 candidates.
         """
+        trigger_text = trigger_text or kwargs.get("query", "")
+        max_items = kwargs.get("max_total", kwargs.get("top_k_per_hop", max_items))
         exclude = exclude or set()
         hop1_selected = self.retrieve(
             trigger_text=trigger_text,

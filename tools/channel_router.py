@@ -192,8 +192,18 @@ class ChannelRouter:
             )
 
     def _get_last_inbound(self, name: str) -> Optional[dict]:
-        """Get the last inbound channel for a person (if recent enough)."""
-        name_lower = name.lower().strip()
+        """Get the last inbound channel for a person (or most recent overall if name is empty/auto)."""
+        name_lower = (name or "").lower().strip()
+
+        # If no recipient name specified or auto/last, select the most recent sender across all contacts
+        if not name_lower or name_lower in ("auto", "last", "default", "me"):
+            if self._last_inbound:
+                most_recent_name, most_recent_data = max(
+                    self._last_inbound.items(), key=lambda item: item[1].get("time", 0)
+                )
+                return {"recipient": most_recent_name, **most_recent_data}
+            return None
+
         inbound = self._last_inbound.get(name_lower)
         if not inbound:
             # Check aliases
@@ -207,30 +217,32 @@ class ChannelRouter:
                         if inbound:
                             break
 
-        if inbound and (time.time() - inbound["time"]) < self.REPLY_WINDOW:
+        if inbound and (time.time() - inbound.get("time", 0)) < self.REPLY_WINDOW:
             return inbound
         return None
 
     # ── Routing ───────────────────────────────────────────────────────
 
     def route_reply(self, recipient: str, message: str) -> bool:
-        """Route a [REPLY:name] message — uses last inbound channel.
+        """Route a reply message.
 
-        Falls back to default channel if no recent inbound.
+        Auto-routes to the last person who messaged Helix if recipient is unspecified/auto.
+        Otherwise routes to the requested contact via their last inbound channel or default contact channel.
         """
         inbound = self._get_last_inbound(recipient)
         if inbound:
+            target_recipient = inbound.get("recipient", recipient)
             channel = inbound["channel"]
-            logger.info(f"[REPLY:{recipient}] routing via last inbound: {channel}")
+            logger.info(f"[REPLY:{target_recipient}] routing via last inbound channel: {channel}")
             return self._send_via_channel(
-                recipient=recipient,
+                recipient=target_recipient,
                 message=message,
                 channel=channel,
                 channel_data=inbound,
             )
 
-        # No recent inbound — fall back to default
-        logger.info(f"[REPLY:{recipient}] no recent inbound, falling back to default")
+        # No recent inbound — fall back to contact's default channel
+        logger.info(f"[REPLY:{recipient}] no recent inbound, falling back to contact default channel")
         return self.route_message(recipient, message)
 
     def route_message(self, recipient: str, message: str) -> bool:

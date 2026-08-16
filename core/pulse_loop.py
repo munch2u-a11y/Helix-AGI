@@ -67,8 +67,8 @@ class PulseLoop:
     DORMANT_CHECK = 60         # How often to check for wake during sleep
 
     # Timeout durations for state transitions
-    ACTIVE_TIMEOUT = 120       # 2 min no incoming → ACTIVE → REGULAR
-    REGULAR_TIMEOUT = 600      # 10 min no activity → REGULAR → RESTING
+    ACTIVE_TIMEOUT = 15        # 15s no incoming → ACTIVE → RESTING immediately
+    REGULAR_TIMEOUT = 60       # 1 min no activity → REGULAR → RESTING
 
     # Context window lifecycle thresholds
     FOCUS_DRIFT_THRESHOLD = 1.5

@@ -370,51 +370,13 @@ class HelixCorpus:
         Using distance from the omega baseline plus systemic load preserves
         that distinction without making affect compete directly with mRAG's
         semantic score.
-
-        Surprise is folded in as a third term, so a pulse where stability
-        moved sharply encodes heavier than a routine one. That is how a
-        correction earns durability without anyone counting repetitions.
-
-        Note on D_KL: deliberately NOT used. Despite reading like prediction
-        error, compute_kl_divergence measures the gap between the gravity
-        distribution at current attention and the one at the identity centre
-        — how far attention wandered from self, not how wrong an expectation
-        turned out to be. A live run measured it spanning only 0.094-0.173,
-        so it carries almost no discriminating range either.
         """
         try:
             omega = max(0.0, min(1.0, float(lagrangian.get("omega", 0.5))))
             s_total = max(0.0, min(1.0, float(lagrangian.get("s_total", 0.15))))
-            surprise = HelixCorpus._surprise(lagrangian)
-            return min(
-                1.0,
-                (2.0 * abs(omega - 0.5) * 0.50)
-                + (s_total * 0.25)
-                + (surprise * 0.25),
-            )
+            return min(1.0, (2.0 * abs(omega - 0.5) * 0.65) + (s_total * 0.35))
         except (TypeError, ValueError):
             return 0.0
-
-    # Normaliser for pulse-to-pulse stability change. Set from a live run:
-    # typical |delta_s| 0.185, notable 0.481, largest observed 0.691. Dividing
-    # by the observed maximum puts a routine pulse near 0.26 and a genuinely
-    # large shift at 1.0.
-    _SURPRISE_SCALE = 0.7
-
-    @staticmethod
-    def _surprise(lagrangian: Dict[str, Any]) -> float:
-        """How much stability moved since the previous pulse, 0-1.
-
-        Magnitude, not sign: something unexpectedly working is as surprising
-        as something unexpectedly failing, and both deserve to be recalled.
-        Records written before delta_s existed report 0.0 and are simply
-        unweighted rather than penalised.
-        """
-        try:
-            delta = abs(float(lagrangian.get("delta_s", 0.0)))
-        except (TypeError, ValueError):
-            return 0.0
-        return min(1.0, delta / HelixCorpus._SURPRISE_SCALE)
 
     @staticmethod
     def _read_journal_from(path, offset: int) -> List[Dict[str, Any]]:

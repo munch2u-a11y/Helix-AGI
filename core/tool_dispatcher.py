@@ -146,7 +146,9 @@ class ToolDispatcher:
 
         # 2. WRITE PRIMITIVE
         elif primitive == "write":
-            if target_lower.startswith("file://"):
+            if target_lower in ("telegram", "chat", "reply", "user", "message") or target_lower.startswith("telegram://"):
+                return "reply", {"message": str(content)}
+            elif target_lower.startswith("file://"):
                 path = target[7:]
                 return "write_file", {"filepath": path, "content": str(content)}
             elif target_lower == "note://scratchpad" or target_lower == "scratchpad":

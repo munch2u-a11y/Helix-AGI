@@ -284,11 +284,15 @@ class ToolExecutor:
             "verbalize": self._fc_verbalize,
             "memory_recall": self._fc_memory_recall,
             "note": self._fc_note,
+            "note_write": self._fc_note,
+            "note_append": self._fc_update_note,
+            "note_clear": self._fc_clear_notes,
             "note_done": self._fc_note_done,
             "list_notes": self._fc_list_notes,
             "clear_notes": self._fc_clear_notes,
             "update_note": self._fc_update_note,
             "journal": self._fc_journal,
+            "nap": self._fc_reset_context,
             "reset_context": self._fc_reset_context,
         }
         perception_handlers = {
