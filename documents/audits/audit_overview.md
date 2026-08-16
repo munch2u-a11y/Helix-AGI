@@ -57,6 +57,7 @@ flowchart TD
 ### 1. Core Loop, Task Cognition & Action Execution
 - **[Pulse Loop Audit](audit_pulse_loop.md)** - thread lifecycle, event queue, cadence state, rate-limit parking, context compression, and post-pulse dispatch. `core/pulse_loop.py`
 - **[Preconscious Audit](audit_preconscious.md)** - layered context assembly, Layer 2 anchors, spatial neighborhood recall, gravity-ranked belief injection, and typed evidence injection. `core/preconscious.py`
+- **[Pipeline & Architecture Verification](pipeline_and_architecture_verification.md)** [NEW] - complete verification audit with 5 sequence/state/flowchart Mermaid diagrams covering Preconscious RAG, Channel Routing, and Context Branching.
 - **[Action Path & Action Planner Audit](audit_action_planner.md)** [NEW] - small-context task planning, 4-leg limits, clarification questions (`NEED_INPUT:`), `ToolOrchestrator`, `ToolTaskRunner`, and verification receipts. `core/action_planner.py`, `core/action_protocol.py`, `core/tool_orchestrator.py`
 - **[Task Cognition Subsystem Audit](audit_task_cognition.md)** [NEW] - intention detection (`inception.py`), focus worker arbitration (`focus.py`), capability routing (`capabilities.py`), and procedural memory (`procedures.py`). `core/task_cognition/`
 
