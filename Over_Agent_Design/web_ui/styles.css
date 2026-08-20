@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------
    Helix Subconscious Over-Agent — Desktop Floating Widget CSS
-   Design: Pure Iconic Double-Helix Logo Geometry & Global OS Window Dragging
+   Design: Official Helix Logo Image Asset & Fluid Web-to-Python Drag Bridge
 ------------------------------------------------------------------- */
 
 :root {
@@ -63,7 +63,7 @@ body.widget-mode {
 }
 
 /* -------------------------------------------------------------------
-   PURE ICONIC HELIX LOGO WIDGET (NO BUTTON / NO FACE / NO BUBBLE)
+   PURE OFFICIAL HELIX LOGO IMAGE (NO BUTTON / NO LINES)
 ------------------------------------------------------------------- */
 
 .helix-avatar-container {
@@ -84,71 +84,44 @@ body.widget-mode {
 }
 
 .helix-avatar-container:hover {
-    transform: scale(1.15) rotate(4deg);
+    transform: scale(1.12);
 }
 
 .avatar-pulse-ring {
     position: absolute;
-    top: -10px;
-    left: -10px;
-    width: 108px;
-    height: 108px;
+    top: -8px;
+    left: -8px;
+    width: 104px;
+    height: 104px;
     border-radius: 50%;
     border: 2px solid var(--mood-primary);
     box-shadow: 0 0 20px var(--mood-glow);
-    opacity: 0.5;
+    opacity: 0.55;
     animation: pulseRing 3s ease-out infinite;
     pointer-events: none;
     transition: border-color 0.4s ease, box-shadow 0.4s ease;
 }
 
-.avatar-core-mascot {
+.avatar-core-logo {
     position: relative;
     width: 100%;
     height: 100%;
+    border-radius: 50%;
     background: transparent;
-    border: none;
-    box-shadow: none;
-    padding: 0;
+    border: 2px solid var(--mood-primary);
+    box-shadow: 0 8px 24px var(--mood-glow);
+    overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
-    overflow: visible;
+    transition: border-color 0.4s ease, box-shadow 0.4s ease;
 }
 
-/* -------------------------------------------------------------------
-   PURE DOUBLE-HELIX VECTOR LOGO ANIMATIONS
-------------------------------------------------------------------- */
-
-.helix-vector-svg {
+.official-helix-logo-img {
     width: 100%;
     height: 100%;
-    overflow: visible;
-    filter: drop-shadow(0 0 12px var(--mood-glow));
-}
-
-.layer-helix-outer {
-    transform-origin: 50px 50px;
-    animation: helixOuterRotate 12s linear infinite;
-}
-
-.layer-helix-inner {
-    transform-origin: 50px 50px;
-    animation: helixInnerPulse 3s ease-in-out infinite alternate;
-}
-
-.layer-helix-rungs {
-    transform-origin: 50px 50px;
-    animation: rungsPulse 2.5s ease-in-out infinite alternate;
-}
-
-.layer-pulse-aura {
-    transform-origin: 50px 50px;
-    animation: auraPulse 3s ease-out infinite;
-}
-
-.layer-core-node {
-    animation: coreGlowPulse 2s ease-in-out infinite alternate;
+    object-fit: cover;
+    border-radius: 50%;
 }
 
 /* Avatar Speech Bubble */
@@ -422,32 +395,6 @@ body.widget-mode {
 @keyframes avatarIdleFloat {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-8px); }
-}
-
-@keyframes helixOuterRotate {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-}
-
-@keyframes helixInnerPulse {
-    0% { transform: scale(0.96); opacity: 0.8; }
-    100% { transform: scale(1.04); opacity: 1; }
-}
-
-@keyframes rungsPulse {
-    0% { opacity: 0.5; stroke-width: 1.5px; }
-    100% { opacity: 0.95; stroke-width: 2.5px; }
-}
-
-@keyframes auraPulse {
-    0% { transform: scale(0.92); opacity: 0.6; }
-    50% { transform: scale(1.1); opacity: 0.1; }
-    100% { transform: scale(0.92); opacity: 0.6; }
-}
-
-@keyframes coreGlowPulse {
-    from { r: 4px; opacity: 0.8; }
-    to { r: 6.5px; opacity: 1; }
 }
 
 @keyframes pulseRing {

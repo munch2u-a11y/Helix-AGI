@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------
    Helix Subconscious Over-Agent — Desktop Floating Widget Logic
-   Features: SVG Expression Library, Dynamic Mood Shifts & Unprompted Proactive Speech
+   Features: Official Helix Logo Image, Web-to-Python Drag Bridge & SSE Stream
 ------------------------------------------------------------------- */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -19,8 +19,37 @@ document.addEventListener("DOMContentLoaded", () => {
     const affectStatus = document.getElementById("affect-status");
 
     let isDrawerOpen = false;
+    let isDraggingWindow = false;
 
-    // Map Synthetic Affect / Mood Labels to CSS Color Shift Classes & Expressions
+    // Web-to-Python Window Drag Bridge
+    avatarWidget.addEventListener('mousedown', (e) => {
+        if (e.button === 0) {
+            isDraggingWindow = true;
+            fetch('/api/drag_start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ screenX: e.screenX, screenY: e.screenY })
+            }).catch(() => {});
+        }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (isDraggingWindow) {
+            fetch('/api/drag_move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ screenX: e.screenX, screenY: e.screenY })
+            }).catch(() => {});
+        }
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (isDraggingWindow) {
+            isDraggingWindow = false;
+        }
+    });
+
+    // Map Synthetic Affect / Mood Labels to CSS Color Shift Classes
     function applyMoodColorShift(label) {
         if (!label) return;
         
@@ -29,19 +58,14 @@ document.addEventListener("DOMContentLoaded", () => {
         
         if (lower.includes("focus") || lower.includes("analytical") || lower.includes("deep")) {
             avatarWidget.classList.add("mood-focused");
-            applyMascotExpression("focused");
         } else if (lower.includes("creative") || lower.includes("excited") || lower.includes("energized")) {
             avatarWidget.classList.add("mood-excited");
-            applyMascotExpression("happy");
         } else if (lower.includes("calm") || lower.includes("content") || lower.includes("receptive")) {
             avatarWidget.classList.add("mood-calm");
-            applyMascotExpression("happy");
         } else if (lower.includes("reflective") || lower.includes("diagnostic") || lower.includes("subconscious")) {
             avatarWidget.classList.add("mood-reflective");
-            applyMascotExpression("thinking");
         } else {
             avatarWidget.classList.add("mood-focused");
-            applyMascotExpression("focused");
         }
     }
 
@@ -57,7 +81,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     avatarWidget.addEventListener("click", (e) => {
-        if (!e.target.closest(".dropzone-overlay")) {
+        if (!e.target.closest(".dropzone-overlay") && !isDraggingWindow) {
             toggleDrawer();
         }
     });
@@ -84,7 +108,6 @@ document.addEventListener("DOMContentLoaded", () => {
         userInput.value = "";
 
         updateSpeechBubble("Subconscious reflection cycle active...");
-        applyMascotExpression("thinking");
         setSpeakingState(true);
 
         try {
@@ -98,7 +121,6 @@ document.addEventListener("DOMContentLoaded", () => {
             if (data.response) {
                 appendMessage("assistant", data.response);
                 updateSpeechBubble(data.response.substring(0, 45) + "...");
-                applyMascotExpression("happy");
             } else if (data.error) {
                 appendMessage("system", "Error: " + data.error);
             }
@@ -132,7 +154,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Screen Crop Snippet Helper
     btnCropSnippet.addEventListener("click", () => {
-        applyMascotExpression("curious");
         appendMessage("system", "[Screen Crop]: Captured desktop screen snippet. Sent to vision execution sub-orchestrator.");
         userInput.value = "Inspect captured desktop screen snippet and describe what is visible.";
         sendPrompt();
@@ -156,15 +177,9 @@ document.addEventListener("DOMContentLoaded", () => {
         e.stopPropagation();
     }
 
-    avatarWidget.addEventListener('dragenter', () => {
-        avatarWidget.classList.add('drag-over');
-        applyMascotExpression('surprised');
-    });
+    avatarWidget.addEventListener('dragenter', () => avatarWidget.classList.add('drag-over'));
     avatarWidget.addEventListener('dragover', () => avatarWidget.classList.add('drag-over'));
-    avatarWidget.addEventListener('dragleave', () => {
-        avatarWidget.classList.remove('drag-over');
-        applyMascotExpression('happy');
-    });
+    avatarWidget.addEventListener('dragleave', () => avatarWidget.classList.remove('drag-over'));
     avatarWidget.addEventListener('drop', (e) => {
         avatarWidget.classList.remove('drag-over');
         const files = Array.from(e.dataTransfer.files);
@@ -176,7 +191,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // Document Ingestion & Chunking API Handler
     async function handleFilesIngestion(files) {
         toggleDrawer(true);
-        applyMascotExpression("curious");
         appendMessage("system", `Ingesting ${files.length} document(s)... Chunking into semantic memory store.`);
 
         const formData = new FormData();
@@ -192,7 +206,6 @@ document.addEventListener("DOMContentLoaded", () => {
             if (result.success) {
                 appendMessage("system", `✓ Ingestion Complete! Logged ${result.total_chunks} semantic chunk(s) across ${result.files_processed.length} file(s).`);
                 updateSpeechBubble(`Ingested ${result.files_processed.length} document(s). Ready!`);
-                applyMascotExpression("happy");
             } else {
                 appendMessage("system", `Ingestion error: ${result.error || "Failed to process files."}`);
             }
@@ -257,7 +270,6 @@ document.addEventListener("DOMContentLoaded", () => {
             source.addEventListener("proactive_speech", (e) => {
                 const data = JSON.parse(e.data);
                 if (data.proactive_speech) {
-                    applyMascotExpression(data.expression || "surprised");
                     updateSpeechBubble(data.proactive_speech);
                     appendMessage("assistant", "⚡ [Proactive Observation]: " + data.proactive_speech);
                     if (data.mood_label) {

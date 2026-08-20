@@ -2,7 +2,8 @@
 Web Server & SSE Bridge — Subconscious Over-Agent System.
 
 Hosts the Desktop Floating Widget UI (web_ui/), handles drag-and-drop file ingestion,
-and streams real-time background pulse thoughts, affect updates, and unprompted proactive speech events over SSE.
+provides Web-to-Python window drag position bridge (/api/drag_move),
+and streams real-time background pulse thoughts & affect updates over SSE.
 """
 
 import os
@@ -10,7 +11,6 @@ import sys
 import json
 import time
 import cgi
-import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from typing import Optional, List, Dict, Any
 
@@ -24,10 +24,19 @@ from proactive_vision_agent import ProactiveVisionAgent
 
 WEB_UI_DIR = os.path.join(BASE_DIR, "web_ui")
 
+# Global window reference for native desktop dragging
+DESKTOP_WINDOW_REF = None
+
 class WidgetHTTPServerHandler(SimpleHTTPRequestHandler):
     conductor: Optional[SubconsciousConductor] = None
     ingester = DocumentIngester()
     proactive_agent = ProactiveVisionAgent()
+
+    # Drag tracking state
+    drag_start_win_x = 0
+    drag_start_win_y = 0
+    drag_start_screen_x = 0
+    drag_start_screen_y = 0
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_UI_DIR, **kwargs)
@@ -43,8 +52,44 @@ class WidgetHTTPServerHandler(SimpleHTTPRequestHandler):
             self._handle_api_chat()
         elif self.path == "/api/ingest":
             self._handle_api_ingest()
+        elif self.path == "/api/drag_start":
+            self._handle_drag_start()
+        elif self.path == "/api/drag_move":
+            self._handle_drag_move()
         else:
             self._send_json_response({"error": "Endpoint not found"}, status=404)
+
+    def _handle_drag_start(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        data = json.loads(self.rfile.read(content_length).decode("utf-8"))
+        
+        WidgetHTTPServerHandler.drag_start_screen_x = data.get("screenX", 0)
+        WidgetHTTPServerHandler.drag_start_screen_y = data.get("screenY", 0)
+        
+        if DESKTOP_WINDOW_REF:
+            pos = DESKTOP_WINDOW_REF.pos()
+            WidgetHTTPServerHandler.drag_start_win_x = pos.x()
+            WidgetHTTPServerHandler.drag_start_win_y = pos.y()
+
+        self._send_json_response({"status": "ok"})
+
+    def _handle_drag_move(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        data = json.loads(self.rfile.read(content_length).decode("utf-8"))
+        
+        curr_screen_x = data.get("screenX", 0)
+        curr_screen_y = data.get("screenY", 0)
+        
+        delta_x = curr_screen_x - WidgetHTTPServerHandler.drag_start_screen_x
+        delta_y = curr_screen_y - WidgetHTTPServerHandler.drag_start_screen_y
+        
+        new_x = WidgetHTTPServerHandler.drag_start_win_x + delta_x
+        new_y = WidgetHTTPServerHandler.drag_start_win_y + delta_y
+        
+        if DESKTOP_WINDOW_REF:
+            DESKTOP_WINDOW_REF.move(new_x, new_y)
+
+        self._send_json_response({"status": "ok", "new_x": new_x, "new_y": new_y})
 
     def _handle_api_chat(self):
         content_length = int(self.headers.get("Content-Length", 0))
@@ -128,16 +173,6 @@ class WidgetHTTPServerHandler(SimpleHTTPRequestHandler):
         try:
             self.wfile.write(f"event: pulse\ndata: {data}\n\n".encode("utf-8"))
             self.wfile.flush()
-        except Exception:
-            pass
-
-        # Check for unprompted proactive speech event
-        try:
-            proactive_event = self.proactive_agent.evaluate_proactive_resonance(min_interval_s=60.0)
-            if proactive_event:
-                p_data = json.dumps(proactive_event)
-                self.wfile.write(f"event: proactive_speech\ndata: {p_data}\n\n".encode("utf-8"))
-                self.wfile.flush()
         except Exception:
             pass
 

@@ -3,8 +3,7 @@
 Helix Subconscious Over-Agent — Native Desktop Floating Overlay Launcher.
 
 Creates a TRUE system-wide native OS floating window (frameless, transparent, always-on-top)
-featuring a Global Application Event Filter for 100% fluid click-and-drag desktop movement,
-pure iconic Helix double-helix logo rendering, and dynamic window sizing.
+registered to web_server.DESKTOP_WINDOW_REF for 100% fluid click-and-drag desktop movement.
 """
 
 import os
@@ -26,30 +25,10 @@ def wait_for_server(url: str, timeout_s: float = 10.0) -> bool:
     return False
 
 def launch_pyqt6_overlay():
-    from PyQt6.QtCore import Qt, QUrl, QPoint, QObject, QEvent
+    from PyQt6.QtCore import Qt, QUrl, QPoint
     from PyQt6.QtWidgets import QApplication, QMainWindow
     from PyQt6.QtWebEngineWidgets import QWebEngineView
-
-    class GlobalDragFilter(QObject):
-        """Intercepts mouse press/move events globally across WebEngine child widgets."""
-        def __init__(self, main_window):
-            super().__init__()
-            self.window = main_window
-            self.dragging = False
-            self.offset = QPoint()
-
-        def eventFilter(self, obj, event):
-            if event.type() == QEvent.Type.MouseButtonPress:
-                if event.button() == Qt.MouseButton.LeftButton:
-                    self.dragging = True
-                    self.offset = event.globalPosition().toPoint() - self.window.frameGeometry().topLeft()
-            elif event.type() == QEvent.Type.MouseMove:
-                if self.dragging and (event.buttons() & Qt.MouseButton.LeftButton):
-                    self.window.move(event.globalPosition().toPoint() - self.offset)
-                    return True
-            elif event.type() == QEvent.Type.MouseButtonRelease:
-                self.dragging = False
-            return False
+    import web_server
 
     app = QApplication(sys.argv)
     window = QMainWindow()
@@ -69,12 +48,11 @@ def launch_pyqt6_overlay():
     web.load(QUrl(SERVER_URL))
     window.setCentralWidget(web)
 
-    # Install Global Drag Event Filter to catch WebEngine child mouse events
-    drag_filter = GlobalDragFilter(window)
-    app.installEventFilter(drag_filter)
+    # Register global window reference for web-to-python dragging
+    web_server.DESKTOP_WINDOW_REF = window
 
     window.show()
-    print("  ✓ Native PyQt6 Overlay Active: Global Mouse Drag Filter Installed & Pure Helix Logo Rendering!")
+    print("  ✓ Native PyQt6 Overlay Window Active & Drag-Bridge Connected!")
     sys.exit(app.exec())
 
 def launch_native_overlay():
