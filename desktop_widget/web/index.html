@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Helix Desktop Widget</title>
+  <link rel="stylesheet" href="/widget/styles.css">
+</head>
+<body>
+  <main id="widget-shell" aria-label="Helix desktop widget">
+    <section
+      id="helix-avatar-widget"
+      class="helix-avatar mood-focused"
+      role="button"
+      tabindex="0"
+      aria-label="Open Helix chat. Drag to move the widget."
+      aria-expanded="false"
+    >
+      <canvas id="helix-3d-canvas" aria-label="Animated three-dimensional Helix mascot"></canvas>
+      <div id="webgl-fallback" class="webgl-fallback" aria-hidden="true">
+        <span class="fallback-antenna left"></span>
+        <span class="fallback-antenna right"></span>
+        <span class="fallback-face">⌣</span>
+        <span class="fallback-strand one"></span>
+        <span class="fallback-strand two"></span>
+      </div>
+      <div id="speech-bubble" class="speech-bubble" aria-live="polite">
+        <span id="speech-bubble-text">Helix is ready.</span>
+      </div>
+      <div class="drag-hint">drag me</div>
+    </section>
+
+    <section id="mini-chat-drawer" class="chat-drawer hidden" aria-label="Helix chat">
+      <header class="drawer-header">
+        <div>
+          <div class="title-row">
+            <span id="connection-dot" class="status-dot"></span>
+            <strong>Helix</strong>
+          </div>
+          <span id="agent-status" class="agent-status">Connecting to local runtime…</span>
+        </div>
+        <div class="drawer-actions">
+          <a class="icon-button" href="/" target="_blank" rel="noopener" title="Open cognitive dashboard">↗</a>
+          <button id="close-drawer" class="icon-button" type="button" title="Close chat">×</button>
+          <button id="close-widget" class="icon-button native-only" type="button" title="Close widget">●</button>
+        </div>
+      </header>
+
+      <div id="chat-feed" class="chat-feed" aria-live="polite">
+        <article class="message system-message">
+          <span class="message-author">Local Helix</span>
+          <p>This widget uses the existing dashboard message bridge. No alternate agent or memory runtime is loaded.</p>
+        </article>
+      </div>
+
+      <div class="input-tools">
+        <button id="paste-clipboard" class="tool-button" type="button">Paste clipboard</button>
+        <span class="local-badge">fully local UI</span>
+      </div>
+
+      <form id="chat-form" class="input-bar">
+        <textarea id="user-input" rows="1" maxlength="12000" placeholder="Message Helix…" aria-label="Message Helix"></textarea>
+        <button id="send-prompt" class="send-button" type="submit" aria-label="Send message">➜</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="/widget/mascot.js"></script>
+  <script src="/widget/app.js"></script>
+</body>
+</html>

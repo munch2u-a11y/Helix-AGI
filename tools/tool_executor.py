@@ -224,6 +224,11 @@ class ToolExecutor:
         )
         self._registry = registry
 
+        # Presentation-only extension: expose the dashboard canvas as an
+        # optional toolset without altering the pulse or memory architecture.
+        from tools.ui_canvas_tool import register_ui_canvas_tool
+        register_ui_canvas_tool(registry)
+
         # ── Availability check functions ─────────────────────────────
         def _check_github():
             return bool(os.environ.get("GITHUB_TOKEN"))
@@ -2365,4 +2370,3 @@ class ToolExecutor:
             return br.browse_screenshot()
 
         return f"Unknown browser operation: {op}"
-

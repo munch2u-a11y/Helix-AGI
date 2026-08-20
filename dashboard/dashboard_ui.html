@@ -67,6 +67,29 @@
   .log-line.warn { color: var(--gold); }
   .log-line.error { color: var(--red); }
   .log-line .ts { color: var(--dim); }
+  .canvas-panel {
+    display: none; flex: 1; min-height: 0; overflow-y: auto;
+    flex-direction: column; padding: 18px; background: var(--bg);
+  }
+  .canvas-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+  }
+  .canvas-title { margin: 0; color: var(--accent); font-size: 17px; }
+  .canvas-badge {
+    padding: 3px 8px; border: 1px solid var(--accent); border-radius: 999px;
+    background: rgba(74,158,255,0.12); color: var(--accent);
+    font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  }
+  .canvas-body { flex: 1; color: var(--text); font-size: 13px; line-height: 1.55; }
+  .canvas-text, .canvas-terminal { white-space: pre-wrap; word-break: break-word; }
+  .canvas-terminal {
+    padding: 14px; border: 1px solid var(--border); border-radius: 8px;
+    background: #0d1117; color: #58a6ff; font-family: 'JetBrains Mono', monospace;
+  }
+  .canvas-media { display: block; max-width: 100%; max-height: 500px; margin: 0 auto 12px; border-radius: 8px; }
+  .canvas-frame { width: 100%; height: 500px; border: 1px solid var(--border); border-radius: 8px; background: white; }
+  .canvas-card { padding: 22px; border: 1px solid rgba(74,158,255,0.3); border-radius: 12px; background: rgba(74,158,255,0.08); text-align: center; }
 
   /* Center: 3D scene */
   .scene-panel {
@@ -476,9 +499,17 @@
       <button data-tab="beliefs">Beliefs</button>
       <button data-tab="spatial">Spatial</button>
       <button data-tab="injections">Injections</button>
+      <button data-tab="canvas">Canvas</button>
       <button data-tab="chat">Chat</button>
     </div>
     <div id="log-content" class="log-content"></div>
+    <div id="canvas-panel" class="canvas-panel">
+      <div class="canvas-header">
+        <h2 id="canvas-title" class="canvas-title">Agent Canvas</h2>
+        <span id="canvas-badge" class="canvas-badge">CARD</span>
+      </div>
+      <div id="canvas-body" class="canvas-body"></div>
+    </div>
     <div id="chat-panel" class="chat-panel">
       <div id="chat-messages" class="chat-messages"></div>
       <div class="chat-input-bar">
@@ -588,6 +619,7 @@ const chatPanel = document.getElementById('chat-panel');
 const toolsPanel = document.getElementById('tools-panel');
 const spatialPanel = document.getElementById('spatial-panel');
 const injectionsPanel = document.getElementById('injections-panel');
+const canvasPanel = document.getElementById('canvas-panel');
 
 function escapeHtml(value) {
   return String(value || '')
@@ -610,6 +642,7 @@ document.querySelectorAll('.tab-bar button').forEach(btn => {
     toolsPanel.style.display = 'none';
     spatialPanel.style.display = 'none';
     injectionsPanel.style.display = 'none';
+    canvasPanel.style.display = 'none';
     
     if (currentTab === 'chat') {
       chatPanel.classList.add('visible');
@@ -622,6 +655,9 @@ document.querySelectorAll('.tab-bar button').forEach(btn => {
     } else if (currentTab === 'injections') {
       injectionsPanel.style.display = 'flex';
       fetchInjectionHistory();
+    } else if (currentTab === 'canvas') {
+      canvasPanel.style.display = 'flex';
+      fetchCanvas();
     } else {
       logContent.style.display = '';
       logTotal[currentTab] = 0;
@@ -630,6 +666,95 @@ document.querySelectorAll('.tab-bar button').forEach(btn => {
     }
   });
 });
+
+let lastCanvasTimestamp = 0;
+
+function safeCanvasUrl(value) {
+  if (!value) return '';
+  try {
+    const url = new URL(String(value), window.location.href);
+    return (url.protocol === 'http:' || url.protocol === 'https:') ? url.href : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function renderCanvas(data) {
+  const title = String(data.title || 'Agent Canvas');
+  const viewType = String(data.view_type || 'card').toLowerCase();
+  const content = String(data.content || '');
+  const mediaUrl = safeCanvasUrl(data.media_url || content);
+  const titleNode = document.getElementById('canvas-title');
+  const badgeNode = document.getElementById('canvas-badge');
+  const bodyNode = document.getElementById('canvas-body');
+  titleNode.textContent = title;
+  badgeNode.textContent = viewType.toUpperCase();
+  bodyNode.replaceChildren();
+
+  if (viewType === 'markdown' || viewType === 'text') {
+    const text = document.createElement('div');
+    text.className = 'canvas-text';
+    text.textContent = content;
+    bodyNode.appendChild(text);
+  } else if (viewType === 'terminal' || viewType === 'sandbox') {
+    const terminal = document.createElement('pre');
+    terminal.className = 'canvas-terminal';
+    terminal.textContent = content;
+    bodyNode.appendChild(terminal);
+  } else if (viewType === 'image' || viewType === 'media') {
+    if (mediaUrl) {
+      const image = document.createElement('img');
+      image.className = 'canvas-media';
+      image.src = mediaUrl;
+      image.alt = title;
+      bodyNode.appendChild(image);
+    }
+    const description = document.createElement('div');
+    description.className = 'canvas-text';
+    description.textContent = content;
+    bodyNode.appendChild(description);
+  } else if (viewType === 'browser' || viewType === 'iframe') {
+    if (!mediaUrl) {
+      const warning = document.createElement('div');
+      warning.className = 'canvas-card';
+      warning.textContent = 'Only HTTP and HTTPS URLs can be shown in the canvas.';
+      bodyNode.appendChild(warning);
+      return;
+    }
+    const frame = document.createElement('iframe');
+    frame.className = 'canvas-frame';
+    frame.src = mediaUrl;
+    frame.title = title;
+    frame.sandbox = 'allow-forms allow-popups allow-scripts';
+    frame.referrerPolicy = 'no-referrer';
+    bodyNode.appendChild(frame);
+  } else {
+    const card = document.createElement('div');
+    card.className = 'canvas-card';
+    const heading = document.createElement('strong');
+    heading.textContent = title;
+    const paragraph = document.createElement('div');
+    paragraph.className = 'canvas-text';
+    paragraph.textContent = content;
+    card.append(heading, paragraph);
+    bodyNode.appendChild(card);
+  }
+}
+
+function fetchCanvas() {
+  fetch('/api/canvas')
+    .then(response => response.json())
+    .then(data => {
+      const timestamp = Number(data.timestamp || 0);
+      if (data.auto_switch && timestamp > lastCanvasTimestamp && currentTab !== 'canvas') {
+        const button = document.querySelector('.tab-bar button[data-tab="canvas"]');
+        if (button) button.click();
+      }
+      lastCanvasTimestamp = Math.max(lastCanvasTimestamp, timestamp);
+      renderCanvas(data);
+    })
+    .catch(() => {});
+}
 
 function fetchLogs() {
   fetch(`/api/logs?tab=${currentTab}&since=${logTotal[currentTab]}`)
@@ -1140,6 +1265,8 @@ setInterval(() => {
     fetchSpatialInjection();
   } else if (currentTab === 'injections') {
     fetchInjectionHistory();
+  } else if (currentTab === 'canvas') {
+    fetchCanvas();
   }
 }, 3000);
 

@@ -302,6 +302,12 @@ python setup.py
 
 # Start the continuous cognitive pulse loop
 python main.py
+
+# Optional: open the native floating 3D desktop widget
+./Launch\ Helix\ Widget.sh
+
+# Optional: verify the local installation and UI dependencies
+./Run\ Health\ Check.sh
 ```
 
 The setup wizard will prompt for your name, agent name, bootstrap profile, and API keys. It creates:
@@ -334,7 +340,7 @@ During `setup.py`, you choose which communication channels to enable. The dashbo
 
 | Channel | Token Env Var | Notes |
 |---------|--------------|-------|
-| **Dashboard** | *(always on)* | Web UI chat at `localhost:5050` — zero config |
+| **Dashboard** | *(always on)* | Web UI chat, Agent Canvas, and widget bridge at `localhost:5050` — zero config |
 | **Telegram** | `HELIX_TELEGRAM_TOKEN` | Requires a Telegram Bot Token from @BotFather |
 | **Discord** | `HELIX_DISCORD_TOKEN` | Requires a Discord bot token with Message Content intent. Install: `pip install discord.py` |
 
@@ -350,12 +356,24 @@ The dashboard provides:
 - **Thoughts Tab** — Live, real-time tail of the agent's internal monologue and thoughts.
 - **Tools Tab** — Dynamic list of registry toolsets (highlighting active ones), blinking indicators for currently running tools, and a running execution duration log.
 - **Spatial Tab** — Live breakdown of preconscious belief and memory injections, active concept extraction keywords, somatic state telemetry (Ω, s_total, severity), and the active Plutchik affect vector.
+- **Agent Canvas** — A bounded local presentation surface for text, images, browser embeds, terminal output, and status cards.
 - **3D Mind Space** — Interactive Three.js visualization of the 8D cognitive manifold (rotate, zoom, pan).
 - **Lagrangian Gauges** — Real-time Ω stability, γ inertia, belief category breakdown.
 - **Affective Sentinel Indicator** — A mildly animated emoji in the bottom-right corner that shifts in real time based on the agent's dominant Plutchik affect state (Joy, Trust, Fear, Surprise, Sadness, Disgust, Anger, Anticipation).
 - **Chat** — Bidirectional messaging with Helix through the web UI using the same event queue as Telegram and Discord.
 
-The dashboard is read-only for monitoring — the chat channel is the only write path.
+The dashboard does not replace or mutate Helix's memory/runtime architecture. Its write paths are limited to queued chat messages and bounded Agent Canvas presentation state.
+
+### Floating 3D Desktop Widget
+
+Run `./Launch Helix Widget.sh` for a frameless, transparent, always-on-top Helix mascot with a compact chat drawer. The mascot is generated and animated locally with WebGL; it does not download a model, texture, or video. Dragging uses a direct Qt WebChannel bridge to move the native operating-system window, while browser mode uses pointer capture.
+
+The widget is deliberately a thin client over the existing dashboard message bridge:
+
+- It queues chat through `/api/messages` and reads replies from `/api/messages/outbound`.
+- It reads the existing `/api/status` endpoint for mood and activity display.
+- It does not initialize mRAG, Context Office, a second agent, or a separate memory store.
+- Closing a dashboard process started by the widget also shuts down that child process cleanly; an already-running dashboard is left alone.
 
 ---
 
@@ -396,9 +414,13 @@ This is an early-stage research project. Contributions are welcome in:
 
 ## License
 
-**Open Source:** [AGPL-3.0](LICENSE) — free to use, modify, and distribute with copyleft obligations. If you deploy a modified version as a network service, you must share your source code.
+Helix-AGI is licensed under the [Apache License 2.0](LICENSE). You may use,
+modify, distribute, and build commercial or proprietary products with it,
+subject to the license's notice and attribution requirements.
 
-**Commercial:** For proprietary use without AGPL obligations, commercial licenses are available. Contact [**helix.agi.email@gmail.com**](mailto:helix.agi.email@gmail.com) for details.
+Versions published before the Apache 2.0 transition remain available under
+their original AGPL-3.0 terms. This release and subsequent contributions are
+provided under Apache 2.0 unless explicitly stated otherwise.
 
 ---
 
