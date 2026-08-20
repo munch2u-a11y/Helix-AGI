@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------
    Helix Subconscious Over-Agent — Desktop Floating Widget Logic
-   Features: Dynamic Mood-Matching Color Shifting & Mascot Animations
+   Features: SVG Expression Library, Dynamic Mood Shifts & Unprompted Proactive Speech
 ------------------------------------------------------------------- */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -20,7 +20,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     let isDrawerOpen = false;
 
-    // Map Synthetic Affect / Mood Labels to CSS Color Shift Classes
+    // Map Synthetic Affect / Mood Labels to CSS Color Shift Classes & Expressions
     function applyMoodColorShift(label) {
         if (!label) return;
         
@@ -29,14 +29,19 @@ document.addEventListener("DOMContentLoaded", () => {
         
         if (lower.includes("focus") || lower.includes("analytical") || lower.includes("deep")) {
             avatarWidget.classList.add("mood-focused");
+            applyMascotExpression("focused");
         } else if (lower.includes("creative") || lower.includes("excited") || lower.includes("energized")) {
             avatarWidget.classList.add("mood-excited");
+            applyMascotExpression("happy");
         } else if (lower.includes("calm") || lower.includes("content") || lower.includes("receptive")) {
             avatarWidget.classList.add("mood-calm");
+            applyMascotExpression("happy");
         } else if (lower.includes("reflective") || lower.includes("diagnostic") || lower.includes("subconscious")) {
             avatarWidget.classList.add("mood-reflective");
+            applyMascotExpression("thinking");
         } else {
             avatarWidget.classList.add("mood-focused");
+            applyMascotExpression("focused");
         }
     }
 
@@ -79,6 +84,7 @@ document.addEventListener("DOMContentLoaded", () => {
         userInput.value = "";
 
         updateSpeechBubble("Subconscious reflection cycle active...");
+        applyMascotExpression("thinking");
         setSpeakingState(true);
 
         try {
@@ -92,6 +98,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (data.response) {
                 appendMessage("assistant", data.response);
                 updateSpeechBubble(data.response.substring(0, 45) + "...");
+                applyMascotExpression("happy");
             } else if (data.error) {
                 appendMessage("system", "Error: " + data.error);
             }
@@ -125,6 +132,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Screen Crop Snippet Helper
     btnCropSnippet.addEventListener("click", () => {
+        applyMascotExpression("curious");
         appendMessage("system", "[Screen Crop]: Captured desktop screen snippet. Sent to vision execution sub-orchestrator.");
         userInput.value = "Inspect captured desktop screen snippet and describe what is visible.";
         sendPrompt();
@@ -148,9 +156,15 @@ document.addEventListener("DOMContentLoaded", () => {
         e.stopPropagation();
     }
 
-    avatarWidget.addEventListener('dragenter', () => avatarWidget.classList.add('drag-over'));
+    avatarWidget.addEventListener('dragenter', () => {
+        avatarWidget.classList.add('drag-over');
+        applyMascotExpression('surprised');
+    });
     avatarWidget.addEventListener('dragover', () => avatarWidget.classList.add('drag-over'));
-    avatarWidget.addEventListener('dragleave', () => avatarWidget.classList.remove('drag-over'));
+    avatarWidget.addEventListener('dragleave', () => {
+        avatarWidget.classList.remove('drag-over');
+        applyMascotExpression('happy');
+    });
     avatarWidget.addEventListener('drop', (e) => {
         avatarWidget.classList.remove('drag-over');
         const files = Array.from(e.dataTransfer.files);
@@ -162,6 +176,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Document Ingestion & Chunking API Handler
     async function handleFilesIngestion(files) {
         toggleDrawer(true);
+        applyMascotExpression("curious");
         appendMessage("system", `Ingesting ${files.length} document(s)... Chunking into semantic memory store.`);
 
         const formData = new FormData();
@@ -177,6 +192,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (result.success) {
                 appendMessage("system", `✓ Ingestion Complete! Logged ${result.total_chunks} semantic chunk(s) across ${result.files_processed.length} file(s).`);
                 updateSpeechBubble(`Ingested ${result.files_processed.length} document(s). Ready!`);
+                applyMascotExpression("happy");
             } else {
                 appendMessage("system", `Ingestion error: ${result.error || "Failed to process files."}`);
             }
@@ -206,6 +222,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function updateSpeechBubble(text) {
         speechBubbleText.textContent = text;
+        const bubble = document.getElementById("avatar-speech-bubble");
+        if (bubble) {
+            bubble.classList.add("active");
+            setTimeout(() => bubble.classList.remove("active"), 6000);
+        }
     }
 
     function setSpeakingState(speaking) {
@@ -216,10 +237,11 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // Connect Server-Sent Events (SSE) Stream for Background Pulses & Dynamic Mood Color Shifts
+    // Connect Server-Sent Events (SSE) Stream for Background Pulses & Proactive Speech
     function initEventStream() {
         if (!!window.EventSource) {
             const source = new EventSource("/api/stream");
+            
             source.addEventListener("pulse", (e) => {
                 const data = JSON.parse(e.data);
                 if (data.thought) {
@@ -228,6 +250,22 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (data.affect_label) {
                     affectStatus.textContent = data.affect_label;
                     applyMoodColorShift(data.affect_label);
+                }
+            });
+
+            // Handle Unprompted Proactive Speech Events
+            source.addEventListener("proactive_speech", (e) => {
+                const data = JSON.parse(e.data);
+                if (data.proactive_speech) {
+                    applyMascotExpression(data.expression || "surprised");
+                    updateSpeechBubble(data.proactive_speech);
+                    appendMessage("assistant", "⚡ [Proactive Observation]: " + data.proactive_speech);
+                    if (data.mood_label) {
+                        affectStatus.textContent = data.mood_label;
+                        applyMoodColorShift(data.mood_label);
+                    }
+                    setSpeakingState(true);
+                    setTimeout(() => setSpeakingState(false), 4000);
                 }
             });
         }

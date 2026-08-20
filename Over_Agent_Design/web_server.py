@@ -2,7 +2,7 @@
 Web Server & SSE Bridge — Subconscious Over-Agent System.
 
 Hosts the Desktop Floating Widget UI (web_ui/), handles drag-and-drop file ingestion,
-and streams real-time background pulse thoughts & affect state updates to the widget UI via SSE.
+and streams real-time background pulse thoughts, affect updates, and unprompted proactive speech events over SSE.
 """
 
 import os
@@ -20,13 +20,14 @@ if BASE_DIR not in sys.path:
 
 from subconscious_conductor import SubconsciousConductor
 from document_ingester import DocumentIngester
+from proactive_vision_agent import ProactiveVisionAgent
 
 WEB_UI_DIR = os.path.join(BASE_DIR, "web_ui")
 
 class WidgetHTTPServerHandler(SimpleHTTPRequestHandler):
     conductor: Optional[SubconsciousConductor] = None
     ingester = DocumentIngester()
-    sse_clients: List[Any] = []
+    proactive_agent = ProactiveVisionAgent()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_UI_DIR, **kwargs)
@@ -115,15 +116,28 @@ class WidgetHTTPServerHandler(SimpleHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.end_headers()
         
-        # Send initial connection event
         affect_label = "Deeply Focused & Analytical"
         if self.conductor and self.conductor.identity_compiler:
             affect_label = self.conductor.identity_compiler.affect_pipeline.state.label
             
-        data = json.dumps({"thought": "Subconscious background pulse active.", "affect_label": affect_label})
+        data = json.dumps({
+            "thought": "Subconscious background pulse active.",
+            "affect_label": affect_label,
+            "expression": "happy"
+        })
         try:
             self.wfile.write(f"event: pulse\ndata: {data}\n\n".encode("utf-8"))
             self.wfile.flush()
+        except Exception:
+            pass
+
+        # Check for unprompted proactive speech event
+        try:
+            proactive_event = self.proactive_agent.evaluate_proactive_resonance(min_interval_s=60.0)
+            if proactive_event:
+                p_data = json.dumps(proactive_event)
+                self.wfile.write(f"event: proactive_speech\ndata: {p_data}\n\n".encode("utf-8"))
+                self.wfile.flush()
         except Exception:
             pass
 
