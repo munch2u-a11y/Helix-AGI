@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------
    Helix Subconscious Over-Agent — Desktop Floating Widget Logic
-   Features: Real-Time 3D WebGL Mascot Sync & Web-to-Python Drag Bridge
+   Features: Real-Time 3D WebGL Mascot Sync & Direct Qt Window Drag Bridge
 ------------------------------------------------------------------- */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -19,35 +19,134 @@ document.addEventListener("DOMContentLoaded", () => {
     const affectStatus = document.getElementById("affect-status");
 
     let isDrawerOpen = false;
-    let isDraggingWindow = false;
+    let nativeDesktopBridge = null;
+    let suppressNextClick = false;
+    const dragState = {
+        active: false,
+        moved: false,
+        pointerId: null,
+        startClientX: 0,
+        startClientY: 0,
+        startLeft: 0,
+        startTop: 0,
+        animationFrame: null
+    };
 
-    // Web-to-Python Window Drag Bridge
-    avatarWidget.addEventListener('mousedown', (e) => {
-        if (e.button === 0) {
-            isDraggingWindow = true;
-            fetch('/api/drag_start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ screenX: e.screenX, screenY: e.screenY })
-            }).catch(() => {});
+    // Qt injects the transport into its embedded browser. Loading the bundled
+    // qwebchannel script only in that environment keeps normal browsers clean.
+    function connectNativeDesktopBridge() {
+        if (!window.qt || !window.qt.webChannelTransport) return;
+
+        const connect = () => {
+            new window.QWebChannel(window.qt.webChannelTransport, (channel) => {
+                nativeDesktopBridge = channel.objects.helixDesktop;
+                document.body.classList.add("native-overlay");
+                [avatarWidget, miniDrawer].forEach((element) => {
+                    ["left", "top", "right", "bottom"].forEach((property) => {
+                        element.style.removeProperty(property);
+                    });
+                });
+                nativeDesktopBridge.setDrawerOpen(isDrawerOpen);
+            });
+        };
+
+        if (window.QWebChannel) {
+            connect();
+            return;
         }
+        const script = document.createElement("script");
+        script.src = "qrc:///qtwebchannel/qwebchannel.js";
+        script.onload = connect;
+        script.onerror = () => console.error("Unable to load the local Qt desktop bridge");
+        document.head.appendChild(script);
+    }
+
+    function moveBrowserWidget(clientX, clientY) {
+        const maxLeft = Math.max(0, window.innerWidth - avatarWidget.offsetWidth);
+        const maxTop = Math.max(0, window.innerHeight - avatarWidget.offsetHeight);
+        const left = Math.min(maxLeft, Math.max(0, dragState.startLeft + clientX - dragState.startClientX));
+        const top = Math.min(maxTop, Math.max(0, dragState.startTop + clientY - dragState.startClientY));
+        avatarWidget.style.left = `${left}px`;
+        avatarWidget.style.top = `${top}px`;
+        avatarWidget.style.right = "auto";
+        avatarWidget.style.bottom = "auto";
+    }
+
+    function positionBrowserDrawer() {
+        if (nativeDesktopBridge || !isDrawerOpen) return;
+        const avatarRect = avatarWidget.getBoundingClientRect();
+        const drawerRect = miniDrawer.getBoundingClientRect();
+        const left = Math.min(
+            Math.max(8, window.innerWidth - drawerRect.width - 8),
+            Math.max(8, avatarRect.right - drawerRect.width)
+        );
+        let top = avatarRect.top - drawerRect.height - 14;
+        if (top < 8) top = Math.min(window.innerHeight - drawerRect.height - 8, avatarRect.bottom + 14);
+        miniDrawer.style.left = `${Math.max(8, left)}px`;
+        miniDrawer.style.top = `${Math.max(8, top)}px`;
+        miniDrawer.style.right = "auto";
+        miniDrawer.style.bottom = "auto";
+    }
+
+    function queueNativeMove() {
+        if (!nativeDesktopBridge || dragState.animationFrame !== null) return;
+        dragState.animationFrame = requestAnimationFrame(() => {
+            dragState.animationFrame = null;
+            nativeDesktopBridge.moveWindowDrag();
+        });
+    }
+
+    avatarWidget.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || event.target.closest("button, input, textarea, label, a")) return;
+        const rect = avatarWidget.getBoundingClientRect();
+        dragState.active = true;
+        dragState.moved = false;
+        dragState.pointerId = event.pointerId;
+        dragState.startClientX = event.clientX;
+        dragState.startClientY = event.clientY;
+        dragState.startLeft = rect.left;
+        dragState.startTop = rect.top;
+        avatarWidget.setPointerCapture(event.pointerId);
+        avatarWidget.classList.add("is-dragging");
+        if (nativeDesktopBridge) nativeDesktopBridge.beginWindowDrag();
+        event.preventDefault();
     });
 
-    window.addEventListener('mousemove', (e) => {
-        if (isDraggingWindow) {
-            fetch('/api/drag_move', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ screenX: e.screenX, screenY: e.screenY })
-            }).catch(() => {});
-        }
+    avatarWidget.addEventListener("pointermove", (event) => {
+        if (!dragState.active || event.pointerId !== dragState.pointerId) return;
+        const distance = Math.hypot(
+            event.clientX - dragState.startClientX,
+            event.clientY - dragState.startClientY
+        );
+        if (distance >= 4) dragState.moved = true;
+        if (!dragState.moved) return;
+        if (nativeDesktopBridge) queueNativeMove();
+        else moveBrowserWidget(event.clientX, event.clientY);
     });
 
-    window.addEventListener('mouseup', () => {
-        if (isDraggingWindow) {
-            isDraggingWindow = false;
+    function finishDrag(event) {
+        if (!dragState.active || (event.pointerId !== undefined && event.pointerId !== dragState.pointerId)) return;
+        if (dragState.animationFrame !== null) {
+            cancelAnimationFrame(dragState.animationFrame);
+            dragState.animationFrame = null;
+            if (nativeDesktopBridge && dragState.moved) {
+                nativeDesktopBridge.moveWindowDrag();
+            }
         }
-    });
+        if (nativeDesktopBridge) nativeDesktopBridge.endWindowDrag();
+        suppressNextClick = dragState.moved;
+        dragState.active = false;
+        avatarWidget.classList.remove("is-dragging");
+        if (avatarWidget.hasPointerCapture(dragState.pointerId)) {
+            avatarWidget.releasePointerCapture(dragState.pointerId);
+        }
+        dragState.pointerId = null;
+        positionBrowserDrawer();
+    }
+
+    avatarWidget.addEventListener("pointerup", finishDrag);
+    avatarWidget.addEventListener("pointercancel", finishDrag);
+    connectNativeDesktopBridge();
 
     // Map Synthetic Affect / Mood Labels to 3D WebGL Scene & CSS Color Themes
     function applyMoodColorShift(label) {
@@ -82,16 +181,26 @@ document.addEventListener("DOMContentLoaded", () => {
     // Toggle Mini-Chat Drawer
     function toggleDrawer(open) {
         isDrawerOpen = (open !== undefined) ? open : !isDrawerOpen;
+        document.body.classList.toggle("drawer-open", isDrawerOpen);
         if (isDrawerOpen) {
             miniDrawer.classList.remove("hidden");
-            userInput.focus();
+            requestAnimationFrame(() => {
+                positionBrowserDrawer();
+                userInput.focus();
+            });
         } else {
             miniDrawer.classList.add("hidden");
         }
+        if (nativeDesktopBridge) nativeDesktopBridge.setDrawerOpen(isDrawerOpen);
     }
 
     avatarWidget.addEventListener("click", (e) => {
-        if (!e.target.closest(".dropzone-overlay") && !isDraggingWindow) {
+        if (suppressNextClick) {
+            suppressNextClick = false;
+            e.preventDefault();
+            return;
+        }
+        if (!e.target.closest(".dropzone-overlay")) {
             toggleDrawer();
         }
     });
@@ -269,6 +378,7 @@ document.addEventListener("DOMContentLoaded", () => {
         } else {
             audioWaveform.classList.add("hidden");
         }
+        if (window.helix3DMascot) window.helix3DMascot.setSpeaking(speaking);
     }
 
     // Connect Server-Sent Events (SSE) Stream for Background Pulses & Proactive Speech
