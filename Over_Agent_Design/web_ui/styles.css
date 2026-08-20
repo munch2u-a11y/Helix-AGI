@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------
    Helix Subconscious Over-Agent — Desktop Floating Widget CSS
-   Design: Premium Glassmorphism, Cute Mascot Micro-Animations & Dynamic Mood Themes
+   Design: Premium Glassmorphism, Official Animated Video Logo & Mood Themes
 ------------------------------------------------------------------- */
 
 :root {
@@ -74,8 +74,8 @@ body.widget-mode {
     position: fixed;
     bottom: 24px;
     right: 24px;
-    width: 80px;
-    height: 80px;
+    width: 84px;
+    height: 84px;
     z-index: 9999;
     cursor: pointer;
     user-select: none;
@@ -92,11 +92,11 @@ body.widget-mode {
     position: absolute;
     top: -10px;
     left: -10px;
-    width: 100px;
-    height: 100px;
+    width: 104px;
+    height: 104px;
     border-radius: 50%;
     border: 2px solid var(--mood-primary);
-    box-shadow: 0 0 16px var(--mood-glow);
+    box-shadow: 0 0 18px var(--mood-glow);
     opacity: 0.5;
     animation: pulseRing 3s ease-out infinite;
     pointer-events: none;
@@ -114,11 +114,12 @@ body.widget-mode {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 4px;
+    padding: 2px;
     overflow: hidden;
     transition: border-color 0.4s ease, box-shadow 0.4s ease;
 }
 
+.helix-mascot-video,
 .helix-mascot-img {
     width: 100%;
     height: 100%;
@@ -138,11 +139,12 @@ body.widget-mode {
     display: flex;
     justify-content: space-between;
     pointer-events: none;
+    opacity: 0.8;
 }
 
 .eye {
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     background: var(--mood-primary);
     border-radius: 50%;
     box-shadow: 0 0 8px var(--mood-primary);
@@ -152,7 +154,7 @@ body.widget-mode {
 /* Avatar Speech Bubble */
 .avatar-speech-bubble {
     position: absolute;
-    right: 92px;
+    right: 96px;
     top: 14px;
     background: var(--bg-glass);
     backdrop-filter: blur(16px);
@@ -204,7 +206,7 @@ body.widget-mode {
 
 .mini-chat-container {
     position: fixed;
-    bottom: 116px;
+    bottom: 120px;
     right: 24px;
     width: 390px;
     max-height: 540px;
