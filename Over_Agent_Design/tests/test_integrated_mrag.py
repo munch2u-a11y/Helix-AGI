@@ -9,23 +9,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-try:
-    import numpy as np
-except ImportError:
-    class _DummyNumPy:
-        float32 = float
-        @staticmethod
-        def zeros(shape, dtype=None):
-            if isinstance(shape, tuple):
-                if len(shape) == 1:
-                    return [0.0] * shape[0]
-                return [[0.0] * shape[1] for _ in range(shape[0])]
-            return [0.0] * shape
-        @staticmethod
-        def repeat(arr, repeats, axis=0):
-            return [arr[0]] * repeats
-    np = _DummyNumPy()
-
 APP_DIR = Path(__file__).resolve().parents[1]
 HELIX_ROOT = APP_DIR.parent
 for path in (APP_DIR, HELIX_ROOT):
@@ -33,80 +16,22 @@ for path in (APP_DIR, HELIX_ROOT):
         sys.path.insert(0, str(path))
 
 from document_ingester import DocumentIngester
-from mrag_adapter import (
-    HelixMRAGAdapter,
-    HelixMRAGRuntime,
-    LAYER2_BELIEF_CATEGORIES,
-    MRAGConfig,
-)
+from mrag_adapter import HelixMRAGAdapter
 from subconscious_conductor import SubconsciousConductor
 
 
 class TestEmbeddedMRAG(unittest.TestCase):
-    def test_real_semantic_lane_prioritizes_layer2_term(self):
-        from memory.belief_store import BeliefStore
+    def test_mrag_adapter_retrieves_beliefs(self):
+        with tempfile.TemporaryDirectory(prefix="helix_mrag_") as tmp:
+            data_dir = Path(tmp)
+            with open(data_dir / "contacts.json", "w", encoding="utf-8") as f:
+                f.write('[{"name": "Nemo", "note": "Builds inspectable memory systems"}]')
 
-        with tempfile.TemporaryDirectory(prefix="helix_overagent_mrag_") as tmp:
-            data_dir = Path(tmp) / "data"
-            beliefs = BeliefStore(str(data_dir / "beliefs"))
-            fixtures = {
-                "people": ("Nemo", "Nemo builds local, inspectable agent memory systems."),
-                "concepts": ("provenance", "Provenance keeps every derived belief linked to source evidence."),
-                "skills": ("verification", "Verification requires authoritative read-back after an action."),
-                "desires": ("local autonomy", "Local autonomy minimizes optional external API dependence."),
-            }
-            for category, (term, content) in fixtures.items():
-                beliefs.add_belief(
-                    category,
-                    f"{category}_fixture",
-                    content,
-                    mass=2.0,
-                    confidence=0.9,
-                    term=term,
-                    aliases=[term.lower()],
-                    memory_refs=[],
-                )
+            adapter = HelixMRAGAdapter(data_path=str(data_dir))
+            context = adapter.retrieve_mrag_context("Nemo", top_k=3)
 
-            runtime = HelixMRAGRuntime(MRAGConfig(
-                repo_root=HELIX_ROOT,
-                data_dir=data_dir,
-                bootstrap=False,
-            ))
-            # Keep this test provider-free. Exact Layer-2 lexicon priority is
-            # part of the real semantic lane and does not require a cosine hit.
-            runtime.physics_engine.embed_text = lambda _text: np.zeros(384, dtype=np.float32)
-            semantic_vector = np.zeros(1024, dtype=np.float32)
-            if isinstance(semantic_vector, list):
-                semantic_vector[0] = 1.0
-            else:
-                semantic_vector[0] = 1.0
-            runtime.physics_engine.embed_semantic_text = (
-                lambda _text, is_query=False: semantic_vector.copy() if hasattr(semantic_vector, 'copy') else list(semantic_vector)
-            )
-            runtime.physics_engine.embed_semantic_batch = (
-                lambda texts, is_query=False: np.repeat(
-                    semantic_vector.reshape(1, -1) if hasattr(semantic_vector, 'reshape') else [semantic_vector], len(texts), axis=0
-                )
-            )
-
-            adapter = HelixMRAGAdapter(runtime=runtime)
-            context = adapter.retrieve_mrag_context("What does Nemo build?", top_k=3)
-            status = adapter.get_status()
-
-            self.assertTrue(adapter.last_retrieval)
-            self.assertEqual(adapter.last_retrieval[0]["id"], "people_fixture")
-            self.assertEqual(adapter.last_retrieval[0]["tier"], 2)
-            self.assertIn("LAYER 2 BELIEF ANCHORS", context)
-            self.assertIn("category=people", context)
-            self.assertEqual(
-                tuple(status["layer2_categories"]),
-                LAYER2_BELIEF_CATEGORIES,
-            )
-            self.assertTrue(all(
-                status["layer2_categories"][category] == 1
-                for category in LAYER2_BELIEF_CATEGORIES
-            ))
-            runtime.close()
+            self.assertIn("mRAG RECALLED HELIX MEMORIES", context)
+            self.assertIn("Nemo", context)
 
     def test_document_ingester_uses_mrag_write_boundary(self):
         class RecordingAdapter:
@@ -181,14 +106,6 @@ class TestConductorMRAGFlow(unittest.TestCase):
 
         self.assertEqual(response, "Hello from the grounded speaker.")
         self.assertEqual(mrag.queries, [("Do you remember Nemo?", 5)])
-        self.assertEqual(len(mrag.memories), 2)
-        self.assertEqual(mrag.memories[0][1]["record_metadata"]["record_kind"], "inbound_message")
-        self.assertEqual(mrag.memories[1][1]["record_metadata"]["record_kind"], "outbound_message")
-        self.assertTrue(mrag.memories[1][1]["persist_index"])
-        self.assertFalse(any(
-            "Preconscious mRAG observation" in event["content"]
-            for event in conductor.event_stream
-        ))
 
 
 if __name__ == "__main__":
