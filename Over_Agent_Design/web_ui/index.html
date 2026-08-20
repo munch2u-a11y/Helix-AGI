@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helix Subconscious Over-Agent — 3D Animated Desktop Mascot</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="widget-mode">
+
+    <!-- FLOATING REAL-TIME WEBGL HELIX MASCOT -->
+    <div id="helix-avatar-widget" class="helix-avatar-container mood-focused" title="Click to toggle Helix Mini-Chat | Click & Drag anywhere to move on screen">
+        <div class="avatar-core-mascot-3d">
+            <canvas id="helix-3d-canvas" aria-label="Animated 3D Helix mascot"></canvas>
+            <div id="webgl-fallback" class="webgl-fallback" role="img" aria-label="Helix mascot">
+                <span class="fallback-face">⌣</span>
+            </div>
+        </div>
+        <div class="avatar-speech-bubble" id="avatar-speech-bubble">
+            <span id="speech-bubble-text">Helix Subconscious Stream active...</span>
+        </div>
+        <div class="dropzone-overlay" id="avatar-dropzone">
+            <div class="drop-icon">✨</div>
+            <div class="drop-text">Feed File to Helix</div>
+        </div>
+    </div>
+
+    <!-- FLOATING MINI-CHAT DRAWER -->
+    <div id="mini-chat-drawer" class="mini-chat-container hidden">
+        <div class="drawer-header">
+            <div class="drawer-title">
+                <span class="status-dot online"></span>
+                <span class="title-text">Helix Subconscious Mind</span>
+                <span class="hotkey-badge">Alt + Space</span>
+            </div>
+            <div class="drawer-actions">
+                <button id="btn-toggle-app-mode" class="icon-btn" title="Toggle Full App View">🗖</button>
+                <button id="btn-close-drawer" class="icon-btn" title="Minimize Drawer">✕</button>
+            </div>
+        </div>
+
+        <div class="affect-indicator-bar" id="affect-bar">
+            <span class="affect-label">Synthetic Mood:</span>
+            <span class="affect-val" id="affect-status">Deeply Focused & Analytical</span>
+        </div>
+
+        <div class="chat-feed" id="chat-feed">
+            <div class="message system-msg">
+                <div class="msg-author">Helix Executive Engine</div>
+                <div class="msg-content">Subconscious event stream active. Ask a question or drag & drop documents/images here to ingest.</div>
+            </div>
+        </div>
+
+        <!-- AUDIO SPECTRUM VISUALIZER -->
+        <div class="audio-waveform-container hidden" id="audio-waveform">
+            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+        </div>
+
+        <!-- INPUT ACTION TOOLBAR -->
+        <div class="action-toolbar">
+            <button id="btn-paste-clipboard" class="tool-chip" title="Attach copied text from clipboard">📋 Clipboard</button>
+            <button id="btn-crop-snippet" class="tool-chip" title="Capture screen snippet OCR">📸 Screen Crop</button>
+            <label for="file-input-upload" class="tool-chip file-upload-chip" title="Upload document or image">
+                📁 Upload File
+                <input type="file" id="file-input-upload" multiple hidden>
+            </label>
+        </div>
+
+        <!-- PROMPT INPUT BAR -->
+        <div class="input-bar">
+            <textarea id="user-input-field" placeholder="Type prompt or command (Alt+Space to focus)..." rows="1"></textarea>
+            <button id="btn-send-prompt" class="btn-send" title="Send Prompt">➔</button>
+        </div>
+    </div>
+
+    <script src="three.min.js"></script>
+    <script src="helix_3d_mascot.js"></script>
+    <script src="expressions.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
