@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------
    Helix Subconscious Over-Agent — Desktop Floating Widget CSS
-   Design: Official Helix Logo Image Asset & Fluid Web-to-Python Drag Bridge
+   Design: Pure Transparent PNG Mascot Character Cutout (NO Circles/Boxes/Frames)
 ------------------------------------------------------------------- */
 
 :root {
@@ -8,10 +8,10 @@
     --bg-glass: rgba(16, 22, 34, 0.88);
     --border-glass: rgba(255, 255, 255, 0.12);
     
-    /* Default Mood Colors (Focused) */
+    /* Default Mood Glow Colors */
     --mood-primary: #00F0FF;
     --mood-secondary: #7000FF;
-    --mood-glow: rgba(0, 240, 255, 0.35);
+    --mood-glow: rgba(0, 240, 255, 0.45);
 
     --text-main: #F0F4F8;
     --text-muted: #8A99AD;
@@ -35,43 +35,15 @@ body.widget-mode {
 }
 
 /* -------------------------------------------------------------------
-   DYNAMIC MOOD COLOR SHIFTING THEMES
-------------------------------------------------------------------- */
-
-.helix-avatar-container.mood-focused {
-    --mood-primary: #00F0FF;
-    --mood-secondary: #7000FF;
-    --mood-glow: rgba(0, 240, 255, 0.4);
-}
-
-.helix-avatar-container.mood-excited {
-    --mood-primary: #FF007A;
-    --mood-secondary: #FFB800;
-    --mood-glow: rgba(255, 0, 122, 0.45);
-}
-
-.helix-avatar-container.mood-calm {
-    --mood-primary: #00FF99;
-    --mood-secondary: #00F0FF;
-    --mood-glow: rgba(0, 255, 153, 0.4);
-}
-
-.helix-avatar-container.mood-reflective {
-    --mood-primary: #E000FF;
-    --mood-secondary: #4B0082;
-    --mood-glow: rgba(224, 0, 255, 0.45);
-}
-
-/* -------------------------------------------------------------------
-   PURE OFFICIAL HELIX LOGO IMAGE (NO BUTTON / NO LINES)
+   PURE TRANSPARENT PNG HELIX GUY MASCOT (ZERO CIRCLE / ZERO BOX / ZERO FRAME)
 ------------------------------------------------------------------- */
 
 .helix-avatar-container {
     position: fixed;
     bottom: 20px;
     right: 20px;
-    width: 88px;
-    height: 88px;
+    width: 110px;
+    height: 180px;
     z-index: 9999;
     cursor: grab;
     user-select: none;
@@ -84,51 +56,36 @@ body.widget-mode {
 }
 
 .helix-avatar-container:hover {
-    transform: scale(1.12);
+    transform: scale(1.1) rotate(2deg);
 }
 
-.avatar-pulse-ring {
-    position: absolute;
-    top: -8px;
-    left: -8px;
-    width: 104px;
-    height: 104px;
-    border-radius: 50%;
-    border: 2px solid var(--mood-primary);
-    box-shadow: 0 0 20px var(--mood-glow);
-    opacity: 0.55;
-    animation: pulseRing 3s ease-out infinite;
-    pointer-events: none;
-    transition: border-color 0.4s ease, box-shadow 0.4s ease;
-}
-
-.avatar-core-logo {
+.avatar-core-mascot-cutout {
     position: relative;
     width: 100%;
     height: 100%;
-    border-radius: 50%;
     background: transparent;
-    border: 2px solid var(--mood-primary);
-    box-shadow: 0 8px 24px var(--mood-glow);
-    overflow: hidden;
+    border: none;
+    box-shadow: none;
+    padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: border-color 0.4s ease, box-shadow 0.4s ease;
+    overflow: visible;
 }
 
-.official-helix-logo-img {
+.helix-mascot-sprite-img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    border-radius: 50%;
+    object-fit: contain;
+    filter: drop-shadow(0 0 16px var(--mood-glow));
+    transition: filter 0.4s ease, transform 0.3s ease;
 }
 
 /* Avatar Speech Bubble */
 .avatar-speech-bubble {
     position: absolute;
-    right: 100px;
-    top: 14px;
+    right: 120px;
+    top: 40px;
     background: var(--bg-glass);
     backdrop-filter: blur(16px);
     border: 1px solid var(--border-glass);
@@ -153,8 +110,8 @@ body.widget-mode {
 /* Avatar Dropzone Overlay */
 .dropzone-overlay {
     position: absolute;
-    inset: -12px;
-    border-radius: 50%;
+    inset: 0;
+    border-radius: 20px;
     background: radial-gradient(circle, var(--mood-secondary) 0%, var(--mood-primary) 100%);
     border: 2px dashed var(--text-main);
     display: flex;
@@ -167,11 +124,11 @@ body.widget-mode {
 }
 
 .helix-avatar-container.drag-over .dropzone-overlay {
-    opacity: 1;
+    opacity: 0.9;
 }
 
-.drop-icon { font-size: 22px; }
-.drop-text { font-size: 9px; font-weight: 700; color: #FFF; text-align: center; }
+.drop-icon { font-size: 24px; }
+.drop-text { font-size: 10px; font-weight: 700; color: #FFF; text-align: center; }
 
 /* -------------------------------------------------------------------
    FLOATING MINI-CHAT DRAWER
@@ -179,10 +136,10 @@ body.widget-mode {
 
 .mini-chat-container {
     position: fixed;
-    bottom: 120px;
+    bottom: 210px;
     right: 20px;
     width: 390px;
-    max-height: 540px;
+    max-height: 520px;
     background: var(--bg-glass);
     backdrop-filter: blur(20px);
     border: 1px solid var(--border-glass);
@@ -388,19 +345,10 @@ body.widget-mode {
 
 .btn-send:hover { transform: scale(1.08); }
 
-/* -------------------------------------------------------------------
-   KEYFRAME ANIMATIONS
-------------------------------------------------------------------- */
-
+/* Keyframe Animations */
 @keyframes avatarIdleFloat {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-8px); }
-}
-
-@keyframes pulseRing {
-    0% { transform: scale(0.9); opacity: 0.6; }
-    50% { transform: scale(1.18); opacity: 0.1; }
-    100% { transform: scale(0.9); opacity: 0.6; }
 }
 
 @keyframes waveBounce {
