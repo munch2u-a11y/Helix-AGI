@@ -45,91 +45,11 @@ Tool schemas are completely removed from the main subconscious prompt. When Heli
 ### 3. Test-Time Compute for 8B Models
 Giving a local 8B model (`granite4.1:8b`) private "inner monologue" scratchpad tokens allows it to think out loud, catch execution errors, and refine its strategy before speaking. This extends test-time compute, giving small local models multi-step reasoning capabilities typically restricted to 70B+ frontier models.
 
-### 4. Multi-Head mRAG Preconscious Recall
-Before Helix renders user dialogue, the research sub-orchestrator queries canonical belief stores and memory ledgers. Matching memory nodes are recalled **preconsciously** and injected directly into the stream as observation receipts, giving Helix seamless recall across extended interactions.
+### 4. Multi-Head mRAG Preconscious Recall (Plug & Play)
+Before Helix renders user dialogue, the research sub-orchestrator queries memory stores. If mRAG is installed, it runs multi-head vector retrieval. If mRAG is not installed, it **automatically falls back to built-in JSON/text memory scanning**, ensuring plug-and-play operation out of the box without complex dependencies.
 
 ### 5. Dynamic Identity & Synthetic Affect Simulation
 Helix doesn't rely on a static prompt. It continuously updates a running **Self-Opinion Statement** (`self_opinion.json`) during nightly consolidation passes and tracks **Synthetic Affect Vectors** (Valence, Arousal, Focus Depth), allowing its tone and conceptual focus to evolve naturally over time based on real experiences.
-
----
-
-## System Architecture Diagrams
-
-### Event Flow & Sub-Orchestrator Execution
-
-```mermaid
-flowchart TD
-    subgraph Inputs ["Event Sources"]
-        U["User Prompt Input"]
-        T["Background Pulse Timer (~12s)"]
-    end
-
-    subgraph Conductor ["Subconscious Executive Engine"]
-        S["Continuous Event Stream (self.event_stream)"]
-        A["Dynamic Identity Anchor (identity.md + self_opinion.json + affect)"]
-        E["Slim Executive Reflection Pass (~80 tokens)"]
-        L{"Thread Lock (self.lock)"}
-    end
-
-    subgraph SubOrchestrators ["Sub-Orchestrator Passes"]
-        SP["SpeakerFocus (Vocal Synthesis)"]
-        RE["ResearcherSubOrchestrator (mRAG + Workspace + Web)"]
-        EX["ExecutorSubOrchestrator (Terminal Shell + Vision)"]
-    end
-
-    subgraph Memory ["Preconscious Memory"]
-        M["HelixMRAGAdapter (Canonical Belief Stores)"]
-    end
-
-    U --> L
-    T --> L
-    L --> S
-    A --> E
-    S --> E
-    E -->|type='speaker'| SP
-    E -->|type='researcher'| RE
-    E -->|type='executor'| EX
-    RE <--> M
-    RE -->|Observation Receipt| S
-    EX -->|Observation Receipt| S
-    SP -->|Spoken Dialogue| Out["Terminal Screen / Voice Output"]
-```
-
-### Cognitive State Machine & Nightly Dream Cycle
-
-```mermaid
-stateDiagram-v2
-    [*] --> RESTING
-
-    state ACTIVE {
-        [*] --> IngestUserTurn
-        IngestUserTurn --> SubconsciousReflection
-        SubconsciousReflection --> SubOrchestratorDispatch
-        SubOrchestratorDispatch --> IngestObservation
-        IngestObservation --> SynthesizeSpeakerResponse
-        SynthesizeSpeakerResponse --> [*]
-    }
-
-    state RESTING {
-        [*] --> SleepingCadence
-        SleepingCadence --> BackgroundPulseCheck
-        BackgroundPulseCheck --> BackgroundReflection
-        BackgroundReflection --> SleepingCadence
-    }
-
-    state DORMANT {
-        [*] --> CompactTurnHistory
-        CompactTurnHistory --> ExtractSessionFacts
-        ExtractSessionFacts --> UpdateSelfOpinion
-        UpdateSelfOpinion --> PersistState
-        PersistState --> [*]
-    }
-
-    RESTING --> ACTIVE : User Event Received
-    ACTIVE --> RESTING : Response Complete
-    RESTING --> DORMANT : Extended Inactivity / Nightly Trigger
-    DORMANT --> RESTING : Consolidation Complete
-```
 
 ---
 
@@ -141,6 +61,29 @@ For detailed architectural specifications, evaluation methodologies, and subagen
 - [🧪 Benchmark Suite & Evaluation Methodology](docs/BENCHMARKS.md) — Specifications and live results for LoCoMo, LongMemEval, and MemoryArena benchmarks.
 - [🧩 Sub-Orchestrators & Focused Windows](docs/SUBAGENTS.md) — Isolated tool-group passes for `SpeakerFocus`, `ResearcherSubOrchestrator`, and `ExecutorSubOrchestrator`.
 - [🧠 Memory & Affect Simulation Specification](docs/MEMORY_AND_AFFECT.md) — mRAG retrieval, dynamic identity compilation (`self_opinion.json`), and synthetic affect state vectors.
+
+---
+
+## Quick Start & Interactive Setup Wizard
+
+### 1. Run Interactive Setup Wizard
+Run the setup wizard to automatically diagnose your Python environment, verify local Ollama LLM models, inspect mRAG memory modes, and initialize identity files:
+```bash
+./Setup_Wizard.sh
+```
+
+### 2. Launch Interactive Terminal Session
+Start the interactive Helix terminal session with real-time background pulse reflection:
+```bash
+./Launch_Helix_Agent.sh
+```
+*(To enable STT/TTS voice mode, run `python3 main.py --voice`)*
+
+### 3. Run Real-Agent Memory Benchmarks
+Run live evaluations against the running Helix agent to measure temporal memory, fact updates, and needle retrieval:
+```bash
+python3 run_real_agent_memory_benchmarks.py
+```
 
 ---
 
@@ -156,10 +99,8 @@ For detailed architectural specifications, evaluation methodologies, and subagen
 ├── affect_simulation.py           # Synthetic affect state vector pipeline
 ├── llm_backend.py                 # Local Ollama HTTP adapter (granite4.1:8b default)
 ├── voice_subagents.py             # Modular TTS/STT speech interface
-├── identity.md                    # Shared first-person identity anchor
-├── self_opinion.json              # Running consolidated self-opinion statement
-├── synthetic_affect_state.json    # Synthetic mood/affect state vector parameters
-├── helix_seeded_state.pkl         # Persistent memory state pickle
+├── setup_wizard.py                # Interactive CLI setup & diagnostic wizard
+├── Setup_Wizard.sh                # Executable launcher for Setup Wizard
 ├── Launch_Helix_Agent.sh          # Executable shell launcher script
 ├── Run_Health_Check.sh            # System health diagnostic tool
 ├── run_real_agent_memory_benchmarks.py # Live real-agent LoCoMo/LongMemEval/Arena harness
@@ -169,34 +110,7 @@ For detailed architectural specifications, evaluation methodologies, and subagen
 │   ├── SUBAGENTS.md               # Domain sub-orchestrator focus window specifications
 │   └── MEMORY_AND_AFFECT.md       # mRAG retrieval & synthetic affect vector pipeline
 ├── tests/                         # Integration unit tests & empirical benchmark suite
-│   ├── test_full_system.py        # System integration unit tests
-│   └── benchmark_recall_and_reasoning.py # Empirical recall & routing benchmark
 └── eval_results/                  # Real-agent empirical benchmark reports & transcripts
-    ├── real_agent_benchmark_report.json
-    └── raw_transcript.jsonl
-```
-
----
-
-## Quick Start
-
-### 1. System Health Check
-Verify your local Ollama installation, model backend, and identity files:
-```bash
-./Run_Health_Check.sh
-```
-
-### 2. Launch Interactive Terminal Session
-Start the interactive Helix terminal session with real-time background pulse reflection:
-```bash
-./Launch_Helix_Agent.sh
-```
-*(To enable STT/TTS voice mode, run `python3 main.py --voice`)*
-
-### 3. Run Real-Agent Memory Benchmarks
-Run live evaluations against the running Helix agent to measure temporal memory, fact updates, and needle retrieval:
-```bash
-python3 run_real_agent_memory_benchmarks.py
 ```
 
 ---
