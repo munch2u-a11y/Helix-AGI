@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------
    Helix Subconscious Over-Agent — Desktop Floating Widget CSS
-   Design: Premium Glassmorphism, Official Animated Video Logo & Mood Themes
+   Design: Pure Layered SVG Vector Mascot, 60fps Micro-Animations & Mood Themes
 ------------------------------------------------------------------- */
 
 :root {
@@ -35,7 +35,7 @@ body.widget-mode {
 }
 
 /* -------------------------------------------------------------------
-   DYNAMIC MOOD COLOR SHIFTING THEMES
+   DYNAMIC MOOD COLOR SHIFTING THEMES (LAYERED SVG)
 ------------------------------------------------------------------- */
 
 /* 1. Deeply Focused & Analytical */
@@ -79,13 +79,12 @@ body.widget-mode {
     z-index: 9999;
     cursor: pointer;
     user-select: none;
-    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.3s ease;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     animation: avatarIdleFloat 4s ease-in-out infinite;
 }
 
 .helix-avatar-container:hover {
     transform: scale(1.15) rotate(4deg);
-    animation: avatarHappyTilt 0.5s ease-in-out infinite alternate;
 }
 
 .avatar-pulse-ring {
@@ -114,41 +113,43 @@ body.widget-mode {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 2px;
+    padding: 6px;
     overflow: hidden;
     transition: border-color 0.4s ease, box-shadow 0.4s ease;
 }
 
-.helix-mascot-video,
-.helix-mascot-img {
+/* -------------------------------------------------------------------
+   PURE LAYERED SVG VECTOR MASCOT ANIMATIONS
+------------------------------------------------------------------- */
+
+.helix-vector-svg {
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    border-radius: 50%;
-    filter: drop-shadow(0 0 8px var(--mood-primary));
-    transition: filter 0.4s ease;
+    overflow: visible;
 }
 
-/* Eye Blinking Micro-Animation */
-.character-eyes {
-    position: absolute;
-    top: 36%;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 32px;
-    display: flex;
-    justify-content: space-between;
-    pointer-events: none;
-    opacity: 0.8;
+.layer-helix-outer {
+    transform-origin: 50px 50px;
+    animation: helixOuterRotate 12s linear infinite;
 }
 
-.eye {
-    width: 6px;
-    height: 6px;
-    background: var(--mood-primary);
-    border-radius: 50%;
-    box-shadow: 0 0 8px var(--mood-primary);
-    animation: eyeBlink 4s infinite;
+.layer-helix-inner {
+    transform-origin: 50px 50px;
+    animation: helixInnerPulse 3s ease-in-out infinite alternate;
+}
+
+.layer-pulse-aura {
+    transform-origin: 50px 50px;
+    animation: auraPulse 3s ease-out infinite;
+}
+
+.svg-eye {
+    transform-origin: center;
+    animation: svgEyeBlink 4s infinite;
+}
+
+.layer-core-node {
+    animation: coreGlowPulse 2s ease-in-out infinite alternate;
 }
 
 /* Avatar Speech Bubble */
@@ -424,20 +425,36 @@ body.widget-mode {
     50% { transform: translateY(-8px); }
 }
 
-@keyframes avatarHappyTilt {
-    0% { transform: rotate(-5deg) scale(1.12); }
-    100% { transform: rotate(5deg) scale(1.15); }
+@keyframes helixOuterRotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+@keyframes helixInnerPulse {
+    0% { transform: scale(0.96); opacity: 0.8; }
+    100% { transform: scale(1.04); opacity: 1; }
+}
+
+@keyframes auraPulse {
+    0% { transform: scale(0.92); opacity: 0.6; }
+    50% { transform: scale(1.1); opacity: 0.1; }
+    100% { transform: scale(0.92); opacity: 0.6; }
+}
+
+@keyframes svgEyeBlink {
+    0%, 94%, 100% { transform: scaleY(1); }
+    97% { transform: scaleY(0.1); }
+}
+
+@keyframes coreGlowPulse {
+    from { r: 4px; opacity: 0.8; }
+    to { r: 6.5px; opacity: 1; }
 }
 
 @keyframes pulseRing {
     0% { transform: scale(0.9); opacity: 0.6; }
     50% { transform: scale(1.18); opacity: 0.1; }
     100% { transform: scale(0.9); opacity: 0.6; }
-}
-
-@keyframes eyeBlink {
-    0%, 94%, 100% { transform: scaleY(1); }
-    97% { transform: scaleY(0.1); }
 }
 
 @keyframes waveBounce {

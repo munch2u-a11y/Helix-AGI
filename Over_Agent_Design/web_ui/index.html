@@ -11,15 +11,42 @@
 </head>
 <body class="widget-mode">
 
-    <!-- FLOATING HELIX AVATAR WIDGET (DYNAMIC MOOD COLOR SHIFTING & OFFICIAL ANIMATED LOGO) -->
+    <!-- FLOATING HELIX AVATAR WIDGET (LAYERED SVG VECTOR MASCOT WITH DYNAMIC MOOD COLOR SHIFTING) -->
     <div id="helix-avatar-widget" class="helix-avatar-container mood-focused" title="Click to toggle Helix Mini-Chat | Drag & Drop Files Here">
         <div class="avatar-pulse-ring"></div>
         <div class="avatar-core">
-            <video src="assets/moving helix logo.mp4" autoplay loop muted playsinline class="helix-mascot-video" poster="assets/littel helix emoji logo.jpeg"></video>
-            <div class="character-eyes">
-                <span class="eye eye-left"></span>
-                <span class="eye eye-right"></span>
-            </div>
+            <!-- LAYERED SVG VECTOR MASCOT -->
+            <svg id="helix-vector-mascot" viewBox="0 0 100 100" class="helix-vector-svg" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <linearGradient id="mood-grad-primary" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="var(--mood-primary)" />
+                        <stop offset="100%" stop-color="var(--mood-secondary)" />
+                    </linearGradient>
+                    <filter id="vector-glow" x="-30%" y="-30%" width="160%" height="160%">
+                        <feGaussianBlur stdDeviation="3" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
+                </defs>
+                
+                <!-- Layer 1: Outer Pulse Aura -->
+                <circle cx="50" cy="50" r="44" stroke="url(#mood-grad-primary)" stroke-width="2" fill="none" class="layer-pulse-aura" />
+                
+                <!-- Layer 2: Interlocking Helix Strands -->
+                <path d="M50 14 C26 14 14 30 14 50 C14 70 26 86 50 86 C74 86 86 70 86 50 C86 30 74 14 50 14 Z" fill="none" stroke="url(#mood-grad-primary)" stroke-width="6" stroke-linecap="round" class="layer-helix-outer" />
+                <path d="M50 24 C34 24 24 34 24 50 C24 66 34 76 50 76 C66 76 76 66 76 50 C76 34 66 24 50 24 Z" fill="none" stroke="var(--mood-primary)" stroke-width="4" stroke-linecap="round" class="layer-helix-inner" />
+                
+                <!-- Layer 3: Blinking Character Eyes -->
+                <g class="layer-eyes">
+                    <ellipse id="eye-left" cx="40" cy="44" rx="3.5" ry="4.5" fill="var(--text-main)" class="svg-eye" />
+                    <ellipse id="eye-right" cx="60" cy="44" rx="3.5" ry="4.5" fill="var(--text-main)" class="svg-eye" />
+                </g>
+                
+                <!-- Layer 4: Smiling Mouth -->
+                <path d="M44 56 Q50 61 56 56" fill="none" stroke="var(--text-main)" stroke-width="2.5" stroke-linecap="round" class="layer-mouth" />
+                
+                <!-- Layer 5: Pulsing Center Core -->
+                <circle cx="50" cy="50" r="5" fill="var(--mood-primary)" filter="url(#vector-glow)" class="layer-core-node" />
+            </svg>
         </div>
         <div class="avatar-speech-bubble" id="avatar-speech-bubble">
             <span id="speech-bubble-text">Helix Subconscious Stream active...</span>
