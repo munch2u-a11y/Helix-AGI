@@ -11,11 +11,11 @@
 </head>
 <body class="widget-mode">
 
-    <!-- FLOATING HELIX AVATAR WIDGET (LAYERED SVG VECTOR MASCOT WITH EXPRESSIONS & MOOD COLOR SHIFTING) -->
-    <div id="helix-avatar-widget" class="helix-avatar-container mood-focused" title="Click to toggle Helix Mini-Chat | Drag & Drop Files Here">
+    <!-- FLOATING HELIX AVATAR WIDGET (PURE VECTOR MASCOT, NO BUTTON/SQUARE BOX) -->
+    <div id="helix-avatar-widget" class="helix-avatar-container mood-focused" title="Click to toggle Helix Mini-Chat | Click & Drag anywhere to move on screen">
         <div class="avatar-pulse-ring"></div>
-        <div class="avatar-core">
-            <!-- LAYERED SVG VECTOR MASCOT -->
+        <div class="avatar-core-mascot">
+            <!-- PURE LAYERED SVG VECTOR MASCOT -->
             <svg id="helix-vector-mascot" viewBox="0 0 100 100" class="helix-vector-svg" xmlns="http://www.w3.org/2000/svg">
                 <defs>
                     <linearGradient id="mood-grad-primary" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -35,13 +35,13 @@
                 <path d="M50 14 C26 14 14 30 14 50 C14 70 26 86 50 86 C74 86 86 70 86 50 C86 30 74 14 50 14 Z" fill="none" stroke="url(#mood-grad-primary)" stroke-width="6" stroke-linecap="round" class="layer-helix-outer" />
                 <path d="M50 24 C34 24 24 34 24 50 C24 66 34 76 50 76 C66 76 76 66 76 50 C76 34 66 24 50 24 Z" fill="none" stroke="var(--mood-primary)" stroke-width="4" stroke-linecap="round" class="layer-helix-inner" />
                 
-                <!-- Layer 3: Blinking Character Eyes (Morphing Expressions) -->
+                <!-- Layer 3: Blinking Character Eyes -->
                 <g class="layer-eyes">
                     <ellipse id="eye-left" cx="40" cy="44" rx="3.5" ry="4.5" fill="var(--text-main)" class="svg-eye" />
                     <ellipse id="eye-right" cx="60" cy="44" rx="3.5" ry="4.5" fill="var(--text-main)" class="svg-eye" />
                 </g>
                 
-                <!-- Layer 4: Smiling Mouth (Morphing Expressions) -->
+                <!-- Layer 4: Smiling Mouth -->
                 <path d="M44 56 Q50 61 56 56" fill="none" stroke="var(--text-main)" stroke-width="2.5" stroke-linecap="round" class="layer-mouth" />
                 
                 <!-- Layer 5: Pulsing Center Core -->
