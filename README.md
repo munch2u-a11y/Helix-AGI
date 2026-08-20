@@ -5,6 +5,13 @@
 
 ---
 
+> **TL;DR — How to Start Helix**
+>
+> - **Standard Setup:** Run **`./install.sh`** (or **`python setup.py`**), then start Helix with **`python main.py`**. Jump to [**Quick Start & Setup**](#quick-start) for complete instructions.
+> - **Full Local Mode (Over-Agent Setup):** For 100% local operation with local Ollama LLMs, navigate to **`Over_Agent_Design`** directory (`cd ../Over_Agent_Design`), run **`./Setup_Wizard.sh`**, then launch with **`./Launch_Helix_Agent.sh`**. See the [**Over_Agent_Design Guide**](../Over_Agent_Design/README.md) for full details.
+
+---
+
 ## What is Helix AGI?
 
 Helix AGI is a multi-model agentic system that implements continuous autonomous operation, structured memory consolidation, and adaptive tool learning.
