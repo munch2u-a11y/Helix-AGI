@@ -1,15 +1,18 @@
 /* -------------------------------------------------------------------
    Helix Subconscious Over-Agent — Desktop Floating Widget CSS
-   Design: Premium Glassmorphism, Neon HSL Gradients & Keyframe Animations
+   Design: Premium Glassmorphism, Cute Mascot Micro-Animations & Dynamic Mood Themes
 ------------------------------------------------------------------- */
 
 :root {
     --bg-dark: #0A0D14;
-    --bg-glass: rgba(16, 22, 34, 0.85);
+    --bg-glass: rgba(16, 22, 34, 0.88);
     --border-glass: rgba(255, 255, 255, 0.12);
-    --neon-cyan: #00F0FF;
-    --neon-purple: #7000FF;
-    --neon-pink: #FF007A;
+    
+    /* Default Mood Colors (Focused) */
+    --mood-primary: #00F0FF;
+    --mood-secondary: #7000FF;
+    --mood-glow: rgba(0, 240, 255, 0.35);
+
     --text-main: #F0F4F8;
     --text-muted: #8A99AD;
     --font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -32,6 +35,38 @@ body.widget-mode {
 }
 
 /* -------------------------------------------------------------------
+   DYNAMIC MOOD COLOR SHIFTING THEMES
+------------------------------------------------------------------- */
+
+/* 1. Deeply Focused & Analytical */
+.helix-avatar-container.mood-focused {
+    --mood-primary: #00F0FF;
+    --mood-secondary: #7000FF;
+    --mood-glow: rgba(0, 240, 255, 0.4);
+}
+
+/* 2. Creative & Energized */
+.helix-avatar-container.mood-excited {
+    --mood-primary: #FF007A;
+    --mood-secondary: #FFB800;
+    --mood-glow: rgba(255, 0, 122, 0.45);
+}
+
+/* 3. Calm & Receptive */
+.helix-avatar-container.mood-calm {
+    --mood-primary: #00FF99;
+    --mood-secondary: #00F0FF;
+    --mood-glow: rgba(0, 255, 153, 0.4);
+}
+
+/* 4. Reflective & Diagnostic */
+.helix-avatar-container.mood-reflective {
+    --mood-primary: #E000FF;
+    --mood-secondary: #4B0082;
+    --mood-glow: rgba(224, 0, 255, 0.45);
+}
+
+/* -------------------------------------------------------------------
    FLOATING HELIX AVATAR WIDGET
 ------------------------------------------------------------------- */
 
@@ -39,65 +74,91 @@ body.widget-mode {
     position: fixed;
     bottom: 24px;
     right: 24px;
-    width: 72px;
-    height: 72px;
+    width: 80px;
+    height: 80px;
     z-index: 9999;
     cursor: pointer;
     user-select: none;
-    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.3s ease;
     animation: avatarIdleFloat 4s ease-in-out infinite;
 }
 
 .helix-avatar-container:hover {
-    transform: scale(1.12);
+    transform: scale(1.15) rotate(4deg);
+    animation: avatarHappyTilt 0.5s ease-in-out infinite alternate;
 }
 
 .avatar-pulse-ring {
     position: absolute;
-    top: -8px;
-    left: -8px;
-    width: 88px;
-    height: 88px;
+    top: -10px;
+    left: -10px;
+    width: 100px;
+    height: 100px;
     border-radius: 50%;
-    border: 2px solid var(--neon-cyan);
-    opacity: 0.4;
+    border: 2px solid var(--mood-primary);
+    box-shadow: 0 0 16px var(--mood-glow);
+    opacity: 0.5;
     animation: pulseRing 3s ease-out infinite;
     pointer-events: none;
+    transition: border-color 0.4s ease, box-shadow 0.4s ease;
 }
 
 .avatar-core {
+    position: relative;
     width: 100%;
     height: 100%;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(16,22,34,0.9) 0%, rgba(10,13,20,0.95) 100%);
-    border: 2px solid var(--border-glass);
-    box-shadow: 0 8px 32px rgba(0, 240, 255, 0.25);
+    background: radial-gradient(circle, rgba(16,22,34,0.95) 0%, rgba(10,13,20,0.98) 100%);
+    border: 2px solid var(--mood-primary);
+    box-shadow: 0 8px 32px var(--mood-glow);
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 8px;
+    padding: 4px;
+    overflow: hidden;
+    transition: border-color 0.4s ease, box-shadow 0.4s ease;
 }
 
-.helix-logo-svg {
+.helix-mascot-img {
     width: 100%;
     height: 100%;
-    animation: logoRotate 12s linear infinite;
+    object-fit: cover;
+    border-radius: 50%;
+    filter: drop-shadow(0 0 8px var(--mood-primary));
+    transition: filter 0.4s ease;
 }
 
-.avatar-center-eye {
-    animation: eyeGlow 2s ease-in-out infinite alternate;
+/* Eye Blinking Micro-Animation */
+.character-eyes {
+    position: absolute;
+    top: 36%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 32px;
+    display: flex;
+    justify-content: space-between;
+    pointer-events: none;
+}
+
+.eye {
+    width: 7px;
+    height: 7px;
+    background: var(--mood-primary);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--mood-primary);
+    animation: eyeBlink 4s infinite;
 }
 
 /* Avatar Speech Bubble */
 .avatar-speech-bubble {
     position: absolute;
-    right: 84px;
-    top: 12px;
+    right: 92px;
+    top: 14px;
     background: var(--bg-glass);
     backdrop-filter: blur(16px);
     border: 1px solid var(--border-glass);
     padding: 8px 14px;
-    border-radius: 12px;
+    border-radius: 14px;
     font-size: 12px;
     font-weight: 500;
     white-space: nowrap;
@@ -119,8 +180,8 @@ body.widget-mode {
     position: absolute;
     inset: -12px;
     border-radius: 50%;
-    background: rgba(112, 0, 255, 0.85);
-    border: 2px dashed var(--neon-cyan);
+    background: radial-gradient(circle, var(--mood-secondary) 0%, var(--mood-primary) 100%);
+    border: 2px dashed var(--text-main);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -134,7 +195,7 @@ body.widget-mode {
     opacity: 1;
 }
 
-.drop-icon { font-size: 20px; }
+.drop-icon { font-size: 22px; }
 .drop-text { font-size: 9px; font-weight: 700; color: #FFF; text-align: center; }
 
 /* -------------------------------------------------------------------
@@ -143,14 +204,14 @@ body.widget-mode {
 
 .mini-chat-container {
     position: fixed;
-    bottom: 108px;
+    bottom: 116px;
     right: 24px;
-    width: 380px;
+    width: 390px;
     max-height: 540px;
     background: var(--bg-glass);
     backdrop-filter: blur(20px);
     border: 1px solid var(--border-glass);
-    border-radius: 20px;
+    border-radius: 22px;
     box-shadow: 0 16px 48px rgba(0,0,0,0.6);
     display: flex;
     flex-direction: column;
@@ -221,7 +282,7 @@ body.widget-mode {
 }
 
 .affect-label { color: var(--text-muted); }
-.affect-val { color: var(--neon-cyan); font-weight: 500; }
+.affect-val { color: var(--mood-primary); font-weight: 600; transition: color 0.4s ease; }
 
 .chat-feed {
     flex: 1;
@@ -236,25 +297,25 @@ body.widget-mode {
 
 .message {
     padding: 10px 14px;
-    border-radius: 12px;
+    border-radius: 14px;
     font-size: 13px;
     line-height: 1.45;
 }
 
 .system-msg {
     background: rgba(112, 0, 255, 0.12);
-    border-left: 3px solid var(--neon-purple);
+    border-left: 3px solid var(--mood-secondary);
 }
 
 .user-msg {
     background: rgba(0, 240, 255, 0.12);
-    border-right: 3px solid var(--neon-cyan);
+    border-right: 3px solid var(--mood-primary);
     align-self: flex-end;
 }
 
 .assistant-msg {
     background: rgba(255, 255, 255, 0.05);
-    border-left: 3px solid var(--neon-pink);
+    border-left: 3px solid var(--mood-primary);
 }
 
 .msg-author {
@@ -278,7 +339,7 @@ body.widget-mode {
 .wave-bar {
     width: 4px;
     height: 100%;
-    background: var(--neon-cyan);
+    background: var(--mood-primary);
     border-radius: 2px;
     animation: waveBounce 0.8s ease-in-out infinite alternate;
 }
@@ -307,7 +368,7 @@ body.widget-mode {
 
 .tool-chip:hover {
     background: rgba(0, 240, 255, 0.15);
-    border-color: var(--neon-cyan);
+    border-color: var(--mood-primary);
 }
 
 /* Input Bar */
@@ -334,12 +395,12 @@ body.widget-mode {
 }
 
 #user-input-field:focus {
-    border-color: var(--neon-cyan);
-    box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+    border-color: var(--mood-primary);
+    box-shadow: 0 0 10px var(--mood-glow);
 }
 
 .btn-send {
-    background: linear-gradient(135deg, var(--neon-purple), var(--neon-cyan));
+    background: linear-gradient(135deg, var(--mood-secondary), var(--mood-primary));
     border: none;
     color: #FFF;
     width: 34px;
@@ -361,20 +422,20 @@ body.widget-mode {
     50% { transform: translateY(-8px); }
 }
 
+@keyframes avatarHappyTilt {
+    0% { transform: rotate(-5deg) scale(1.12); }
+    100% { transform: rotate(5deg) scale(1.15); }
+}
+
 @keyframes pulseRing {
     0% { transform: scale(0.9); opacity: 0.6; }
-    50% { transform: scale(1.15); opacity: 0.1; }
+    50% { transform: scale(1.18); opacity: 0.1; }
     100% { transform: scale(0.9); opacity: 0.6; }
 }
 
-@keyframes logoRotate {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-}
-
-@keyframes eyeGlow {
-    from { fill: var(--neon-cyan); }
-    to { fill: var(--neon-pink); }
+@keyframes eyeBlink {
+    0%, 94%, 100% { transform: scaleY(1); }
+    97% { transform: scaleY(0.1); }
 }
 
 @keyframes waveBounce {

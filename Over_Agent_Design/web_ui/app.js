@@ -1,5 +1,6 @@
 /* -------------------------------------------------------------------
    Helix Subconscious Over-Agent — Desktop Floating Widget Logic
+   Features: Dynamic Mood-Matching Color Shifting & Mascot Animations
 ------------------------------------------------------------------- */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -18,6 +19,26 @@ document.addEventListener("DOMContentLoaded", () => {
     const affectStatus = document.getElementById("affect-status");
 
     let isDrawerOpen = false;
+
+    // Map Synthetic Affect / Mood Labels to CSS Color Shift Classes
+    function applyMoodColorShift(label) {
+        if (!label) return;
+        
+        avatarWidget.classList.remove("mood-focused", "mood-excited", "mood-calm", "mood-reflective");
+        const lower = label.lower ? label.lower() : label.toLowerCase();
+        
+        if (lower.includes("focus") || lower.includes("analytical") || lower.includes("deep")) {
+            avatarWidget.classList.add("mood-focused");
+        } else if (lower.includes("creative") || lower.includes("excited") || lower.includes("energized")) {
+            avatarWidget.classList.add("mood-excited");
+        } else if (lower.includes("calm") || lower.includes("content") || lower.includes("receptive")) {
+            avatarWidget.classList.add("mood-calm");
+        } else if (lower.includes("reflective") || lower.includes("diagnostic") || lower.includes("subconscious")) {
+            avatarWidget.classList.add("mood-reflective");
+        } else {
+            avatarWidget.classList.add("mood-focused");
+        }
+    }
 
     // Toggle Mini-Chat Drawer
     function toggleDrawer(open) {
@@ -195,7 +216,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // Connect Server-Sent Events (SSE) Stream for Background Pulses
+    // Connect Server-Sent Events (SSE) Stream for Background Pulses & Dynamic Mood Color Shifts
     function initEventStream() {
         if (!!window.EventSource) {
             const source = new EventSource("/api/stream");
@@ -206,6 +227,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
                 if (data.affect_label) {
                     affectStatus.textContent = data.affect_label;
+                    applyMoodColorShift(data.affect_label);
                 }
             });
         }

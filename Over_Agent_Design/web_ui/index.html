@@ -11,33 +11,22 @@
 </head>
 <body class="widget-mode">
 
-    <!-- FLOATING HELIX AVATAR WIDGET -->
-    <div id="helix-avatar-widget" class="helix-avatar-container" title="Click to toggle Helix Mini-Chat | Drag & Drop Files Here">
+    <!-- FLOATING HELIX AVATAR WIDGET (DYNAMIC MOOD COLOR SHIFTING) -->
+    <div id="helix-avatar-widget" class="helix-avatar-container mood-focused" title="Click to toggle Helix Mini-Chat | Drag & Drop Files Here">
         <div class="avatar-pulse-ring"></div>
         <div class="avatar-core">
-            <svg class="helix-logo-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M50 15 C30 15 15 30 15 50 C15 70 30 85 50 85 C70 85 85 70 85 50" stroke="url(#helix-grad-1)" stroke-width="8" stroke-linecap="round" />
-                <path d="M50 25 C65 25 75 35 75 50 C75 65 65 75 50 75 C35 75 25 65 25 50" stroke="url(#helix-grad-2)" stroke-width="6" stroke-linecap="round" />
-                <circle cx="50" cy="50" r="10" fill="#00F0FF" class="avatar-center-eye" />
-                <defs>
-                    <linearGradient id="helix-grad-1" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stop-color="#00F0FF" />
-                        <stop offset="50%" stop-color="#7000FF" />
-                        <stop offset="100%" stop-color="#FF007A" />
-                    </linearGradient>
-                    <linearGradient id="helix-grad-2" x1="100%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stop-color="#FF007A" />
-                        <stop offset="100%" stop-color="#00F0FF" />
-                    </linearGradient>
-                </defs>
-            </svg>
+            <img src="assets/helix_mascot.png" alt="Helix Mascot Avatar" class="helix-mascot-img">
+            <div class="character-eyes">
+                <span class="eye eye-left"></span>
+                <span class="eye eye-right"></span>
+            </div>
         </div>
         <div class="avatar-speech-bubble" id="avatar-speech-bubble">
             <span id="speech-bubble-text">Helix Subconscious Stream active...</span>
         </div>
         <div class="dropzone-overlay" id="avatar-dropzone">
-            <div class="drop-icon">📥</div>
-            <div class="drop-text">Drop Document / Image</div>
+            <div class="drop-icon">✨</div>
+            <div class="drop-text">Feed File to Helix</div>
         </div>
     </div>
 
