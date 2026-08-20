@@ -1,14 +1,46 @@
-# 🧠 Helix Subconscious Over-Agent System (`Over_Agent_Design`)
+# 🧠 Helix Subconscious Over-Agent System
 
-> **A Continuous Digital Bicameral Mind Architecture** operating through ultra-slim executive reflection loops, surgical tool-group passes, multi-head mRAG preconscious memory recall, dynamic identity compilation, and synthetic affect simulation.
+> **A Continuous Digital Bicameral Mind Architecture** operating through an ultra-slim background executive thread, surgical domain sub-orchestrator passes, multi-head mRAG preconscious memory recall, dynamic identity compilation, and synthetic affect simulation.
 
 ---
 
-## 🚀 Key Differences: Traditional LLM Agents vs. Subconscious Over-Agent
+## 🏛️ Digital Bicameral Architecture vs. Conventional Orchestration Systems
 
-Most conventional LLM agent frameworks suffer from **context bloat**, **high per-turn latency**, **stateless memory resets**, and **GPU spin during idle periods**. The Helix Subconscious Over-Agent introduces a structural paradigm shift:
+In conventional multi-agent frameworks (e.g., AutoGen, CrewAI, LangGraph), an orchestrator acts as a **top-down master controller** sitting above subagents. This traditional design creates significant overhead:
 
-| Feature / Dimension | Traditional LLM Agents (e.g. ReAct / LangChain) | Subconscious Over-Agent Architecture (Helix) |
+- **Conventional Orchestrators**: Heavy, rigid controllers that pass complex master JSON schemas, micromanage agent steps, and re-instantiate context on every turn. The orchestrator acts as a supervisor rather than a thinking mind.
+- **The Digital Bicameral Over-Agent (Helix)**: Operates as a **continuous background cognitive stream**—a digital bicameral mind. The executive thread never speaks directly to the user or micromanages execution details. Instead, it runs silently in the background, maintaining continuous identity, processing incoming events, and dynamically opening short-lived **focused cognitive windows** (`speaker`, `researcher`, `executor`) only when specific tool or vocal passes are required.
+
+```
++-----------------------------------------------------------------------------------+
+|                        DIGITAL BICAMERAL MIND ARCHITECTURE                        |
+|                                                                                   |
+|  +-----------------------------------------------------------------------------+  |
+|  |             CONTINUOUS BACKGROUND SUBCONSCIOUS EXECUTIVE STREAM             |  |
+|  |     (Maintains identity, processes event log, runs idle reflection loops)   |  |
+|  +-----------------------------------------------------------------------------+  |
+|                                       |                                           |
+|               +-----------------------+-----------------------+                   |
+|               |                       |                       |                   |
+|               v                       v                       v                   |
+|      +-----------------+     +-----------------+     +-----------------+          |
+|      |  Speaker Focus  |     | Research Focus  |     | Execution Focus |          |
+|      | (Vocal Dialogue)|     | (mRAG / Files)  |     | (Terminal/Vision|          |
+|      +-----------------+     +-----------------+     +-----------------+          |
+|               |                       |                       |                   |
+|               +-----------------------+-----------------------+                   |
+|                                       v                                           |
+|                 +-------------------------------------------+                     |
+|                 | System Observation Receipts -> Event Log  |                     |
+|                 +-------------------------------------------+                     |
++-----------------------------------------------------------------------------------+
+```
+
+---
+
+## 🚀 Key Differences: Traditional LLM Frameworks vs. Subconscious Over-Agent
+
+| Feature / Dimension | Traditional Multi-Agent Frameworks | Subconscious Over-Agent Architecture (Helix) |
 | :--- | :--- | :--- |
 | **System Prompt Overhead** | Heavy ($\sim$3,000–5,000+ tokens containing all 20+ tool definitions) | **Ultra-Slim Executive Anchor ($\sim$80 tokens)** |
 | **Tool Selection Pass** | Monolithic (LLM sees all tools on every single turn) | **Isolated Domain Sub-Orchestrators** (`speaker`, `researcher`, `executor`) |
@@ -45,7 +77,7 @@ flowchart TD
     end
 
     subgraph Memory ["Preconscious Memory Layer"]
-        M["HelixMRAGAdapter (/home/nemo/Helix/data)"]
+        M["HelixMRAGAdapter (Configurable Data Store)"]
     end
 
     U --> L
@@ -139,7 +171,7 @@ By decoupling **Subconscious Monologue Reflection** from **Dialogue Generation**
 - Achieve reasoning depth comparable to 70B+ models while running locally at high speed.
 
 ### 2. Multi-Head mRAG Preconscious Memory Recall
-Before Helix synthesizes dialogue, `ResearcherSubOrchestrator` invokes [`mrag_adapter.py`](file:///home/nemo/Over_Agent_Design/mrag_adapter.py) to query canonical belief stores in [`/home/nemo/Helix/data`](file:///home/nemo/Helix/data) (`pending_beliefs.json`, `contacts.json`, `tool_learned_notes.json`, `interaction_ledger.json`, `cognitive_journal.jsonl`).
+Before Helix synthesizes dialogue, `ResearcherSubOrchestrator` invokes `mrag_adapter.py` to query canonical belief stores (`pending_beliefs.json`, `contacts.json`, `tool_learned_notes.json`, `interaction_ledger.json`, `cognitive_journal.jsonl`).
 Memory nodes are recalled **preconsciously** and injected as observation receipts into the stream, ensuring Helix speaks with full awareness of past user interactions.
 
 ### 3. Thread-Safe GPU Management (`self.lock`)
@@ -155,14 +187,14 @@ Dialogue turn compaction is calculated **strictly over `user` and `assistant` tu
 ## 📁 Repository Structure
 
 ```
-Over_Agent_Design/
+.
 ├── main.py                        # Rich terminal UI & background pulse launcher
 ├── subconscious_conductor.py      # Core Conductor engine, state machine & thread lock
 ├── subagents.py                   # Speaker, Research & Execution Sub-Orchestrators
-├── mrag_adapter.py                # Multi-head mRAG retrieval over /home/nemo/Helix/data
+├── mrag_adapter.py                # Multi-head mRAG retrieval adapter
 ├── dynamic_identity_compiler.py   # Compiles identity.md + self_opinion.json + affect state
 ├── affect_simulation.py           # Synthetic affect state vector pipeline
-├── llm_backend.py                 # Local Ollama HTTP adapter (granite4.1:8b default)
+├── llm_backend.py                 # Local LLM backend HTTP adapter
 ├── voice_subagents.py             # Modular TTS/STT speech interface
 ├── identity.md                    # Shared first-person identity anchor
 ├── self_opinion.json              # Consolidated dynamic self-opinion statement
@@ -204,7 +236,7 @@ python3 tests/benchmark_recall_and_reasoning.py
 
 ## 📊 Empirical Benchmark Results
 
-Run `python3 tests/benchmark_recall_and_reasoning.py` to produce a structured JSON report saved to [`tests/benchmark_results.json`](file:///home/nemo/Over_Agent_Design/tests/benchmark_results.json):
+Run `python3 tests/benchmark_recall_and_reasoning.py` to produce a structured JSON report saved to `tests/benchmark_results.json`:
 
 ```json
 {
