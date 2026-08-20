@@ -3,8 +3,8 @@
 Helix Subconscious Over-Agent — Native Desktop Floating Overlay Launcher.
 
 Creates a TRUE system-wide native OS floating window (frameless, transparent, always-on-top)
-featuring native click-and-drag window movement anywhere across screens, pure mascot UI,
-and dynamic window size syncing between character widget mode and mini-chat drawer mode.
+featuring a Global Application Event Filter for 100% fluid click-and-drag desktop movement,
+pure iconic Helix double-helix logo rendering, and dynamic window sizing.
 """
 
 import os
@@ -26,45 +26,55 @@ def wait_for_server(url: str, timeout_s: float = 10.0) -> bool:
     return False
 
 def launch_pyqt6_overlay():
-    from PyQt6.QtCore import Qt, QUrl, QPoint, pyqtSlot
+    from PyQt6.QtCore import Qt, QUrl, QPoint, QObject, QEvent
     from PyQt6.QtWidgets import QApplication, QMainWindow
     from PyQt6.QtWebEngineWidgets import QWebEngineView
-    from PyQt6.QtWebChannel import QWebChannel
 
-    class NativeFloatingOverlayWindow(QMainWindow):
-        def __init__(self):
+    class GlobalDragFilter(QObject):
+        """Intercepts mouse press/move events globally across WebEngine child widgets."""
+        def __init__(self, main_window):
             super().__init__()
-            self._drag_pos = QPoint()
+            self.window = main_window
+            self.dragging = False
+            self.offset = QPoint()
 
-            # Frameless, Always-on-top, Translucent Desktop Tool Window
-            self.setWindowFlags(
-                Qt.WindowType.FramelessWindowHint |
-                Qt.WindowType.WindowStaysOnTopHint |
-                Qt.WindowType.Tool
-            )
-            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-            self.resize(440, 660)
-            self.move(1400, 350)
-
-            self.web = QWebEngineView(self)
-            self.web.page().setBackgroundColor(Qt.GlobalColor.transparent)
-            self.web.load(QUrl(SERVER_URL))
-            self.setCentralWidget(self.web)
-
-        def mousePressEvent(self, event):
-            if event.button() == Qt.MouseButton.LeftButton:
-                self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-                event.accept()
-
-        def mouseMoveEvent(self, event):
-            if event.buttons() == Qt.MouseButton.LeftButton:
-                self.move(event.globalPosition().toPoint() - self._drag_pos)
-                event.accept()
+        def eventFilter(self, obj, event):
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self.dragging = True
+                    self.offset = event.globalPosition().toPoint() - self.window.frameGeometry().topLeft()
+            elif event.type() == QEvent.Type.MouseMove:
+                if self.dragging and (event.buttons() & Qt.MouseButton.LeftButton):
+                    self.window.move(event.globalPosition().toPoint() - self.offset)
+                    return True
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                self.dragging = False
+            return False
 
     app = QApplication(sys.argv)
-    window = NativeFloatingOverlayWindow()
+    window = QMainWindow()
+
+    # Frameless, Translucent, Always-On-Top OS Window
+    window.setWindowFlags(
+        Qt.WindowType.FramelessWindowHint |
+        Qt.WindowType.WindowStaysOnTopHint |
+        Qt.WindowType.Tool
+    )
+    window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    window.resize(440, 660)
+    window.move(1400, 350)
+
+    web = QWebEngineView(window)
+    web.page().setBackgroundColor(Qt.GlobalColor.transparent)
+    web.load(QUrl(SERVER_URL))
+    window.setCentralWidget(web)
+
+    # Install Global Drag Event Filter to catch WebEngine child mouse events
+    drag_filter = GlobalDragFilter(window)
+    app.installEventFilter(drag_filter)
+
     window.show()
-    print("  ✓ Native PyQt6 Overlay Window Active with Fluid Mouse Dragging & Pure Mascot Rendering!")
+    print("  ✓ Native PyQt6 Overlay Active: Global Mouse Drag Filter Installed & Pure Helix Logo Rendering!")
     sys.exit(app.exec())
 
 def launch_native_overlay():
