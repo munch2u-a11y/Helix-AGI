@@ -12,10 +12,15 @@ import pickle
 import threading
 from typing import Dict, List, Any, Optional
 from llm_backend import LLMBackend
+from integrated_mrag import HelixMRAGRuntime
 from subagents import SpeakerFocus, ResearcherSubOrchestrator, ExecutorSubOrchestrator
 from dynamic_identity_compiler import DynamicIdentityCompiler
 
-SEEDED_STATE_PATH = "/home/nemo/Over_Agent_Design/helix_seeded_state.pkl"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SEEDED_STATE_PATH = os.environ.get(
+    "HELIX_OVER_AGENT_STATE",
+    os.path.join(BASE_DIR, "helix_seeded_state.pkl"),
+)
 
 class SubconsciousConductor:
     def __init__(
@@ -23,12 +28,14 @@ class SubconsciousConductor:
         backend: Optional[LLMBackend] = None,
         max_history_chars: int = 16000,
         idle_cadence_seconds: float = 12.0,
-        enable_autonomous_background: bool = True
+        enable_autonomous_background: bool = True,
+        mrag_runtime: Optional[HelixMRAGRuntime] = None,
     ):
         self.backend = backend or LLMBackend()
         self.max_history_chars = max_history_chars
         self.idle_cadence_seconds = idle_cadence_seconds
         self.enable_autonomous_background = enable_autonomous_background
+        self.mrag = mrag_runtime or HelixMRAGRuntime()
         
         self.identity_compiler = DynamicIdentityCompiler()
         self.event_stream: List[Dict[str, str]] = []
@@ -41,7 +48,10 @@ class SubconsciousConductor:
         self.load_seeded_state()
         
         self.speaker = SpeakerFocus(self.backend)
-        self.researcher = ResearcherSubOrchestrator(self.backend)
+        self.researcher = ResearcherSubOrchestrator(
+            self.backend,
+            mrag_runtime=self.mrag,
+        )
         self.executor = ExecutorSubOrchestrator(self.backend)
 
     def load_seeded_state(self):
@@ -130,6 +140,21 @@ DIRECTIVES:
             self.state = "ACTIVE"
             self.idle_pulses_count = 0
             self.identity_compiler.affect_pipeline.update_affect(user_sentiment="positive", task_complexity="medium")
+
+            recalled_context = self._recall_for_turn(user_text, debug=debug)
+            self._remember_turn_text(
+                user_text,
+                memory_type="incoming_message",
+                source="pulse_input",
+                record_metadata={
+                    "record_kind": "inbound_message",
+                    "direction": "inbound",
+                    "actor": "user",
+                    "recipients": ["helix"],
+                    "epistemic_role": "user_statement",
+                    "evidence_scopes": ["conversation"],
+                },
+            )
             
             self.event_stream.append({"role": "user", "content": user_text})
             self._compact_log_if_needed(debug=debug)
@@ -141,7 +166,7 @@ DIRECTIVES:
                 if debug:
                     print(f"\n--- [Executive Reflection Cycle {cycle+1} | State: {self.state}] ---")
                 
-                prompt = self._build_stream_prompt()
+                prompt = self._build_stream_prompt(recalled_context)
                 raw_thought = self.backend.generate(
                     prompt=prompt,
                     system_prompt=self._get_executive_anchor(),
@@ -157,7 +182,11 @@ DIRECTIVES:
                 if not dispatch:
                     if debug:
                         print("[Conductor Info] No explicit focus parsed. Opening Speaker Focus Window.")
-                    user_response = self.speaker.run(task_instruction=raw_thought, user_context=user_text)
+                    user_response = self.speaker.run(
+                        task_instruction=raw_thought,
+                        user_context=user_text,
+                        grounding_context=recalled_context,
+                    )
                     self.event_stream.append({"role": "assistant", "content": f"Opened speaker focus window. Output: {user_response}"})
                     break
                     
@@ -167,7 +196,11 @@ DIRECTIVES:
                 if sub_type == "speaker":
                     if debug:
                         print(f"[Bicameral Engine] Opening Speaker Focus Window: '{sub_prompt}'")
-                    user_response = self.speaker.run(task_instruction=sub_prompt, user_context=user_text)
+                    user_response = self.speaker.run(
+                        task_instruction=sub_prompt,
+                        user_context=user_text,
+                        grounding_context=recalled_context,
+                    )
                     self.event_stream.append({"role": "assistant", "content": f"Opened speaker focus: {sub_prompt} | Result: {user_response[:100]}..."})
                     break
                 elif sub_type == "researcher":
@@ -187,12 +220,60 @@ DIRECTIVES:
                     if debug:
                         print(f"[{observation}]")
                 else:
-                    user_response = self.speaker.run(task_instruction=user_text, user_context=user_text)
+                    user_response = self.speaker.run(
+                        task_instruction=user_text,
+                        user_context=user_text,
+                        grounding_context=recalled_context,
+                    )
                     break
-                    
+
+            if user_response:
+                self._remember_turn_text(
+                    user_response,
+                    memory_type="outgoing_message",
+                    source="helix_outbound",
+                    record_metadata={
+                        "record_kind": "outbound_message",
+                        "direction": "outbound",
+                        "actor": "helix",
+                        "recipients": ["user"],
+                        "epistemic_role": "agent_response",
+                        "evidence_scopes": ["conversation"],
+                    },
+                    persist_index=True,
+                )
             self.save_state()
             self.state = "RESTING"
             return user_response
+
+    def _recall_for_turn(self, user_text: str, debug: bool = False) -> str:
+        try:
+            return self.mrag.recall_context(user_text, top_k=5)
+        except Exception as exc:
+            if debug:
+                print(f"[mRAG Recall Warning] {exc}")
+            return ""
+
+    def _remember_turn_text(
+        self,
+        content: str,
+        *,
+        memory_type: str,
+        source: str,
+        record_metadata: Dict[str, Any],
+        persist_index: bool = False,
+    ) -> None:
+        try:
+            self.mrag.remember(
+                content,
+                memory_type=memory_type,
+                source=source,
+                importance=0.7,
+                record_metadata=record_metadata,
+                persist_index=persist_index,
+            )
+        except Exception as exc:
+            print(f"[mRAG Write Warning] {exc}")
 
     def pulse_idle_check(self, debug: bool = False) -> Optional[str]:
         if self.event_queue.empty():
@@ -253,8 +334,10 @@ DIRECTIVES:
         self._compact_log_if_needed(debug=debug)
         self.save_state()
 
-    def _build_stream_prompt(self) -> str:
+    def _build_stream_prompt(self, recalled_context: str = "") -> str:
         parts = []
+        if recalled_context:
+            parts.append(recalled_context)
         if self.compacted_memories:
             parts.append("--- COMPACTED HISTORICAL MEMORIES ---")
             for mem in self.compacted_memories:

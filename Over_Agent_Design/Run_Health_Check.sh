@@ -32,8 +32,8 @@ else
 fi
 
 echo -n "4. Checking Workspace Directory ... "
-if [ -d "/home/nemo/Over_Agent_Design" ]; then
-    echo -e "\033[1;32mVALID (/home/nemo/Over_Agent_Design)\033[0m"
+if [ -d "$DIR" ]; then
+    echo -e "\033[1;32mVALID ($DIR)\033[0m"
 else
     echo -e "\033[1;31mNOT FOUND\033[0m"
 fi

@@ -4,23 +4,20 @@
 
 ---
 
-## 1. Multi-Head mRAG Adapter (`mrag_adapter.py`)
+## 1. Integrated Multi-Head mRAG (`integrated_mrag.py`)
 
-The **Helix mRAG Adapter** connects the local mRAG retrieval engine (`/home/nemo/Local-mRag`) to canonical Helix memory stores (`/home/nemo/Helix/data`).
+The Over-Agent uses Helix's in-repository memory implementation directly. There is no keyword-scanning adapter and no second cache.
 
-### Indexed Data Stores:
-- `pending_beliefs.json` (Real-time active beliefs)
-- `contacts.json` (Entity profiles and user relationship records)
-- `tool_learned_notes.json` (Operational tool habits and efficiencies)
-- `interaction_ledger.json` (Conversation history ledger)
-- `cognitive_journal.jsonl` (Subconscious journal logs)
-- `data/beliefs/*` & `data/memory/*` (Subdirectories containing domain memory nodes)
+### Canonical stores
+- `data/memory/cognitive_journal.jsonl`: append-only Layer-0 memories, including inbound/outbound messages and document chunks.
+- `data/beliefs/*.json`: outer beliefs plus Layer-2 `people`, `concepts`, `skills`, and `desires` anchors.
+- `data/spatial/semantic_index_1024d*`: native semantic retrieval index; the stable 384D-to-8D representation remains a separate spatial complement.
 
 ### Preconscious Retrieval Workflow:
-1. When a research pass is triggered, `HelixMRAGAdapter.retrieve_mrag_context(query)` extracts query keywords.
-2. Keyword matching and semantic vector heads scan the belief corpus for matching items.
-3. Top matching items are formatted into a `--- mRAG RECALLED HELIX MEMORIES ---` observation receipt.
-4. The receipt is injected into `self.event_stream` **before** the dialogue synthesis pass.
+1. `SubconsciousConductor.process_user_event()` calls `HelixMRAGRuntime.recall_context()` before generation.
+2. Unified mRAG runs multi-head semantic retrieval over one tiered corpus and adds only bounded non-semantic complements.
+3. Exact Layer-2 term/alias matches receive priority without replacing source memories.
+4. The compact result grounds the current executive and speaker calls, then inbound and outbound text are persisted through `MemoryManager`.
 
 ---
 

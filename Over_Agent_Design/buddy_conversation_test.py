@@ -6,6 +6,7 @@ Antigravity (AI collaborator), projects, interests, and asking/answering questio
 
 import sys
 import time
+import os
 from subconscious_conductor import SubconsciousConductor
 from llm_backend import LLMBackend
 
@@ -46,7 +47,10 @@ def run_buddy_conversation():
 
     # Save active conductor stream state to file so chat_interface can load it
     import pickle
-    state_file = "/home/nemo/Over_Agent_Design/helix_seeded_state.pkl"
+    state_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "helix_seeded_state.pkl",
+    )
     with open(state_file, "wb") as f:
         pickle.dump({
             "event_stream": conductor.event_stream,

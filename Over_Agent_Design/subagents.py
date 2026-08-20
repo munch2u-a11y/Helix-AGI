@@ -1,7 +1,7 @@
 """
 Slim Orchestrator & Sub-Orchestrator Tool-Group Passes.
 Main Orchestrator remains ultra-slim (~80 tokens).
-ResearcherSubOrchestrator utilizes HelixMRAGAdapter & MCPRegistry for mRAG and external MCP servers.
+ResearcherSubOrchestrator uses the embedded Helix mRAG runtime and MCPRegistry.
 ExecutorSubOrchestrator utilizes CLIPluginAdapter & MCPRegistry for CLI plugins (android, firebase, git, uv).
 """
 
@@ -14,11 +14,12 @@ import json
 import re
 from typing import Dict, Any, Optional
 from llm_backend import LLMBackend
-from mrag_adapter import HelixMRAGAdapter
+from integrated_mrag import HelixMRAGRuntime
 from mcp_adapter import MCPRegistry
 from cli_plugin_adapter import CLIPluginAdapter
 
-IDENTITY_FILE_PATH = "/home/nemo/Over_Agent_Design/identity.md"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IDENTITY_FILE_PATH = os.path.join(BASE_DIR, "identity.md")
 
 def load_shared_identity() -> str:
     if os.path.exists(IDENTITY_FILE_PATH):
@@ -32,7 +33,12 @@ class SpeakerFocus:
     def __init__(self, backend: LLMBackend):
         self.backend = backend
 
-    def run(self, task_instruction: str, user_context: str) -> str:
+    def run(
+        self,
+        task_instruction: str,
+        user_context: str,
+        grounding_context: str = "",
+    ) -> str:
         identity = load_shared_identity()
         system_prompt = (
             f"{identity}\n\n"
@@ -41,6 +47,7 @@ class SpeakerFocus:
         )
         prompt = (
             f"USER CONTEXT:\n{user_context}\n\n"
+            f"RECALLED CONTEXT:\n{grounding_context or '(none)'}\n\n"
             f"MY INTERNAL DIRECTIVE:\n{task_instruction}\n\n"
             "My spoken response to the user:"
         )
@@ -50,19 +57,24 @@ class SpeakerFocus:
 class ResearcherSubOrchestrator:
     """
     Research Sub-Orchestrator Pass.
-    Utilizes mRAG multi-head memory recall over Helix local memory stores (/home/nemo/Helix/data),
+    Uses Helix's native unified mRAG retrieval over the canonical journal and beliefs,
     MCP server registry, workspace file scan, and web search.
     """
-    def __init__(self, backend: LLMBackend, mcp_registry: Optional[MCPRegistry] = None):
+    def __init__(
+        self,
+        backend: LLMBackend,
+        mcp_registry: Optional[MCPRegistry] = None,
+        mrag_runtime: Optional[HelixMRAGRuntime] = None,
+    ):
         self.backend = backend
-        self.mrag_adapter = HelixMRAGAdapter()
+        self.mrag = mrag_runtime or HelixMRAGRuntime()
         self.mcp_registry = mcp_registry or MCPRegistry()
 
-    def run(self, query: str, search_path: str = "/home/nemo/Over_Agent_Design") -> str:
+    def run(self, query: str, search_path: str = BASE_DIR) -> str:
         identity = load_shared_identity()
         
         # 1. Execute Multi-Head mRAG Preconscious Recall
-        mrag_context = self.mrag_adapter.retrieve_mrag_context(query)
+        mrag_context = self.mrag.recall_context(query)
         
         # 2. Local Workspace File Scan
         workspace_scan = self._scan_workspace(search_path)
@@ -204,7 +216,7 @@ class ExecutorSubOrchestrator:
 
     def _run_screen_capture(self) -> str:
         try:
-            target = "/home/nemo/Over_Agent_Design/current_screen.xwd"
+            target = os.path.join(BASE_DIR, "current_screen.xwd")
             res = subprocess.run(f"xwd -root -out {target}", shell=True, capture_output=True, text=True, timeout=5)
             return f"Captured desktop screen to {target} ({os.path.getsize(target)} bytes)." if os.path.exists(target) else "Screen capture attempted."
         except Exception as e:

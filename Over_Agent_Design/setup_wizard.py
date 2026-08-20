@@ -66,19 +66,21 @@ def check_ollama_backend():
 def check_mrag_engine():
     print_step("Step 3: Checking mRAG & Memory Retrieval Engine")
     try:
-        import chromadb
-        print("  ✓ ChromaDB Vector Store: INSTALLED")
-    except ImportError:
-        print("  ℹ️ ChromaDB Vector Store: Not installed (optional)")
-
-    local_mrag = "/home/nemo/Local-mRag"
-    if os.path.exists(local_mrag):
-        print(f"  ✓ Local mRAG Stack Found: {local_mrag}")
-        print("  ✓ Operating Mode: FULL MULTI-HEAD mRAG VECTOR RECALL")
-    else:
-        print("  ℹ️ Local mRAG Stack: Not detected")
-        print("  ✓ Operating Mode: PLUG-AND-PLAY KEYWORD & JSON BELIEF RECALL (Fallback Mode)")
-    return True
+        from integrated_mrag import DEFAULT_REPO_ROOT, LAYER2_BELIEF_CATEGORIES
+        required = [
+            DEFAULT_REPO_ROOT / "core" / "unified_retrieval.py",
+            DEFAULT_REPO_ROOT / "memory" / "memory_manager.py",
+            DEFAULT_REPO_ROOT / "memory" / "belief_store.py",
+        ]
+        if not all(path.exists() for path in required):
+            raise RuntimeError("canonical Helix memory modules are incomplete")
+        print(f"  ✓ Native Helix mRAG Runtime: {DEFAULT_REPO_ROOT}")
+        print("  ✓ Retrieval: 1024D semantic foreground + bounded spatial complements")
+        print(f"  ✓ Layer-2 Beliefs: {', '.join(LAYER2_BELIEF_CATEGORIES)}")
+        return True
+    except Exception as exc:
+        print(f"  ❌ Native Helix mRAG Runtime unavailable: {exc}")
+        return False
 
 def check_audio_systems():
     print_step("Step 4: Checking Voice & Audio Subsystems (Optional)")

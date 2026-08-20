@@ -40,7 +40,7 @@ flowchart TD
     end
 
     subgraph Memory ["Preconscious Memory Layer"]
-        M["HelixMRAGAdapter (Canonical Belief Stores in /data)"]
+        M["HelixMRAGRuntime (Canonical Journal + Beliefs + Semantic Index)"]
     end
 
     U --> L
@@ -51,6 +51,8 @@ flowchart TD
     E -->|type='speaker'| SP
     E -->|type='researcher'| RE
     E -->|type='executor'| EX
+    U --> M
+    M --> E
     RE <--> M
     RE -->|Observation Receipt| S
     EX -->|Observation Receipt| S
@@ -108,9 +110,11 @@ stateDiagram-v2
 - **Self-Opinion Statement (`self_opinion.json`)**: A running 1-sentence self-opinion anchor compiled into the system prompt and updated nightly during DORMANT passes.
 - **Synthetic Affect Vector (`affect_simulation.py`)**: Tracks mathematical parameters (`Valence`, `Arousal`, `Focus Depth`, `State Descriptor`) and injects current synthetic mood state into prompt context.
 
-### 4.3 Multi-Head mRAG Adapter (`mrag_adapter.py`)
-- **Preconscious Memory Recall**: Indexes belief stores (`pending_beliefs.json`, `contacts.json`, `tool_learned_notes.json`, `interaction_ledger.json`, `cognitive_journal.jsonl`, `data/beliefs`, `data/memory`).
-- **Stream Ingestion**: Ingests recalled memory nodes as observation receipts into `self.event_stream` prior to dialogue generation.
+### 4.3 Integrated mRAG Runtime (`integrated_mrag.py`)
+- **Canonical storage**: `MemoryManager` appends inbound messages, outbound messages, and document chunks to `data/memory/cognitive_journal.jsonl`.
+- **Foreground retrieval**: `UnifiedRetrieval` queries the native 1024D semantic index across memories and both belief tiers. Spatial/associative results are bounded complements and do not re-rank semantic hits.
+- **Layer-2 anchors**: `people`, `concepts`, `skills`, and `desires` provide exact term/alias anchors with provenance-bearing result metadata.
+- **Ephemeral grounding**: Recalled context is supplied to the executive and speaker calls for the current turn; it is not copied into the event stream or a second memory store.
 
 ---
 

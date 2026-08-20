@@ -19,7 +19,20 @@ from web_server import WidgetHTTPServerHandler
 
 class TestDocumentIngesterAndWebServer(unittest.TestCase):
     def test_document_chunking(self):
-        ingester = DocumentIngester(chunk_size_words=50, overlap_words=10)
+        class RecordingMRAG:
+            def __init__(self):
+                self.chunks = []
+
+            def ingest_document_chunks(self, filename, chunks):
+                self.chunks = list(chunks)
+                return [f"mem_{index}" for index, _ in enumerate(self.chunks, 1)]
+
+        memory = RecordingMRAG()
+        ingester = DocumentIngester(
+            chunk_size_words=50,
+            overlap_words=10,
+            mrag_runtime=memory,
+        )
         sample_text = "Word " * 200  # 200 words
         
         with tempfile.NamedTemporaryFile("w+", suffix=".txt", delete=False) as f:
@@ -30,6 +43,7 @@ class TestDocumentIngesterAndWebServer(unittest.TestCase):
             res = ingester.process_file_upload(temp_path, "sample_doc.txt")
             self.assertTrue(res["success"])
             self.assertGreater(res["chunk_count"], 1)
+            self.assertEqual(res["chunk_count"], len(memory.chunks))
             print(f"\n  ✓ Document Ingested: {res['filename']} ({res['chunk_count']} semantic chunks created)")
         finally:
             if os.path.exists(temp_path):

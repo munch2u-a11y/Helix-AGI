@@ -21,7 +21,7 @@ The **Helix Subconscious Over-Agent Architecture** solves this by enforcing **Bi
 
 ## 2. MCP Client Adapter (`mcp_adapter.py`)
 
-The **[`MCPClientAdapter`](file:///home/nemo/Over_Agent_Design/mcp_adapter.py)** implements standard stdio JSON-RPC 2.0 protocol for connecting to external Model Context Protocol (MCP) servers:
+The **`MCPClientAdapter`** in `mcp_adapter.py` implements standard stdio JSON-RPC 2.0 protocol for connecting to external Model Context Protocol (MCP) servers:
 
 - **Encapsulated MCP Tool Discovery**: `MCPRegistry` manages active MCP server connections. Sub-Orchestrators query `tools/list` and call tools via `tools/call`.
 - **Zero Token Waste**: The main conductor system prompt remains ultra-slim ($\sim$80 tokens). MCP tool schemas only enter LLM context during active sub-orchestrator passes.
@@ -30,7 +30,7 @@ The **[`MCPClientAdapter`](file:///home/nemo/Over_Agent_Design/mcp_adapter.py)**
 
 ## 3. CLI Plugin Adapter (`cli_plugin_adapter.py`)
 
-The **[`CLIPluginAdapter`](file:///home/nemo/Over_Agent_Design/cli_plugin_adapter.py)** detects and executes installed CLI plugins on the host system:
+The **`CLIPluginAdapter`** in `cli_plugin_adapter.py` detects and executes installed CLI plugins on the host system:
 
 - **Supported CLI Tools**: `git`, `uv`, `android`, `firebase`, `docker`.
 - **Safety Boundaries**: Automatically enforces 30-second execution timeouts and 4,000-character output truncation to prevent prompt overflow.
@@ -46,7 +46,7 @@ The **[`CLIPluginAdapter`](file:///home/nemo/Over_Agent_Design/cli_plugin_adapte
 ### 4.2 Research Mode — `ResearcherSubOrchestrator`
 - **Role**: Executes mRAG preconscious memory retrieval, workspace file scanning, web searches, or MCP server research queries.
 - **Integrated Tools**:
-  - `HelixMRAGAdapter`: Queries canonical belief stores (`pending_beliefs.json`, `contacts.json`, `tool_learned_notes.json`, `interaction_ledger.json`, `cognitive_journal.jsonl`).
+  - `HelixMRAGRuntime`: Queries the canonical cognitive journal, unified belief corpus, and native semantic index shared with the conductor.
   - `MCPRegistry`: Connects to stdio JSON-RPC MCP servers.
   - `WorkspaceScanner`: Scans local directory file structures.
   - `WebSearcher`: Fetches live web pages.

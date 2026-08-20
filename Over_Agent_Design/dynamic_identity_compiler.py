@@ -11,8 +11,9 @@ import json
 from typing import Dict, Any
 from affect_simulation import SyntheticAffectPipeline
 
-IDENTITY_FILE_PATH = "/home/nemo/Over_Agent_Design/identity.md"
-SELF_OPINION_FILE_PATH = "/home/nemo/Over_Agent_Design/self_opinion.json"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IDENTITY_FILE_PATH = os.path.join(BASE_DIR, "identity.md")
+SELF_OPINION_FILE_PATH = os.path.join(BASE_DIR, "self_opinion.json")
 
 class DynamicIdentityCompiler:
     def __init__(self):

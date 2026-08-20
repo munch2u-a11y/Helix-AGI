@@ -9,7 +9,8 @@ import json
 import time
 from typing import Dict, Any
 
-AFFECT_STATE_FILE = "/home/nemo/Over_Agent_Design/synthetic_affect_state.json"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+AFFECT_STATE_FILE = os.path.join(BASE_DIR, "synthetic_affect_state.json")
 
 class SyntheticAffectPipeline:
     def __init__(self, state_file: str = AFFECT_STATE_FILE):

@@ -2,29 +2,31 @@
 Document Ingestion & Semantic Chunking Engine — Subconscious Over-Agent System.
 
 Parses drag-and-dropped files (.txt, .md, .py, .json, .pdf, images),
-splits text into 500-token semantic chunks with 50-token overlapping boundaries,
-and indexes memory nodes into /home/nemo/Helix/data/memory and mrag_adapter.py.
+splits text into bounded overlapping chunks, and writes them through Helix's
+canonical mRAG memory boundary.
 """
 
 import os
-import sys
-import json
-import time
-import glob
-from typing import Dict, List, Any
+from typing import Any, Dict, List, Optional
 
-HELIX_MEMORY_PATH = "/home/nemo/Helix/data/memory"
-os.makedirs(HELIX_MEMORY_PATH, exist_ok=True)
+from integrated_mrag import HelixMRAGRuntime
 
 class DocumentIngester:
-    def __init__(self, chunk_size_words: int = 400, overlap_words: int = 40):
+    def __init__(
+        self,
+        chunk_size_words: int = 400,
+        overlap_words: int = 40,
+        mrag_runtime: Optional[HelixMRAGRuntime] = None,
+    ):
         self.chunk_size_words = chunk_size_words
         self.overlap_words = overlap_words
+        self.mrag = mrag_runtime
 
     def process_file_upload(self, file_path: str, filename: str) -> Dict[str, Any]:
         """
         Parses an uploaded file, extracts text, chunks it semantically, and persists to memory store.
         """
+        filename = os.path.basename(filename or os.path.basename(file_path))
         ext = os.path.splitext(filename)[1].lower()
         content_text = ""
         
@@ -48,7 +50,7 @@ class DocumentIngester:
         # Create 500-token (400-word) semantic chunks with 40-word overlap
         chunks = self._chunk_text_semantically(content_text, filename)
         
-        # Persist memory chunks to Helix memory store
+        # Persist memory chunks through the canonical Helix write boundary.
         saved_nodes = self._persist_chunks_to_memory(filename, chunks)
         
         return {
@@ -84,31 +86,9 @@ class DocumentIngester:
         return chunks
 
     def _persist_chunks_to_memory(self, filename: str, chunks: List[Dict[str, Any]]) -> List[str]:
-        saved_paths = []
-        clean_name = "".join(c if c.isalnum() else "_" for c in filename)
-        timestamp = int(time.time())
-        
-        for idx, chunk in enumerate(chunks):
-            node_filename = f"ingested_{clean_name}_c{idx+1}_{timestamp}.json"
-            target_path = os.path.join(HELIX_MEMORY_PATH, node_filename)
-            
-            data = {
-                "id": f"chunk_{clean_name}_{idx+1}",
-                "source_file": filename,
-                "chunk_index": chunk["chunk_index"],
-                "total_chunks": len(chunks),
-                "timestamp": timestamp,
-                "content": chunk["text"]
-            }
-            
-            try:
-                with open(target_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
-                saved_paths.append(target_path)
-            except Exception:
-                pass
-                
-        return saved_paths
+        if self.mrag is None:
+            self.mrag = HelixMRAGRuntime()
+        return self.mrag.ingest_document_chunks(filename, chunks)
 
     def _extract_pdf_text(self, file_path: str) -> str:
         # Fallback pdf reader using basic text scanning if pypdf is unavailable

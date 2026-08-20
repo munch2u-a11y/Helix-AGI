@@ -2,8 +2,9 @@ import os
 from PIL import Image, ImageSequence
 
 def make_transparent_3d_mascot_gif():
-    src_gif_path = '/home/nemo/Over_Agent_Design/web_ui/assets/helix_mascot_3d_animated.gif'
-    dst_gif_path = '/home/nemo/Over_Agent_Design/web_ui/assets/helix_mascot_3d_transparent.gif'
+    assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web_ui', 'assets')
+    src_gif_path = os.path.join(assets_dir, 'helix_mascot_3d_animated.gif')
+    dst_gif_path = os.path.join(assets_dir, 'helix_mascot_3d_transparent.gif')
 
     img = Image.open(src_gif_path)
     frames = []

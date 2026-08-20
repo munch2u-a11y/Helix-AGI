@@ -26,8 +26,8 @@ WEB_UI_DIR = os.path.join(BASE_DIR, "web_ui")
 
 class WidgetHTTPServerHandler(SimpleHTTPRequestHandler):
     conductor: Optional[SubconsciousConductor] = None
-    ingester = DocumentIngester()
-    proactive_agent = ProactiveVisionAgent()
+    ingester: Optional[DocumentIngester] = None
+    proactive_agent: Optional[ProactiveVisionAgent] = None
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_UI_DIR, **kwargs)
@@ -89,6 +89,8 @@ class WidgetHTTPServerHandler(SimpleHTTPRequestHandler):
                             f.write(file_item.file.read())
                             
                         # Process ingestion & chunking
+                        if self.ingester is None:
+                            raise RuntimeError("Document ingester is not configured")
                         res = self.ingester.process_file_upload(temp_path, file_item.filename)
                         if os.path.exists(temp_path):
                             os.remove(temp_path)
@@ -96,10 +98,6 @@ class WidgetHTTPServerHandler(SimpleHTTPRequestHandler):
                         if res.get("success"):
                             uploaded_files.append(file_item.filename)
                             total_chunks += res.get("chunk_count", 0)
-
-            # Reload mRAG adapter beliefs to include new chunks
-            if self.conductor and self.conductor.researcher:
-                self.conductor.researcher.mrag_adapter._load_helix_beliefs()
 
             self._send_json_response({
                 "success": True,
@@ -140,6 +138,12 @@ class WidgetHTTPServerHandler(SimpleHTTPRequestHandler):
 
 def run_widget_web_server(port: int = 8080, conductor: Optional[SubconsciousConductor] = None):
     WidgetHTTPServerHandler.conductor = conductor
+    shared_mrag = conductor.mrag if conductor is not None else None
+    WidgetHTTPServerHandler.ingester = DocumentIngester(mrag_runtime=shared_mrag)
+    WidgetHTTPServerHandler.proactive_agent = ProactiveVisionAgent(
+        backend=conductor.backend if conductor is not None else None,
+        mrag_runtime=shared_mrag,
+    )
     server = HTTPServer(("0.0.0.0", port), WidgetHTTPServerHandler)
     print(f"\n=====================================================================")
     print(f" 🚀 HELIX DESKTOP FLOATING WIDGET SERVER RUNNING at http://localhost:{port}")

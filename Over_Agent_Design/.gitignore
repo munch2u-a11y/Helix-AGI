@@ -1,0 +1,6 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+helix_seeded_state.pkl
+current_screen.xwd
+temp_*

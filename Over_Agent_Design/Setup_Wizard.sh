@@ -1,4 +1,9 @@
 #!/bin/bash
 # Executable launcher script for Setup Wizard
-cd "$(dirname "$0")"
-python3 setup_wizard.py
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$DIR"
+PYTHON="$DIR/../venv/bin/python"
+if [ ! -x "$PYTHON" ]; then
+    PYTHON="python3"
+fi
+"$PYTHON" setup_wizard.py

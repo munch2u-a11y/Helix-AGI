@@ -17,12 +17,16 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from llm_backend import LLMBackend
-from mrag_adapter import HelixMRAGAdapter
+from integrated_mrag import HelixMRAGRuntime
 
 class ProactiveVisionAgent:
-    def __init__(self, backend: Optional[LLMBackend] = None):
+    def __init__(
+        self,
+        backend: Optional[LLMBackend] = None,
+        mrag_runtime: Optional[HelixMRAGRuntime] = None,
+    ):
         self.backend = backend or LLMBackend()
-        self.mrag_adapter = HelixMRAGAdapter()
+        self.mrag = mrag_runtime or HelixMRAGRuntime()
         self.last_proactive_time = 0.0
 
     def capture_screen_summary(self) -> str:
@@ -54,9 +58,9 @@ class ProactiveVisionAgent:
             return None
 
         screen_summary = self.capture_screen_summary()
-        mrag_context = self.mrag_adapter.retrieve_mrag_context(screen_summary, top_k=3)
+        mrag_context = self.mrag.recall_context(screen_summary, top_k=3)
 
-        if "No matching memory beliefs found" in mrag_context or not mrag_context.strip():
+        if not mrag_context.strip():
             return None
 
         # Generate charming, unprompted proactive speech comment

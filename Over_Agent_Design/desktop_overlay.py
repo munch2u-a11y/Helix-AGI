@@ -1,4 +1,4 @@
-#!/usr/bin/env /home/nemo/Helix/.venv/bin/python
+#!/usr/bin/env python3
 """Native transparent desktop shell for the Helix WebGL widget.
 
 The browser and window live in this process. A Qt WebChannel object therefore
