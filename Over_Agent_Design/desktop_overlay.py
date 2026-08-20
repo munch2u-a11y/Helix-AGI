@@ -1,10 +1,9 @@
 #!/usr/bin/env /home/nemo/Helix/.venv/bin/python
 """
-Helix Subconscious Over-Agent — Native Desktop Floating Mascot Launcher.
+Helix Subconscious Over-Agent — Native Desktop Floating Overlay Launcher.
 
-Creates a TRUE system-wide native OS floating window (frameless, transparent, always-on-top)
-featuring QWebEngineView focusProxy event filtering for 100% fluid click-and-drag desktop movement,
-real-time 3D WebGL Helix Mascot Character rendering, and dynamic window sizing.
+Renders the official 3D animated Helix logo video/GIF with 100% thread-safe PyQt6 signals
+for instant, fluid click-and-drag desktop movement across all screens.
 """
 
 import os
@@ -26,65 +25,50 @@ def wait_for_server(url: str, timeout_s: float = 10.0) -> bool:
     return False
 
 def launch_pyqt6_native_overlay():
-    from PyQt6.QtCore import Qt, QUrl, QPoint, QObject, QEvent
+    from PyQt6.QtCore import Qt, QUrl, QPoint, QObject, pyqtSignal, pyqtSlot
     from PyQt6.QtWidgets import QApplication, QMainWindow
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     import web_server
 
-    class NativeWindowDragFilter(QObject):
-        """Intercepts mouse press/move events directly from Chromium focusProxy."""
-        def __init__(self, main_window):
-            super().__init__()
-            self.window = main_window
-            self.dragging = False
-            self.offset = QPoint()
+    class ThreadSafeDragBridge(QObject):
+        """Thread-safe signal bridge allowing background HTTP server to move Qt GUI window."""
+        move_signal = pyqtSignal(int, int)
 
-        def eventFilter(self, obj, event):
-            if event.type() == QEvent.Type.MouseButtonPress:
-                if event.button() == Qt.MouseButton.LeftButton:
-                    self.dragging = True
-                    self.offset = event.globalPosition().toPoint() - self.window.frameGeometry().topLeft()
-            elif event.type() == QEvent.Type.MouseMove:
-                if self.dragging and (event.buttons() & Qt.MouseButton.LeftButton):
-                    self.window.move(event.globalPosition().toPoint() - self.offset)
-                    return True
-            elif event.type() == QEvent.Type.MouseButtonRelease:
-                self.dragging = False
-            return False
+    class NativeMascotWindow(QMainWindow):
+        def __init__(self):
+            super().__init__()
+            self._drag_pos = QPoint()
+
+            # Native OS Window Flags: Frameless, Always-On-Top, Translucent Background
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint |
+                Qt.WindowType.WindowStaysOnTopHint |
+                Qt.WindowType.Tool
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            self.resize(440, 680)
+            self.move(1400, 320)
+
+            self.web = QWebEngineView(self)
+            self.web.page().setBackgroundColor(Qt.GlobalColor.transparent)
+            self.web.load(QUrl(SERVER_URL))
+            self.setCentralWidget(self.web)
+
+            # Thread-safe drag signal bridge
+            self.bridge = ThreadSafeDragBridge()
+            self.bridge.move_signal.connect(self.on_move_requested)
+
+            web_server.QT_DRAG_BRIDGE = self.bridge
+            web_server.DESKTOP_WINDOW_REF = self
+
+        @pyqtSlot(int, int)
+        def on_move_requested(self, x, y):
+            self.move(x, y)
 
     app = QApplication(sys.argv)
-    window = QMainWindow()
-
-    # Native OS Window Flags: Frameless, Always-On-Top, Translucent Background
-    window.setWindowFlags(
-        Qt.WindowType.FramelessWindowHint |
-        Qt.WindowType.WindowStaysOnTopHint |
-        Qt.WindowType.Tool
-    )
-    window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-    window.resize(440, 680)
-    window.move(1400, 320)
-
-    web = QWebEngineView(window)
-    web.page().setBackgroundColor(Qt.GlobalColor.transparent)
-    web.load(QUrl(SERVER_URL))
-    window.setCentralWidget(web)
-
-    drag_filter = NativeWindowDragFilter(window)
-
-    # Attach event filter to web view and focusProxy upon load
-    def attach_filter():
-        if web.focusProxy():
-            web.focusProxy().installEventFilter(drag_filter)
-        web.installEventFilter(drag_filter)
-        app.installEventFilter(drag_filter)
-
-    web.loadFinished.connect(attach_filter)
-
-    web_server.DESKTOP_WINDOW_REF = window
-
+    window = NativeMascotWindow()
     window.show()
-    print("  ✓ Native PyQt6 Overlay Window Active: focusProxy Drag Filter Attached & Real-Time 3D Mascot!")
+    print("  ✓ Native PyQt6 Mascot Overlay Active: Thread-Safe Drag Signal Bridge & Official 3D Render!")
     sys.exit(app.exec())
 
 def launch_native_overlay():

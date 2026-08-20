@@ -1,6 +1,6 @@
 /* -------------------------------------------------------------------
    Helix Subconscious Over-Agent — Desktop Floating Widget CSS
-   Design: Real-Time 3D WebGL Helix Mascot Character (Zero Pictures / Zero Circles)
+   Design: Official 3D Rendered Animated Mascot GIF (NO Circles / NO Boxes)
 ------------------------------------------------------------------- */
 
 :root {
@@ -35,19 +35,20 @@ body.widget-mode {
 }
 
 /* -------------------------------------------------------------------
-   REAL-TIME 3D WEBGL HELIX MASCOT CHARACTER CONTAINER
+   OFFICIAL 3D ANIMATED HELIX MASCOT GIF CONTAINER
 ------------------------------------------------------------------- */
 
 .helix-avatar-container {
     position: fixed;
     bottom: 20px;
     right: 20px;
-    width: 140px;
-    height: 200px;
+    width: 160px;
+    height: 160px;
     z-index: 9999;
     cursor: grab;
     user-select: none;
     transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: avatarIdleFloat 4s ease-in-out infinite;
 }
 
 .helix-avatar-container:active {
@@ -55,10 +56,10 @@ body.widget-mode {
 }
 
 .helix-avatar-container:hover {
-    transform: scale(1.08);
+    transform: scale(1.1) rotate(2deg);
 }
 
-.avatar-core-3d {
+.avatar-core-mascot-gif {
     position: relative;
     width: 100%;
     height: 100%;
@@ -72,18 +73,18 @@ body.widget-mode {
     overflow: visible;
 }
 
-.helix-3d-canvas {
+.helix-3d-gif-img {
     width: 100%;
     height: 100%;
-    outline: none;
-    filter: drop-shadow(0 0 16px var(--mood-glow));
+    object-fit: contain;
+    filter: drop-shadow(0 0 18px var(--mood-glow));
     transition: filter 0.4s ease;
 }
 
 /* Avatar Speech Bubble */
 .avatar-speech-bubble {
     position: absolute;
-    right: 140px;
+    right: 170px;
     top: 40px;
     background: var(--bg-glass);
     backdrop-filter: blur(16px);
@@ -135,7 +136,7 @@ body.widget-mode {
 
 .mini-chat-container {
     position: fixed;
-    bottom: 230px;
+    bottom: 190px;
     right: 20px;
     width: 390px;
     max-height: 520px;
@@ -345,6 +346,11 @@ body.widget-mode {
 .btn-send:hover { transform: scale(1.08); }
 
 /* Keyframe Animations */
+@keyframes avatarIdleFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+
 @keyframes waveBounce {
     from { height: 4px; }
     to { height: 16px; }

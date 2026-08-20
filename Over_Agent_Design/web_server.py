@@ -2,7 +2,7 @@
 Web Server & SSE Bridge — Subconscious Over-Agent System.
 
 Hosts the Desktop Floating Widget UI (web_ui/), handles drag-and-drop file ingestion,
-provides Web-to-Python window drag position bridge (/api/drag_move),
+provides Web-to-Python window drag position bridge (/api/drag_move) using thread-safe Qt signals,
 and streams real-time background pulse thoughts & affect updates over SSE.
 """
 
@@ -24,8 +24,9 @@ from proactive_vision_agent import ProactiveVisionAgent
 
 WEB_UI_DIR = os.path.join(BASE_DIR, "web_ui")
 
-# Global window reference for native desktop dragging
+# Global window reference & Qt thread-safe bridge for native desktop dragging
 DESKTOP_WINDOW_REF = None
+QT_DRAG_BRIDGE = None
 
 class WidgetHTTPServerHandler(SimpleHTTPRequestHandler):
     conductor: Optional[SubconsciousConductor] = None
@@ -86,7 +87,9 @@ class WidgetHTTPServerHandler(SimpleHTTPRequestHandler):
         new_x = WidgetHTTPServerHandler.drag_start_win_x + delta_x
         new_y = WidgetHTTPServerHandler.drag_start_win_y + delta_y
         
-        if DESKTOP_WINDOW_REF:
+        if QT_DRAG_BRIDGE:
+            QT_DRAG_BRIDGE.move_signal.emit(new_x, new_y)
+        elif DESKTOP_WINDOW_REF:
             DESKTOP_WINDOW_REF.move(new_x, new_y)
 
         self._send_json_response({"status": "ok", "new_x": new_x, "new_y": new_y})
