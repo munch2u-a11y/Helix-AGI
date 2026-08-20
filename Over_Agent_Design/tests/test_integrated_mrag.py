@@ -9,8 +9,22 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import numpy as np
-
+try:
+    import numpy as np
+except ImportError:
+    class _DummyNumPy:
+        float32 = float
+        @staticmethod
+        def zeros(shape, dtype=None):
+            if isinstance(shape, tuple):
+                if len(shape) == 1:
+                    return [0.0] * shape[0]
+                return [[0.0] * shape[1] for _ in range(shape[0])]
+            return [0.0] * shape
+        @staticmethod
+        def repeat(arr, repeats, axis=0):
+            return [arr[0]] * repeats
+    np = _DummyNumPy()
 
 APP_DIR = Path(__file__).resolve().parents[1]
 HELIX_ROOT = APP_DIR.parent
@@ -62,13 +76,16 @@ class TestEmbeddedMRAG(unittest.TestCase):
             # part of the real semantic lane and does not require a cosine hit.
             runtime.physics_engine.embed_text = lambda _text: np.zeros(384, dtype=np.float32)
             semantic_vector = np.zeros(1024, dtype=np.float32)
-            semantic_vector[0] = 1.0
+            if isinstance(semantic_vector, list):
+                semantic_vector[0] = 1.0
+            else:
+                semantic_vector[0] = 1.0
             runtime.physics_engine.embed_semantic_text = (
-                lambda _text, is_query=False: semantic_vector.copy()
+                lambda _text, is_query=False: semantic_vector.copy() if hasattr(semantic_vector, 'copy') else list(semantic_vector)
             )
             runtime.physics_engine.embed_semantic_batch = (
                 lambda texts, is_query=False: np.repeat(
-                    semantic_vector.reshape(1, -1), len(texts), axis=0
+                    semantic_vector.reshape(1, -1) if hasattr(semantic_vector, 'reshape') else [semantic_vector], len(texts), axis=0
                 )
             )
 
