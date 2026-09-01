@@ -1,0 +1,27 @@
+{
+  "schema": "etna-agent-contract/v1",
+  "generatedBy": "Agent Etna",
+  "agent": {
+    "name": "Helix AGI",
+    "role": null,
+    "repo": "munch2u-a11y/Helix-AGI",
+    "branch": "main"
+  },
+  "calibration": null,
+  "guardrails": [
+    "No behavioral calibration set yet — Agent Etna uses general defaults until you calibrate this agent."
+  ],
+  "changelog": [
+    {
+      "date": "2026-09-01",
+      "cycleNumber": 5,
+      "changes": [
+        {
+          "capability": "tool-argument-shaping",
+          "rationale": "The trace shows the agent described its internal processing for POST /api/canvas instead of returning the required success payload with a shape id, so the fix is to specify that endpoint's exact response contract."
+        }
+      ],
+      "merged": true
+    }
+  ]
+}
