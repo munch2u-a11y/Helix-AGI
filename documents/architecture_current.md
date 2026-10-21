@@ -18,7 +18,7 @@ The configured MightyMem source provides `ContinualMind`, its persistent
 RWKV/Habitus cortex and graph, and Context Loom. Imports are checked against
 that declared source; an unrelated installed package cannot silently replace
 it. The current joint bridge requires CPU. The verified local source lives at
-`/home/nemo/MightyMem`; this is an explicit dependency, not Helix's product root.
+an external `MightyMem` directory (e.g. `../MightyMem` or configured via `MIGHTYMEM_PATH`); this is an explicit dependency, not Helix's product root.
 
 | Owner | Responsibility |
 |---|---|
@@ -93,9 +93,23 @@ returns cannot satisfy another obligation. Before publishing completion, goal
 metadata and receipts must be committed in a matching joint neural/graph-memory
 checkpoint. Checkpoint failure leaves an explicit blocked goal.
 
-The current policy translates explicit user goals; learned independent action
-selection is the next stage. Older `Mindscape.act` and prose/wire-intention
-helpers remain separate from production native dispatch.
+The native body clock also advances quiet native deliberation without waiting
+for a completed foreground turn. Every compiled pulse is consumed by the full
+native RWKV before its context ID becomes eligible for autonomous motor signals.
+Selected native output trunks reach an observed-target resolver and the same
+SELF authorization, sensory return, gradient-admission and checkpoint route.
+The latest actual scene and per-target return index persist; changed file
+attributes permit another read. Complete receipt history remains in native
+storage. Target resolution is bootstrap behavior, not a trained motor decoder.
+
+Completed foreground output also returns to the native mind before another
+decision. A committed intention can request the native body; tool examples
+inside private `[thought]` text do not execute. Unprompted exploration does not
+require this foreground path to finish. The
+[Ada trial](audits/2026-10-20-autonomous-stream/verification.json) verifies a
+native-selected file open, durable gradients and foreground use of those
+weights with no received user message. Its language generation remained
+unfinished; it provides no coherent-conversation or spontaneous-speech result.
 
 ### Continuous sensing
 
@@ -126,6 +140,21 @@ message cannot redirect an earlier reply or mark unseen results consumed.
 Empty output and errors retain explicit health/receipt state. A foreground
 failure can park language while the receptive/body loops remain available.
 
+Native awake cognition uses `mindscape.pulse_interval_seconds` (default 1.0,
+zero allowed) after completed foreground turns, independently of conversation
+timers. This scheduling delay sets no reasoning or generation ceiling. Existing
+sleep hours and explicit pause/stop controls remain. Idle backpressure reads
+memory, storage and canonical-store faults; cognitive/spatial severity alone
+does not park the awake mind. Each resource deferral has a receipt.
+
+The configured primary dashboard supplies a known local destination even with
+no pending conversation. The model may keep thinking or choose outward prose;
+the latter is delivered with a dashboard file read-back receipt. This does not
+invent an inbound message or discover a recipient for an unconfigured service.
+Historical user/assistant statements and older thoughts are presented as
+lossless JSON data so embedded conversation delimiters cannot become live
+turns. The latest private continuation remains verbatim.
+
 ## Memory, retrieval and context
 
 Helix's canonical journal and belief stores remain authoritative. Historical
@@ -155,8 +184,41 @@ Passage-linked recollections require an exact unique anchor and retain source
 hashes and offsets. Private thought is cognitive context, not action evidence.
 No retrieval score establishes truth, permission or a contradiction.
 
+Pulse presentation follows the continuing private stream: admitted recollections
+and the current situation come first, then the latest private thought verbatim,
+then fresh action returns. Private thought survives speaking, action attempts,
+completed interactions and session restart through native continuation metadata.
+Mixed thought/speech output has separate canonical records, so a private source
+never points at the public reply. Older thoughts remain in canonical memory
+instead of being replayed together as the current thought.
+
+`mindscape.context_item_limit` starts at **8 total information items** per
+pulse, including one stable identity item. This user-requested attention budget
+limits cognitive breadth independently of token size. The latest thought,
+current messages, unfinished request and fresh action returns are required;
+other whole contributions compete across all producers and lanes. A grouped
+native nomination costs at least its number of source records. Optional sources
+that do not fit remain available in memory, with full deferral receipts. If
+required experience exceeds the budget, compilation fails explicitly and
+returns no partial pulse. The setting accepts a positive integer, or `null` to
+disable the item budget.
+
+Eight is a provisional operating setting, not a measured model capacity.
+`mindscape.context_item_limits` can override it for each exact `local_model`
+value. Selecting useful budgets requires the full agent's actual multi-pulse
+route and verified progress/continuity outcomes; compiler diagnostics supply
+no model-capacity or reasoning-quality result. An unfinished received request
+remains a required purpose item even when new messages arrive during the task.
+
+With this budget enabled, the fixed system prompt holds identity and the stream
+contract. Historical dialogue and other beliefs use the same admission pool;
+the providers retain their dialogue archive but do not also replay it outside
+the compiler. Assembly receipts record actual presentation order, total admitted
+items and deferred source text. This is implementation behavior; improved live
+reasoning has not been established by the formatting/persistence diagnostics.
+
 The compiler admits whole contributions and records exclusions. It counts the
-complete provider input, including system text and actual dialogue history,
+complete provider input, including system text and any enabled dialogue replay,
 with the selected provider's tokenizer. `local_context_window=8192` is the
 selected assembled-input budget for the verified RWKV profile, not a physical
 RWKV recurrent window. Mandatory content overflow fails explicitly. Retrieved
@@ -183,11 +245,57 @@ Embedding inference remains local Ollama `qwen3-embedding:0.6b` with strict
 oversize-input rejection. Optional camera, audio and external-channel services
 are configuration dependent and were disabled in the latest trial.
 
+`mindscape.gradient_learning` connects real received language and settled native
+observations to prediction losses. Verified action receipts also supervise
+consequence prediction; failed attempts do not positively supervise their motor
+trunk. Private thought, recalled context and controller-generated text advance
+state without becoming prediction targets or success rewards. Ingress IDs and
+receipt IDs deduplicate learning across receptive and foreground processing.
+An interrupted update remains explicitly unfinished, preventing blind replay.
+
+The default policy enables Habitus cortex and numeric-interface gradients.
+`train_rwkv_tail=false` keeps pretrained language parameters fixed; enabling it
+explicitly trains the declared tail blocks too. Learning rates, numeric gradient
+clipping and compute/BPTT chunk size are configuration/receipt-visible. Chunking
+processes the entire admitted source. The joint checkpoint retains neural
+weights, optimizer state, policy, counters and admission provenance.
+
+The native RWKV foreground now uses these same agent-owned parameters, with
+separate sensory/language recurrent states. Each forward is serialized with
+learning on the native owner, and generation receipts record the weight-update
+versions actually used. This avoids a frozen foreground copy that would miss
+native adaptation. The standalone frozen cache remains for auxiliary sessions;
+those helpers do not silently share mutable agent weights. Random bicameral
+projections remain on the standalone auxiliary path. The native foreground
+uses the learned cortex/interface field directly, without a second random
+projection. Its renderer uses the pinned checkpoint's documented
+`Assistant: <think` prefill, retained separately from generated tokens in the
+receipt. Live progress also records the actual gradient versions used while
+a private stream remains unfinished.
+
+The [2026-10-20 production wiring trial](audits/2026-10-20-gradient-learning/verification.json)
+used the normal launcher, the full 1.5B checkpoint and all nine retrieval lanes
+in an isolated provisioned profile. Actual received inputs and two verified
+file-open returns produced 26 updates. Cortex and interface hashes changed;
+the selected RWKV tail hash did not. Foreground receipts recorded versions 1
+and 14, proving use after the first action outcome. Normal shutdown and restart
+preserved weights, optimizer, counters, policy, admission ledger and native
+numeric state. This establishes the learning connection, not improved focus,
+language quality or independent action selection. The first request needed a
+path clarification, and the private foreground generated an invented tool
+envelope before a second real open; those limitations remain in the report.
+The implementation also requires the modified local native dependency declared
+in that trial's source manifest.
+
 Post-pulse belief detection and consolidation can make language-model calls;
 they are not all pure NumPy or inference-free. Affect, workflow, engagement
-and co-occurrence hooks have separate roles. Recurrent state updates and
-persisted beliefs do not establish neural weight learning: RWKV gradient
-training is disabled in this adapter.
+and co-occurrence hooks have separate roles. Gradient admission and persistence
+are distinct from evidence that learning improves reasoning or autonomy.
+
+`HELIX_CONFIG_PATH` selects an explicit launch profile across the launcher,
+native source selection, pulse configuration, dashboard bus and host helpers.
+It allows an isolated agent state/home to use the same production source and
+entry point without rewriting the selected user's launch configuration.
 
 ## Home, lifecycle and persistence
 
@@ -245,3 +353,13 @@ identity, position and completed goals. Thought/speech separation and delivery
 routing are implemented and have focused checks; general conversation quality
 and learned independent action selection remain separate evaluation targets.
 Older failure reports retain their original source/date scope.
+
+## Experimental robustness branch
+
+`feature/native-robustness` layers outcome-based engagement, checkpoint-supported
+advisory procedures, corrected damping and probe-cycle health recovery onto this
+ownership model. Optional idle backpressure yields to received events and
+unfinished interactions. Context Office, mRAG, lateral ordering and all nine
+Loom lanes retain their roles; the native owner still authorizes every action.
+See [controls and PC acceptance](maintenance/NATIVE_ROBUSTNESS.md). These changes
+have component diagnostics, not a new live native result.

@@ -71,6 +71,7 @@ def create_session(
     tool_declarations: list = None,
     tool_executor=None,
     preconscious=None,
+    rwkv_backend=None,
 ) -> ChatSession:
     """Factory: create a ChatSession from a ProviderConfig.
 
@@ -172,6 +173,7 @@ def create_session(
             temperature=config.temperature,
             max_output_tokens=config.max_output_tokens,
             options={'input_context_tokens': config.context_window, **(config.options or {})},
+            backend=rwkv_backend,
         )
 
     else:

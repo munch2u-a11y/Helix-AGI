@@ -22,7 +22,8 @@ _browser_refs = {}
 
 # Base directory for relative paths
 _BASE_DIR = Path(__file__).parent.parent.resolve()
-_CONFIG_PATH = _BASE_DIR / "config" / "config.json"
+from core.mindscape_config import configuration_path
+_CONFIG_PATH = configuration_path(_BASE_DIR)
 
 
 def _load_config() -> dict:

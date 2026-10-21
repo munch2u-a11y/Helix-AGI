@@ -29,13 +29,17 @@ class PulseContextTests(unittest.TestCase):
         text = frame.render()
         self.assertNotIn(old_command, text)
         self.assertIn("actual attributes", text)
-        self.assertTrue(text.endswith("move and sense the inbox"))
+        self.assertTrue(text.endswith("actual attributes"))
 
-    def test_private_prose_remains_active_until_an_action_or_external_response(self):
+    def test_speaking_or_acting_preserves_existing_private_continuity(self):
         thought = "I still need to compare these observations."
         active = carry_private_thought(thought, "diagnostic", action_attempted=False, external_response=False)
         self.assertEqual(active.text, thought)
         self.assertIsNone(carry_private_thought("actual reply", "next", action_attempted=False, external_response=True))
+        self.assertIs(carry_private_thought("actual reply", "next", action_attempted=False,
+                                           external_response=True, previous=active), active)
+        self.assertIs(carry_private_thought("issued action", "next", action_attempted=True,
+                                           external_response=False, previous=active), active)
 
     def test_current_request_is_last_after_prior_thought_and_recalled_questions(self):
         current = 'Mira is talking to me via dashboard. They said: "What name did I request?"'
@@ -57,7 +61,7 @@ class PulseContextTests(unittest.TestCase):
     def test_recalled_sensation_never_becomes_a_fresh_observation(self):
         memory = "(recent: [10:00] [SensoryReality] an old document was on screen)"
         rendered = self.render(annotations=[memory])
-        self.assertIn("[What I recall — memories and notes]\n" + memory, rendered)
+        self.assertIn("[I remember]\n" + memory, rendered)
         self.assertNotIn("[What I sensed now]", rendered)
 
     def test_real_tool_return_keeps_existing_provider_history_route(self):
@@ -77,14 +81,15 @@ class PulseContextTests(unittest.TestCase):
         for event in events:
             self.assertEqual(rendered.count(event), 1)
         self.assertLess(rendered.index(events[0]), rendered.index(events[2]))
-        self.assertIn("[My internal state now]\n" + events[1] + "\nwarning\nambient", rendered)
+        self.assertIn("[I feel]\n" + events[1] + "\nwarning\nambient", rendered)
 
     def test_office_score_does_not_promote_a_private_thought_to_fact(self):
         thought = recalled_contribution({"id": "mem_23", "content": "I opened the file.",
             "record_kind": "thought", "office_role": "current_state", "office_verified": True})
         self.assertEqual(thought.section, "recalled_thought")
         self.assertNotIn("verified current state", thought.text)
-        self.assertIn("not external evidence", thought.text)
+        self.assertIn("not external evidence", thought.evidence)
+        self.assertIn("I opened the file.", thought.text)
 
     def test_first_person_quote_does_not_become_agent_preference(self):
         human = recalled_contribution({"id": "mem_24", "content": "I prefer to keep my profile private.",
@@ -148,11 +153,94 @@ class PulseContextTests(unittest.TestCase):
     def test_tool_chunk_is_available_to_weave_without_becoming_a_user_message(self):
         event = "Tool [read_file] returned: a document chunk"
         frame = build_pulse_context(pulse=4, timestamp="now", events=[event], include_tool_observations=True)
-        self.assertIn("[What an action just returned to me]", frame.render())
+        self.assertIn("[What my actions returned]", frame.render())
         self.assertNotIn("[What was said to me now]", frame.render())
 
 
 class LoomContextTests(unittest.TestCase):
+    def test_item_budget_spans_all_sources_even_when_each_belief_is_tiny(self):
+        private = carry_private_thought("I should check one detail next.", "private-source",
+                                        action_attempted=False, external_response=False)
+        beliefs = [ContextContribution("personal" if i % 2 else "recalled", f"tiny belief {i}",
+                                      "mrag" if i % 3 else "loom", (f"belief:{i}",)) for i in range(40)]
+        incoming = 'Mira is talking to me via dashboard. They said: "Continue."'
+        returns = ["Native action [receipt:a] returned: value=17", "Native action [receipt:b] returned: file missing"]
+        frame = build_pulse_context(pulse=63, timestamp="now", events=[incoming, *returns],
+                                   private_continuation=private, include_tool_observations=True,
+                                   annotations=[ContextAnnotation("", beliefs)])
+        compiler = self.compiler_type(self.loom.store, config=self.compiler.config, lanes=[], item_limit=8)
+        packet = compiler.compile_pulse(frame)
+        receipt = compiler.last_assembly_receipt
+        self.assertEqual(receipt["item_budget"]["admitted"], 8)
+        self.assertEqual(len([entry for entry in receipt["supplied_admission"] if entry["admitted"]]), 3)
+        deferred = receipt["item_budget"]["deferred"]
+        self.assertEqual(len(deferred), 37)
+        self.assertEqual({entry["text"] for entry in deferred},
+                         {item.text for item in beliefs if item.text + "\n" not in packet.rendered + "\n"})
+        self.assertTrue(packet.rendered.endswith("\n".join(returns)))
+        self.assertIn(private.text, packet.rendered)
+        self.assertIn(incoming, packet.rendered)
+
+    def test_item_budget_never_silently_drops_required_current_experience(self):
+        from core.mindscape_context import ContextItemBudgetExceeded
+        private = carry_private_thought("I need the actual return.", "private-source",
+                                        action_attempted=False, external_response=False)
+        events = [f"Native action [receipt:{i}] returned: result {i}" for i in range(8)]
+        frame = build_pulse_context(pulse=64, timestamp="now", events=events,
+                                   private_continuation=private, include_tool_observations=True)
+        compiler = self.compiler_type(self.loom.store, config=self.compiler.config, lanes=[], item_limit=8)
+        with self.assertRaisesRegex(ContextItemBudgetExceeded, "10 items including identity"):
+            compiler.compile_pulse(frame)
+        self.assertIsNone(compiler.last_assembly_receipt)
+        self.assertEqual(len(frame.contributions), 9)
+
+    def test_latest_thought_and_actual_returns_form_the_compiled_tail(self):
+        private = carry_private_thought("I need the exact value from the café notes.", "private-source",
+                                        action_attempted=False, external_response=False)
+        incoming = 'Mira is talking to me via dashboard. They said: "Read the café notes."'
+        returns = ["Native action [receipt:first] returned: opened café.md; value=17",
+                   "Native action [receipt:second] returned: run failed; no result file"]
+        note = recalled_contribution({"id": "old-source", "content": "Yesterday the value was 12."})
+        frame = build_pulse_context(pulse=60, timestamp="now", events=[incoming, *returns],
+                                   annotations=[ContextAnnotation("", [note])],
+                                   private_continuation=private, include_tool_observations=True)
+        packet = self.compiler.compile_pulse(frame)
+        self.assertEqual(packet.rendered.count(private.text), 1)
+        self.assertLess(packet.rendered.index(incoming), packet.rendered.index(private.text))
+        self.assertLess(packet.rendered.index(note.text), packet.rendered.index(private.text))
+        self.assertTrue(packet.rendered.endswith(private.text + "\n\n[What my actions returned]\n" + "\n".join(returns)))
+        self.assertEqual(self.compiler.last_assembly_receipt["presentation_order"][-2:],
+                         ["thinking", "tool_observations"])
+        self.assertEqual(packet.token_count, self.compiler.token_counter.count(packet.rendered))
+        self.assertEqual(packet.current_input, "\n".join([incoming, *returns]))
+
+    def test_private_tail_is_verbatim_even_when_recollections_match_its_passage(self):
+        private = carry_private_thought("I remember A + B = D.\nI should check it.", "private-source",
+                                        action_attempted=False, external_response=False)
+        note = recalled_contribution({"id": "old-formula", "content": "A + B = C.",
+                                     "context_anchor_queries": ["A + B = D."]})
+        frame = build_pulse_context(pulse=61, timestamp="now", events=[], private_continuation=private,
+                                   annotations=[ContextAnnotation("", [note])])
+        packet = self.compiler.compile_pulse(frame)
+        self.assertTrue(packet.rendered.endswith(private.text))
+        self.assertIn(note.text, packet.rendered)
+        self.assertEqual(self.compiler.last_assembly_receipt["inline_annotations"], [])
+
+    def test_private_and_return_overflow_fails_instead_of_shortening_the_tail(self):
+        from dataclasses import replace
+        from context_loom.compiler import ContextBudgetExceeded
+        private = carry_private_thought("Exact thought with a negation: do not overwrite café.md.", "private-source",
+                                        action_attempted=False, external_response=False)
+        frame = build_pulse_context(pulse=62, timestamp="now", events=[
+            "Native action [receipt:first] returned: permission denied; file unchanged"],
+            private_continuation=private, include_tool_observations=True)
+        compiler = self.compiler_type(self.loom.store, config=self.compiler.config, lanes=[])
+        whole = compiler.compile_pulse(frame)
+        compiler.config = replace(compiler.config, model_context_tokens=whole.token_count - 1)
+        with self.assertRaises(ContextBudgetExceeded):
+            compiler.compile_pulse(frame)
+        self.assertEqual(private.text, frame.contributions[0].text)
+
     def test_focus_changes_whole_memory_admission_at_same_boundary(self):
         from dataclasses import replace
         from core.context_focus import ContextFocus
@@ -236,8 +324,8 @@ class LoomContextTests(unittest.TestCase):
         user = "- Conversation: - Earlier assistant statement (unverified): is a label [record:u]"
         sections = {"continuity": [assistant, user]}
         text = self.compiler._render(mode="pulse", sections=sections, capabilities=[], current_input="now")
-        self.assertIn("[What I previously thought or said — recalled, unverified]\n" + assistant, text)
-        self.assertIn("[What was said to me before — recalled]\n" + user, text)
+        self.assertIn("[I previously said:]\n" + assistant, text)
+        self.assertIn("[What was said to me before:]\n" + user, text)
         self.assertEqual(sections, {"continuity": [assistant, user]})
         self.assertEqual(text.count(assistant), 1)
         self.assertEqual(text.count(user), 1)
@@ -303,7 +391,7 @@ class LoomContextTests(unittest.TestCase):
             self.assertIn("not external evidence", reason)
             text = self.compiler._render(mode="pulse", sections={candidate.section: [candidate.text]},
                                          capabilities=[], current_input=frame.query)
-            self.assertIn("Earlier thoughts coming to mind", text)
+            self.assertIn("[I was thinking]", text)
         finally:
             self.compiler._pulse_context = None
         self.assertEqual(self.loom.store.get_record(record.id).evidence_status, EvidenceStatus.PRIVATE)
@@ -312,7 +400,7 @@ class LoomContextTests(unittest.TestCase):
         value = "- Observation: a file existed yesterday [record:o]"
         text = self.compiler._render(mode="pulse", sections={"observations": [value]},
                                      capabilities=[], current_input="now")
-        self.assertIn("[Observations I recalled — source and verification labels apply]\n" + value, text)
+        self.assertIn("[I observed / read:]\n" + value, text)
         self.assertNotIn("[What I sensed now]", text)
 
     def test_native_compiler_counts_actual_headers_and_preserves_trust_labels(self):

@@ -58,7 +58,7 @@ flowchart TD
 | Application | This `Helix_AGI (GitHub Repo) (Public)` checkout |
 | Entry point | Real `Helix Setup Wizard.sh --wizard` pages → bootstrap → `main.py` → standard `PulseLoop` |
 | Source identity | Helix `d78de2707dd44c7d88b41f57f67844255e42e952`; MightyMem `eb92aafd3280cf9f2a8ac1274e44fde6fc90b675`; both have working-tree changes, so the recorded file hashes are essential |
-| Memory package | `/home/nemo/MightyMem` |
+| Memory package | `MightyMem` (configured external directory) |
 | Foreground | Local Ollama `granite4.1:3b`, Q4_K_M; selected context 8192 tokens |
 | Recurrent model | RWKV7-G1j-1.5B-20260831, checkpoint revision `2c18b29ab7fbece25ff6112281eea0fa41fcb30f`; CPU |
 | Habitus cortex | 18,016,166 parameters; persistent joint state resumed |

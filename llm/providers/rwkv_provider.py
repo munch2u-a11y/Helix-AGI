@@ -31,6 +31,7 @@ class BicameralRWKVSession(ChatSession):
         self.temperature = temperature
         self.max_output_tokens = max_output_tokens
         self.options = options or {}
+        self.compiled_context_only = False
         self.history: List[Dict[str, str]] = []
 
         # Instantiate or bind BicameralRWKV
@@ -42,14 +43,22 @@ class BicameralRWKVSession(ChatSession):
         self.context_format = None
         self.context_decoder = None
         model_str = str(self.model_path) if self.model_path else "."
-        self.context_counter = RWKVTokenCounter(self.system.backend.encode, model_str)
+        native_stream = getattr(self.system.backend, 'native_stream', False) is True
+        self.context_counter = RWKVTokenCounter(self.system.backend.encode, model_str,
+                                               thinking=True if native_stream else None)
         self.last_context_receipt = {}
         self.last_context_output_kind = None
         self.last_contemplation = ""
         self._pending_context_response = None
 
-    def _generate(self, message):
-        messages = self.context_messages(message)
+    def _generate(self, message, role="context"):
+        self.last_context_receipt = {}
+        self.last_contemplation = ""
+        self.last_context_output_kind = None
+        native_stream = getattr(self.system.backend, "native_stream", False) is True
+        if hasattr(self.system.backend, "begin_generation"):
+            self.system.backend.begin_generation()
+        messages = self.context_messages(message, role=role)
         receipt = self.context_counter.check_request(messages, int(self.options.get('input_context_tokens', 8192)))
         prompt = self.context_counter.render_messages(messages)
         receipt.update(model=self.model, device=str(self.system.device),
@@ -64,41 +73,73 @@ class BicameralRWKVSession(ChatSession):
         if progress_path:
             def progress(value):
                 from core.mindscape_config import write_json
+                native_learning = (self.system.backend.generation_receipt()
+                                   if hasattr(self.system.backend, 'generation_receipt') else None)
                 write_json(Path(progress_path), {**value, 'time': time.time(), 'status': 'incomplete',
-                                                'prompt_sha256': receipt['prompt_sha256']})
+                                                'prompt_sha256': receipt['prompt_sha256'],
+                                                'started_at': receipt['started_at'], 'model': self.model,
+                                                'output_token_cap': self.max_output_tokens,
+                                                'native_learning': native_learning})
             self.system.generation_progress = progress
         raw = self.system.generate_language(
             prompt, max_new_tokens=self.max_output_tokens, temperature=self.temperature,
             coupling_gain=float(self.options.get('coupling_gain', 0.15)),
             membrane_state=self.options.get('membrane_state'),
             membrane_gain=float(self.options.get('membrane_gain', 0.0)),
-            repetition_penalty=float(self.options.get('repetition_penalty', 1.15)))
+            repetition_penalty=float(self.options.get('repetition_penalty', 1.25)),
+            repetition_window=int(self.options.get('repetition_window', 512)),
+            on_boundary='raise' if native_stream else self.options.get('on_boundary', 'stop'),
+            stop_sequences=self.options.get(
+                'stop_sequences',
+                ("<|endoftext|>", "<|im_end|>", "\nUser:") if native_stream else (
+                    "<|endoftext|>",
+                    "<|im_end|>",
+                    "\nUser:",
+                    "\n\n[",
+                    "\n[Pulse",
+                    "\n[MODE:",
+                    "\n\n###",
+                    "\n###",
+                    "\n---\n",
+                    "\n## ",
+                    "\n# ",
+                    "\n\n# ",
+                ),
+            ),
+        )
+
         generation = dict(getattr(self.system, 'last_generation_receipt', {}) or {})
         if 'prompt_tokens' not in generation:
             raise RuntimeError('RWKV returned without actual generation accounting; no receipt can be inferred')
         elif generation['prompt_tokens'] != receipt['prompt_tokens']:
             raise RuntimeError('RWKV request accounting differs from evaluated input')
         from core.mindscape_intention import extract_contemplation_and_actualization
+        generated_raw = raw
+        assistant_prefill = '<think' if prompt.endswith('Assistant: <think') else ''
+        raw = assistant_prefill + raw
         contemplation, actualized = extract_contemplation_and_actualization(raw)
         self.last_contemplation = contemplation
-        receipt.update(generation, raw_foreground=raw, contemplation=contemplation,
+        receipt.update(generation, raw_generated=generated_raw, assistant_prefill=assistant_prefill,
+                       raw_foreground=raw, contemplation=contemplation,
                        completed_at=time.time(), evaluated_prompt_tokens=generation['prompt_tokens'])
         self._last_token_count = receipt['prompt_tokens'] + receipt['generated_tokens']
         self.last_context_receipt = receipt
+        if hasattr(self.system.backend, "generation_receipt"):
+            receipt["native_learning"] = self.system.backend.generation_receipt()
         if progress_path:
             from core.mindscape_config import write_json
             write_json(Path(progress_path), {**receipt, 'status': 'complete'})
         return raw, actualized
 
     def send_message(self, message):
-        raw, actualized = self._generate(message)
+        raw, actualized = self._generate(message, role="user")
         if not actualized:
             raise RuntimeError('RWKV produced only private contemplation; no public reply completed')
         self.history.extend([{'role': 'user', 'content': message}, {'role': 'assistant', 'content': actualized}])
         return actualized
 
     def send_context(self, message):
-        raw, actualized = self._generate(message)
+        raw, actualized = self._generate(message, role="context")
         if self.context_decoder:
             thought, kind = self.context_decoder(raw)
             if kind in {'contemplation', 'empty'}:
@@ -126,18 +167,21 @@ class BicameralRWKVSession(ChatSession):
 
     def covered_source_hashes(self) -> set:
         import hashlib
+        if self.compiled_context_only:
+            return set()
         return {hashlib.sha256(item["content"].encode()).hexdigest() for item in self.history}
 
     def get_history_size(self) -> int:
         return sum(len(item.get("content", "")) for item in self.history)
 
-    def context_messages(self, message):
+    def context_messages(self, message, role="context"):
+        history = [] if self.compiled_context_only else self.history
         return ([{'role': 'system', 'content': self.system_instruction}]
-                + [dict(item) for item in self.history]
-                + ([{'role': 'user', 'content': message}] if message else []))
+                + [dict(item) for item in history]
+                + ([{'role': role, 'content': message}] if message else []))
 
-    def _build_prompt(self, current_message):
-        return self.context_counter.render_messages(self.context_messages(current_message))
+    def _build_prompt(self, current_message, role="context"):
+        return self.context_counter.render_messages(self.context_messages(current_message, role=role))
 
     def get_last_token_count(self):
         return getattr(self, '_last_token_count', 0)

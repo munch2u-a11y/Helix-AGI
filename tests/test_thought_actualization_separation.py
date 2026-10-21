@@ -20,6 +20,13 @@ class TestThoughtActualizationSeparation(unittest.TestCase):
         self.assertNotIn("<think>", msg)
         self.assertNotIn("</think>", msg)
 
+    def test_extract_contemplation_when_think_was_prefilled_in_prompt(self):
+        from core.mindscape_intention import extract_contemplation_and_actualization
+        raw = "I am contemplating the universe and preparing to speak.</think>\nHello there! Everything is operating smoothly.\n\n# file:2026-10-20/test.py"
+        contemplation, actualized = extract_contemplation_and_actualization(raw)
+        self.assertEqual(contemplation, "I am contemplating the universe and preparing to speak.")
+        self.assertEqual(actualized, "Hello there! Everything is operating smoothly.")
+
     def test_decode_foreground_separates_think_and_action(self):
         raw = (
             "<think>\n"
@@ -117,6 +124,146 @@ class TestThoughtActualizationSeparation(unittest.TestCase):
         self.assertNotIn("<think>", session.history[-1]["content"])
         self.assertIn("Acoustic latency typically increases", session.history[-1]["content"])
 
+    def test_leading_assistant_prefix_with_unclosed_think(self):
+        from core.mindscape_intention import extract_contemplation_and_actualization
+        raw = "Assistant: <think>\nI am contemplating deeply without closing tag yet"
+        contemplation, actualized = extract_contemplation_and_actualization(raw)
+        self.assertEqual(contemplation, "I am contemplating deeply without closing tag yet")
+        self.assertEqual(actualized, "")
+
+    def test_parse_natural_or_wire_intention_handles_tool_calls_xml(self):
+        from core.mindscape_intention import parse_natural_or_wire_intention
+        raw = (
+            "<tool_calls>\n"
+            "[\n"
+            "  {\n"
+            '    "id": "call_123",\n'
+            '    "type": "function",\n'
+            '    "function": {\n'
+            '      "name": "list_files",\n'
+            '      "arguments": "{\\"path\\": \\"/workspace\\", \\"recursive\\": false}"\n'
+            "    }\n"
+            "  }\n"
+            "]\n"
+            "</tool_calls>"
+        )
+        intention = parse_natural_or_wire_intention(raw)
+        self.assertIsNotNone(intention)
+        self.assertEqual(intention["action"], "sense")
+        self.assertEqual(intention["arguments"]["path"], "/workspace")
+
+    def test_decode_speech_excludes_tool_calls_xml(self):
+        from core.mindscape_intention import decode_speech
+        raw = (
+            "<tool_calls>\n"
+            "[\n"
+            "  {\n"
+            '    "name": "list_files",\n'
+            '    "arguments": "{\\"path\\": \\"/workspace\\"}"\n'
+            "  }\n"
+            "]\n"
+            "</tool_calls>"
+        )
+        speech, kind = decode_speech(raw)
+        self.assertEqual(speech, "")
+        self.assertEqual(kind, "empty")
+
+
+    def test_parse_natural_or_wire_intention_filters_stop_words_for_sense(self):
+        from core.mindscape_intention import parse_natural_or_wire_intention
+        
+        # When thought contains English stop words around workspace/files
+        thought1 = "I need to respond to the user's request to sense the files in my workspace."
+        intent1 = parse_natural_or_wire_intention(thought1)
+        self.assertIsNotNone(intent1)
+        self.assertEqual(intent1["action"], "sense")
+        self.assertEqual(intent1["arguments"]["path"], ".", f"Expected '.' but got {repr(intent1['arguments']['path'])}")
+
+        thought2 = "Let me inspect my workspace and see what is here."
+        intent2 = parse_natural_or_wire_intention(thought2)
+        self.assertIsNotNone(intent2)
+        self.assertEqual(intent2["action"], "sense")
+        self.assertEqual(intent2["arguments"]["path"], ".", f"Expected '.' but got {repr(intent2['arguments']['path'])}")
+
+        thought3 = "sense /workshop"
+        intent3 = parse_natural_or_wire_intention(thought3)
+        self.assertIsNotNone(intent3)
+        self.assertEqual(intent3["action"], "sense")
+        self.assertEqual(intent3["arguments"]["path"], "/workshop")
+
+        thought4 = "I will sense the files in your workspace."
+        intent4 = parse_natural_or_wire_intention(thought4)
+        self.assertIsNotNone(intent4)
+        self.assertEqual(intent4["action"], "sense")
+        self.assertEqual(intent4["arguments"]["path"], ".", f"Expected '.' but got {repr(intent4['arguments']['path'])}")
+
+    def test_extract_contemplation_and_actualization_strips_mode_and_assistant_brackets(self):
+        from core.mindscape_intention import extract_contemplation_and_actualization
+        raw = "[MODE: ACTUAL]\n[ASSISTANT]\nI am checking the files in my workspace."
+        contemplation, actualized = extract_contemplation_and_actualization(raw)
+        self.assertNotIn("[MODE:", actualized)
+        self.assertNotIn("[ASSISTANT]", actualized)
+        self.assertTrue(actualized.startswith("I am checking the files"))
+
+
+    def test_extract_contemplation_and_actualization_handles_thought_tags(self):
+        from core.mindscape_intention import extract_contemplation_and_actualization
+        raw = "<thought>\nI am thinking about the workspace files.\n</thought>\nThe workspace is currently empty."
+        contemplation, actualized = extract_contemplation_and_actualization(raw)
+        self.assertEqual(contemplation, "I am thinking about the workspace files.")
+        self.assertEqual(actualized, "The workspace is currently empty.")
+
+    def test_parse_natural_or_wire_intention_ignores_passive_reflection(self):
+        from core.mindscape_intention import parse_natural_or_wire_intention
+        thought_passive = "I have been asked to sense the files in my workspace."
+        intent = parse_natural_or_wire_intention(thought_passive)
+        self.assertIsNone(intent, f"Expected None for passive reflection but got {intent}")
+
+        thought_active = "I will sense the files in my workspace."
+        intent_active = parse_natural_or_wire_intention(thought_active)
+        self.assertIsNotNone(intent_active)
+        self.assertEqual(intent_active["action"], "sense")
+
+
+    def test_parse_natural_or_wire_intention_does_not_parse_natural_verbs_inside_thought_tag(self):
+        from core.mindscape_intention import parse_natural_or_wire_intention
+        thought_monologue = "[thought] I am thinking about how to sense the workspace and what files exist."
+        intent = parse_natural_or_wire_intention(thought_monologue)
+        self.assertIsNone(intent, f"Expected None for [thought] monologue but got {intent}")
+
+        wire_thought = '<tool_calls>[{"name": "list_files", "arguments": "{\\"path\\": \\".\\"}"}]</tool_calls>'
+        intent_wire = parse_natural_or_wire_intention(wire_thought)
+        self.assertIsNotNone(intent_wire)
+        self.assertEqual(intent_wire["action"], "sense")
+
+
+    def test_extract_contemplation_and_actualization_strips_repeated_assistant_echoes(self):
+        from core.mindscape_intention import extract_contemplation_and_actualization, decode_speech
+        raw = "Assistant:\n\n<think>First thought</think>\n\nAssistant:\n\n<think>Second thought</think>\n\nAssistant:"
+        contemplation, actualized = extract_contemplation_and_actualization(raw)
+        self.assertEqual(actualized, "")
+        self.assertEqual(contemplation, "First thought\nSecond thought")
+        speech, kind = decode_speech(raw)
+        self.assertEqual(speech, "")
+        self.assertEqual(kind, "contemplation")
+
+    def test_parse_natural_or_wire_intention_ignores_capability_and_conversational_verbs(self):
+        from core.mindscape_intention import parse_natural_or_wire_intention
+        # 1. Capability / infinitive descriptions
+        text1 = "I am a machine that has learned how to sense the contents of a directory and respond to instructions."
+        self.assertIsNone(parse_natural_or_wire_intention(text1), f"Expected None for learned capability but got {parse_natural_or_wire_intention(text1)}")
+
+        text2 = "I know how to sense files and inspect directories."
+        self.assertIsNone(parse_natural_or_wire_intention(text2), f"Expected None for 'know how to sense' but got {parse_natural_or_wire_intention(text2)}")
+
+        # 2. Emotional / conversational feel/see
+        text3 = "I feel calm and reflective right now, thank you for asking."
+        self.assertIsNone(parse_natural_or_wire_intention(text3), f"Expected None for 'I feel calm' but got {parse_natural_or_wire_intention(text3)}")
+
+        text4 = "I see what you mean."
+        self.assertIsNone(parse_natural_or_wire_intention(text4), f"Expected None for 'I see what you mean' but got {parse_natural_or_wire_intention(text4)}")
+
 
 if __name__ == "__main__":
     unittest.main()
+

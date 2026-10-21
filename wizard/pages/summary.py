@@ -5,6 +5,7 @@ Displays a review of all configuration choices and a final
 'Create <Agent Name>' button to bootstrap and launch.
 """
 
+from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QSpacerItem, QSizePolicy, QFrame, QCheckBox,

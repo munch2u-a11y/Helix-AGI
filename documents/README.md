@@ -76,3 +76,7 @@ consolidation, local/CI validation and the remaining native/manual gates. The
 requirements and wizard installation stages. The
 [initial cleanup review](maintenance/CLEANUP_REVIEW.md) preserves its baseline
 findings and proposed sequence. Frozen audits remain historical evidence.
+
+The experimental [native robustness branch guide](maintenance/NATIVE_ROBUSTNESS.md)
+explains outcome feedback, checkpoint-supported procedures, controls and PC
+acceptance. Its component checks are separate from the recorded native trial.

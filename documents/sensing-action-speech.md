@@ -63,6 +63,14 @@ continue the thought and reply to the same person. An outward impulse without
 a resolved recipient stays internal. Entering the `thinking/` room is
 navigation; it is not a prerequisite for private thought or speech.
 
+The latest private thought also continues after speaking or acting. Each next
+pulse presents that thought beside fresh action returns, after the current
+situation and selected recollections. A configurable total item budget
+(`mindscape.context_item_limit`, initially 8 including identity) keeps many small
+beliefs from crowding the stream. Deferred recollections remain in memory for
+later retrieval; required current inputs are never silently dropped. These
+context changes have implementation diagnostics, not a live reasoning result.
+
 Speaking and acting use separate outputs. A sentence about opening a file
 does not actuate the body. A motor return supplies the actual file contents
 that the agent can use when it speaks.
@@ -93,10 +101,20 @@ running. Thought/speech separation, pending-interaction continuity and delivery
 routing are implemented and covered by focused checks; the body workflow
 was not a conversation-quality evaluation.
 
-The action policy currently follows explicit user goals. Learning to select
-and sequence actions independently is the next stage. Chat exposes move,
-sense, open and run; other module handlers and the nursery have their own
-integration status.
+The native body clock also advances quiet deliberation without a user request
+or completed language turn. Native output trunks can select exploratory actions
+against actual observed targets. A [real Ada trial](audits/2026-10-20-autonomous-stream/verification.json)
+verified an unprompted open, persistent gradient updates and their use by
+foreground inference. The observed-target resolver is bootstrap behavior;
+general task planning and coherent self-initiated speech remain unverified.
+
+During configured awake hours, native foreground pulses use
+`mindscape.pulse_interval_seconds` between completed turns, independently of
+incoming chat. The configured primary dashboard is available when the model
+chooses outward prose; private thought remains private. Native thinking uses
+the checkpoint's documented thinking prefix and the learned cortex interface.
+Chat exposes move, sense, open and run; other module handlers and the nursery
+have their own integration status.
 
 For implementation details, see [architecture](architecture_current.md),
 [action paths](action_path.md) and the [test guide](../tests/TEST_SUITE_README.md).

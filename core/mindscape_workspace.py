@@ -146,7 +146,8 @@ class MindscapeWorkspace(AgentWorkspace):
         else:
             content, format_name = payload.decode("utf-8"), "utf8_text"
         return {"path": path.relative_to(self.root).as_posix(), "position": self.position,
-                "size_bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload), "modified_ns": after.st_mtime_ns,
+                "sha256": hashlib.sha256(payload).hexdigest(),
                 "content": content, "content_opened": True, "format": format_name,
                 "complete": True, "text_extraction_only": format_name == "pdf_text"}
 
@@ -324,6 +325,9 @@ class NativeWorkspaceBody:
         pulse = self.native.runtime.advance((opportunity,))
         self.native.latest_pulse = pulse
         affordance = self.native._affordance(pulse, ability_id)
+        self.last_action_eligibility = ({"state": self.native.backend.dump_state(),
+                                         "graph": self.native.backend._graph_vectors()}
+                                        if self.native.backend.training_enabled else None)
         self.native._latest_tool_return_pulse = None
         receipt = self.native.tools.execute(ability_id, dict(arguments), affordance=affordance)
         if action == "activate" and self.workspace.active_module():

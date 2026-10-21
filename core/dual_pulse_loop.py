@@ -95,6 +95,7 @@ class DualPulseLoop:
         journal_dir: str = "journals",
         thought_callback: Optional[Callable] = None,
         delivery_callback: Optional[Callable] = None,
+        context_callback: Optional[Callable] = None,
         sentinel=None,
         sensory_cortex=None,
     ):
@@ -122,12 +123,15 @@ class DualPulseLoop:
         # Callbacks
         self._thought_callback = thought_callback
         self._delivery_callback = delivery_callback
+        self._context_callback = context_callback
 
         # Sentinel
         self.sentinel = sentinel
 
         # State
         self._state = "RESTING"
+        self._paused = False
+        self._prev_state_before_pause = None
         self._pulse_count = 0
         self._previous_thoughts = ""
         self._last_event_time = 0
@@ -175,7 +179,7 @@ class DualPulseLoop:
         self._pending_toolset_rebuild = False
         self._pulse_turn_counter = 0
         cfg = self._load_config()
-        self._auto_disengage_threshold = cfg.get("auto_disengage_turns", 2)
+        self._auto_disengage_threshold = cfg.get("auto_disengage_turns", 0)
 
         from tools.tool_registry import registry
         for ts in self._active_toolsets:
@@ -203,7 +207,8 @@ class DualPulseLoop:
 
     def _load_config(self) -> dict:
         try:
-            with open("config/config.json", "r") as f:
+            from core.mindscape_config import configuration_path
+            with open(configuration_path(), "r") as f:
                 return json.load(f)
         except Exception:
             return {}
@@ -265,9 +270,31 @@ class DualPulseLoop:
         if self._thread:
             self._thread.join(timeout=5)
 
+    def pause(self):
+        """Pause autonomous cognition cleanly after the active pulse completes."""
+        if not self._paused:
+            self._paused = True
+            self._prev_state_before_pause = self._state
+            self._state = "PAUSED"
+            self._wake_event.set()
+            logger.info("Dual pulse loop paused by user")
+
+    def resume(self):
+        """Resume autonomous cognition from paused state."""
+        if self._paused:
+            self._paused = False
+            prev = self._prev_state_before_pause or "REGULAR"
+            self._state = prev
+            self._prev_state_before_pause = None
+            self._wake_event.set()
+            logger.info(f"Dual pulse loop resumed by user → {self._state}")
+
     def wake(self, trigger: str = "external"):
         """Wake Helix — promote to ACTIVE from any non-ACTIVE state."""
-        if self._state in ("DORMANT", "RESTING", "REGULAR"):
+        if self._paused and trigger != "user_resume":
+            logger.info(f"Ignored wake trigger '{trigger}' because dual pulse loop is paused")
+            return
+        if self._state in ("DORMANT", "RESTING", "REGULAR", "PAUSED"):
             prev = self._state
             self._state = "ACTIVE"
             self._consolidation_ran_this_idle = False  # Reset for next idle
@@ -329,6 +356,15 @@ class DualPulseLoop:
     def _main_loop(self):
         """Main consciousness thread — mirrors PulseLoop state machine."""
         while self._running:
+            if self._paused:
+                if self._state != "PAUSED":
+                    self._prev_state_before_pause = self._state
+                    self._state = "PAUSED"
+                self._wake_event.wait(timeout=1.0)
+                if self._wake_event.is_set():
+                    self._wake_event.clear()
+                continue
+
             # Sleep schedule
             if self._is_sleep_hours():
                 if self._state != "DORMANT":
@@ -424,21 +460,22 @@ class DualPulseLoop:
         timestamp = datetime.now().strftime("%H:%M:%S")
 
         # Auto-disengage idle toolsets
-        try:
-            from tools.tool_registry import registry
-            idle_toolsets = registry.get_idle_toolsets(
-                self._pulse_turn_counter,
-                idle_threshold=self._auto_disengage_threshold
-            )
-            to_disengage = idle_toolsets.intersection(self._active_toolsets)
-            if to_disengage:
-                for ts in to_disengage:
-                    self._active_toolsets.discard(ts)
-                    registry.deactivate_toolset_tracking(ts)
-                    logger.info(f"Auto-disengaged: {ts}")
-                self._pending_toolset_rebuild = True
-        except Exception as e:
-            logger.error(f"Auto-disengage check failed: {e}")
+        if self._auto_disengage_threshold and self._auto_disengage_threshold > 0:
+            try:
+                from tools.tool_registry import registry
+                idle_toolsets = registry.get_idle_toolsets(
+                    self._pulse_turn_counter,
+                    idle_threshold=self._auto_disengage_threshold
+                )
+                to_disengage = idle_toolsets.intersection(self._active_toolsets)
+                if to_disengage:
+                    for ts in to_disengage:
+                        self._active_toolsets.discard(ts)
+                        registry.deactivate_toolset_tracking(ts)
+                        logger.info(f"Auto-disengaged: {ts}")
+                    self._pending_toolset_rebuild = True
+            except Exception as e:
+                logger.error(f"Auto-disengage check failed: {e}")
 
         # Sentinel snapshot
         lagrangian_before = None
@@ -449,13 +486,15 @@ class DualPulseLoop:
         events = self._drain_events()
 
         # 2. Preconscious injection
-        preconscious_context, injected_belief_ids, cluster_centroid = (
+        annotations, ambient_context, injected_belief_ids, cluster_centroid = (
             self.preconscious.inject(
                 previous_thought=self._previous_thoughts[:500],
                 incoming_events=events if events else None,
                 trigger_type="user_message" if events else "llm_output",
             )
         )
+        preconscious_context = "\n".join(annotations) if isinstance(annotations, (list, tuple)) else str(annotations)
+
 
         # 2b. Sensory tick
         if getattr(self, "sensory_cortex", None):
@@ -789,6 +828,15 @@ class DualPulseLoop:
                 tool_declarations=None,  # NO tools for local model
                 tool_executor=None,
             )
+
+        if self._context_callback:
+            try:
+                rendered_ctx = prompt
+                if hasattr(self._local_chat, "context_counter") and hasattr(self._local_chat, "context_messages") and self._local_chat.context_counter:
+                    rendered_ctx = self._local_chat.context_counter.render_messages(self._local_chat.context_messages(prompt))
+                self._context_callback(self._pulse_count, rendered_ctx)
+            except Exception as _cb_err:
+                logger.debug(f"Context callback failed: {_cb_err}")
 
         thought = self._local_chat.send_message(prompt)
         return thought

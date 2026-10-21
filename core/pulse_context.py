@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import hashlib
+import json
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from typing import Mapping, Sequence
@@ -17,17 +18,17 @@ from core.context_focus import ContextFocus, infer_focus
 _TIMESTAMP = re.compile(r"^\[\d{2}:\d{2}:\d{2}\]\s*")
 _MESSAGE = re.compile(r"^[^\n]+? is talking to me via [^\n]+?\. They said:")
 _TOOL_RESULT = re.compile(r"^(?:Tool|Native action) \[[^\]\n]+\] returned:")
-_INTERNAL = re.compile(r"^\[(?:system|context_awareness|stability_drift|context reset)\]")
+_INTERNAL = re.compile(r"^\[(?:system|context_awareness|stability_(?:drift|warning|critical|recovered)|context reset)\]")
 
 SECTION_TITLES = {
     "messages": "What was said to me now",
     "senses": "I sense now (live hardware):",
     "environment": "In my digital workspace (filesystem):",
     "module": "The operational module in my focus:",
-    "tool_observations": "What an action just returned to me:",
+    "tool_observations": "What my actions returned",
     "work": "What I am working on:",
     "task": "I want to:",
-    "thinking": "What I am thinking now:",
+    "thinking": "My most recent private thought",
     "recalled_thought": "I was thinking:",
     "personal": "I prefer / value:",
     "associations": "Associations coming to mind:",
@@ -49,9 +50,21 @@ SECTION_TITLES = {
 COGNITIVE_SECTIONS = {"thinking", "recalled_thought", "personal", "associations"}
 
 CONTEXT_GUIDANCE = (
-    "Experience each pulse as current events alongside my ongoing thought and recalled context. "
-    "Recalled memories, observations, and earlier thoughts describe past events, not the current scene. "
-    "Current messages at the end of the pulse are the active requests to address now."
+    "Continue my private stream from my most recent thought, taking account of current messages, "
+    "surroundings and actual action returns. Earlier recollections retain their sources; "
+    "my private thought expresses my perspective and intentions. Action returns tell me what happened. "
+    "An unfinished line of thought can continue over later pulses. When information is missing, "
+    "use an available information source."
+)
+
+# Background recollections precede the current situation. The causal tail is
+# always the latest private thought followed by real returns, next to inference.
+PULSE_SECTION_ORDER = (
+    "summary", "personal", "recalled", "prior_user", "prior_assistant",
+    "observations", "recalled_thought", "associations", "procedures", "topical",
+    "reminders", "state", "abilities", "direction", "routing", "environment",
+    "module", "senses", "other", "task", "messages", "work",
+    "thinking", "tool_observations",
 )
 
 
@@ -81,19 +94,29 @@ class ContextAnnotation(str):
         return value
 
 
-def carry_private_thought(thought, memory_id, *, action_attempted, external_response):
-    """Retire issued intentions and answered turns; keep unfinished private prose.
+def carry_private_thought(thought, memory_id, *, action_attempted, external_response,
+                          contemplation=None, previous=None):
+    """Keep private cognition independent of speaking or acting.
 
-    Every retired contribution remains in canonical memory. Actual action
-    attempts continue through their return and the pending request, rather than
-    presenting their old command again as the current intention.
+    An explicit private channel wins over the public output of the same pulse.
+    Speech, issued commands and errors cannot replace the latest private
+    thought. Without new private content the prior contribution remains intact.
     """
-    if action_attempted or external_response or not thought or thought.startswith(("[internal error:", "[no LLM session")):
-        return None
+    if contemplation and contemplation.strip():
+        private = contemplation
+    elif thought and thought.startswith("[thought]"):
+        private = thought[len("[thought]"):].lstrip()
+    elif (not thought or action_attempted or external_response
+          or thought.startswith(("[internal error:", "[no LLM session", "<intention>"))):
+        return previous
+    else:
+        private = thought
+    if not private.strip():
+        return previous
     return ContextContribution(
-        "thinking", thought, "foreground_private", (f"mem_{memory_id}",),
+        "thinking", private, "foreground_private", (f"mem_{memory_id}",),
         "thought", "private thought, not external evidence", "agent",
-        hashlib.sha256(("[thought] " + thought).encode()).hexdigest())
+        hashlib.sha256(("[thought] " + private).encode()).hexdigest())
 
 
 def recalled_contribution(item: Mapping, *, producer="mrag") -> ContextContribution:
@@ -242,8 +265,10 @@ class PulseContext:
         here decides truth, contradicts a claim, or grants/revokes authority.
         """
         selected = self.selected()[0]
+        # The latest private thought is verbatim continuity. Recollections may
+        # annotate fresh passages, but must not rewrite that private output.
         targets = [(index, item) for index, item in enumerate(selected)
-                   if item.producer in {"pulse_event", "foreground_private"}]
+                   if item.producer == "pulse_event"]
         placements, anchored = defaultdict(list), set()
         for index, item in enumerate(selected):
             if not item.inline_note:
@@ -277,21 +302,22 @@ class PulseContext:
     def render(self, additional=None):
         sections = self.grouped(additional)
         blocks = [f"[Pulse {self.pulse} — {self.timestamp}]"]
-        cognitive = any(sections.get(key) for key in COGNITIVE_SECTIONS)
-        # Earlier thought and memory precede the current situation. Present each
-        # current source once, adjacent to the generation point, so an old
-        # recalled question cannot become the last apparent request.
-        current = ("work", "senses", "tool_observations", "task", "messages")
-        order = [key for key in SECTION_TITLES if key not in current] + list(current)
-        for section in order:
-            title = SECTION_TITLES[section]
+        for section in PULSE_SECTION_ORDER:
+            title = SECTION_TITLES[section].rstrip(":")
             if sections.get(section):
-                blocks.append(f"[{title}]\n" + "\n".join(sections[section]))
+                values = sections[section]
+                if section in {"prior_user", "prior_assistant", "recalled_thought"}:
+                    # Recalled role delimiters are data, not live conversation
+                    # turns. Preserve every byte through a lossless JSON view.
+                    values = [json.dumps({"historical_content": value}, ensure_ascii=False) for value in values]
+                blocks.append(f"[{title}]\n" + "\n".join(values))
         return "\n\n".join(blocks)
 
     def receipt(self):
         selected, excluded = self.selected()
         return {"pulse": self.pulse, "query": self.query, "query_source": self.query_source,
+                "presentation_order": [key for key in PULSE_SECTION_ORDER if any(
+                    item.section == key for item in selected)],
                 "contributions": [item.receipt() for item in selected], "duplicates": excluded,
                 "inline_annotations": [item for values in self.inline_placements()[0].values() for item in values]}
 
@@ -338,7 +364,7 @@ def build_pulse_context(
                 section = "tool_observations"
             if section is not None:
                 contributions.append(ContextContribution(
-                    section, event, "pulse_event", (f"pulse:{pulse}:event:{index}",),
+                    section, event, "pulse_event", (getattr(event, "event_id", f"pulse:{pulse}:event:{index}"),),
                     "fresh_event", "event report"))
     # An annotation containing a sensory/message marker is still recalled
     # material. It must never be promoted to a fresh event by its wording.

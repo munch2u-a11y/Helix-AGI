@@ -27,6 +27,7 @@ import time
 import threading
 import logging
 import re
+import uuid
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Callable, Dict, Any, List, Tuple
@@ -102,6 +103,7 @@ class PulseLoop:
         journal_dir: str = "journals",
         thought_callback: Optional[Callable] = None,
         delivery_callback: Optional[Callable] = None,
+        context_callback: Optional[Callable] = None,
         sentinel=None,
         sensory_cortex=None,
     ):
@@ -115,6 +117,8 @@ class PulseLoop:
         self.tool_executor = tool_executor
         self.channel_router = channel_router
         self.sensory_cortex = sensory_cortex
+        from core.progress_feedback import ProgressFeedback
+        self.progress_feedback = ProgressFeedback()
         self.mindscape = None  # Attached by the authoritative setup_helix composition.
 
         # Legacy local-text schema catalog. Native providers use ToolRegistry;
@@ -138,12 +142,15 @@ class PulseLoop:
         # Callbacks
         self._thought_callback = thought_callback    # Called with each thought
         self._delivery_callback = delivery_callback  # Called for [REPLY:name]
+        self._context_callback = context_callback    # Called with exact context window
 
         # Stability Sentinel — real-time Lagrangian monitor
         self.sentinel = sentinel
 
         # State
         self._state = "RESTING"
+        self._paused = False
+        self._prev_state_before_pause = None
         self._pulse_count = 0
         self._previous_thoughts = ""
         self._private_continuation = None
@@ -223,7 +230,7 @@ class PulseLoop:
         self._pending_toolset_rebuild = False
         self._pulse_turn_counter = 0
         cfg = self._load_config()
-        self._auto_disengage_threshold = cfg.get("auto_disengage_turns", 2)
+        self._auto_disengage_threshold = cfg.get("auto_disengage_turns", 0)
 
         # Initialize tracking for startup toolsets
         from tools.tool_registry import registry
@@ -287,8 +294,8 @@ class PulseLoop:
     def start(self):
         """Start the consciousness thread."""
         self._running = True
-        # Start RESTING — Helix waits for input or hourly pulse (or DORMANT if sleep hours)
-        self._state = "RESTING" if not self._is_sleep_hours() else "DORMANT"
+        self._state = ("DORMANT" if self._is_sleep_hours() else
+                       "ACTIVE" if self.mindscape is not None else "RESTING")
         self._last_event_time = time.time()  # Initialize for emergence timer
         if self.mindscape is not None:
             self.mindscape.start_motor(lambda: self.wake("native_motor_return"))
@@ -357,9 +364,31 @@ class PulseLoop:
         self._pending_reset_prompt = prompt
         logger.info(f"Context reset requested — prompt: {prompt[:100]}...")
 
+    def pause(self):
+        """Pause autonomous cognition cleanly after the active pulse completes."""
+        if not self._paused:
+            self._paused = True
+            self._prev_state_before_pause = self._state
+            self._state = "PAUSED"
+            self._wake_event.set()
+            logger.info("Pulse loop paused by user")
+
+    def resume(self):
+        """Resume autonomous cognition from paused state."""
+        if self._paused:
+            self._paused = False
+            prev = self._prev_state_before_pause or "REGULAR"
+            self._state = prev
+            self._prev_state_before_pause = None
+            self._wake_event.set()
+            logger.info(f"Pulse loop resumed by user → {self._state}")
+
     def wake(self, trigger: str = "external"):
         """Wake Helix — promote to ACTIVE from any non-ACTIVE state."""
-        if self._state in ("DORMANT", "RESTING", "REGULAR"):
+        if self._paused and trigger != "user_resume":
+            logger.info(f"Ignored wake trigger '{trigger}' because pulse loop is paused")
+            return
+        if self._state in ("DORMANT", "RESTING", "REGULAR", "PAUSED"):
             prev = self._state
             self._state = "ACTIVE"
             self._consolidation_ran_this_idle = False  # Reset for next idle
@@ -378,6 +407,11 @@ class PulseLoop:
         """
         text = self._translate_event(event_type, data)
         if text:
+            if self.mindscape is not None:
+                from core.native_learning import StreamEvent
+                payload = data.get("content", data.get("message", ""))
+                text = StreamEvent(text, event_id="ingress:" + uuid.uuid4().hex,
+                                   event_type=event_type, payload=payload if isinstance(payload, str) else "")
             if self.mindscape is not None and event_type in {"user_message", "incoming_message", "telegram_message"}:
                 self.mindscape.receive_event(text)
             with self._event_lock:
@@ -503,7 +537,8 @@ class PulseLoop:
     @staticmethod
     def _load_config() -> dict:
         """Load config/config.json if it exists."""
-        config_path = Path(__file__).parent.parent / "config" / "config.json"
+        from core.mindscape_config import configuration_path
+        config_path = configuration_path()
         if config_path.exists():
             try:
                 with open(config_path, "r") as f:
@@ -598,6 +633,15 @@ class PulseLoop:
           ACTIVE  — 10s interactive pulses; becomes REGULAR after 2 min idle
         """
         while self._running:
+            if self._paused:
+                if self._state != "PAUSED":
+                    self._prev_state_before_pause = self._state
+                    self._state = "PAUSED"
+                self._wake_event.wait(timeout=1.0)
+                if self._wake_event.is_set():
+                    self._wake_event.clear()
+                continue
+
             if self.mindscape is not None and getattr(self.mindscape, "foreground_failure", None):
                 # A failed language stream cannot take the separate receptive
                 # inbox, filesystem sensor or authorized motor body offline.
@@ -736,6 +780,24 @@ class PulseLoop:
                         )
                         self._provider_config.model = _FALLBACK
 
+            # Optional idle generation yields under overload. Received input,
+            # unfinished interactions and the independent body retain priority.
+            if self.mindscape is not None and self.sentinel is not None:
+                from core.robustness import defer_idle, options
+                with self._event_lock:
+                    queued = bool(self._event_queue)
+                resource_severity = self.sentinel.get_resource_severity()
+                if defer_idle(enabled=options(self.config)["idle_backpressure"],
+                              severity=resource_severity, queued_events=queued,
+                              pending_interaction=bool(self.mindscape.continuation.get("pending"))):
+                    self._state = "RESTING"
+                    self.mindscape._receipt("idle_backpressure", severity=resource_severity,
+                        reason="actual memory, storage or canonical-store resource fault",
+                        recheck_seconds=self.sentinel.probe_interval)
+                    self._wake_event.wait(timeout=self.sentinel.probe_interval)
+                    self._wake_event.clear()
+                    continue
+
             # ── Pulse Execution ──────────────────────────────────
             if not codex_parked:
                 try:
@@ -757,16 +819,7 @@ class PulseLoop:
                 self._check_context_lifecycle()
 
             # ── 3-Tier State Transitions ──────────────────────────
-            if self._state == "ACTIVE":
-                if time.time() - self._last_incoming_time > self.ACTIVE_TIMEOUT:
-                    self._state = "REGULAR"
-                    self._last_activity_time = time.time()  # Start REGULAR timer
-                    logger.info("ACTIVE → REGULAR (%s seconds without incoming input)", self.ACTIVE_TIMEOUT)
-
-            elif self._state == "REGULAR":
-                if time.time() - self._last_activity_time > self.REGULAR_TIMEOUT:
-                    self._state = "RESTING"
-                    logger.info("REGULAR → RESTING (%s seconds without activity)", self.REGULAR_TIMEOUT)
+            self._update_state_transitions()
 
             # ── Idle Consolidation (Curator-Style) ───────────────
             #    When idle for 2+ hours, run lightweight belief
@@ -787,14 +840,48 @@ class PulseLoop:
 
 
             # ── Wait for next interval ───────────────────────────
-            interval = {
-                "ACTIVE": self.ACTIVE_INTERVAL,
-                "REGULAR": self.REGULAR_INTERVAL,
-                "RESTING": self.RESTING_INTERVAL,
-            }.get(self._state, self.RESTING_INTERVAL)
+            interval = self._get_next_pulse_interval()
             self._wake_event.wait(timeout=interval)
             if self._wake_event.is_set():
                 self._wake_event.clear()
+
+    def _update_state_transitions(self):
+        """Update 3-tier state transitions based on cognitive activity and incoming input."""
+        if self.mindscape is not None:
+            # Native cognition belongs to the awake mind, not a chat activity timer.
+            return
+        has_pending = False
+        if self.mindscape and getattr(self.mindscape, "continuation", None):
+            pending = self.mindscape.continuation.get("pending")
+            if pending and (pending.get("messages") or pending.get("thoughts")):
+                has_pending = True
+
+        if self._state == "ACTIVE":
+            if not has_pending and (time.time() - self._last_incoming_time > self.ACTIVE_TIMEOUT):
+                self._state = "REGULAR"
+                self._last_activity_time = time.time()  # Start REGULAR timer
+                logger.info("ACTIVE → REGULAR (%s seconds without incoming input)", self.ACTIVE_TIMEOUT)
+            elif has_pending:
+                self._last_incoming_time = time.time()
+
+        elif self._state == "REGULAR":
+            if has_pending:
+                self._last_activity_time = time.time()
+
+    def _get_next_pulse_interval(self) -> float:
+        """Compute the next pulse interval, accelerating cadence if work is pending."""
+        if self.mindscape is not None:
+            return float(getattr(self, "config", {}).get("mindscape", {}).get("pulse_interval_seconds", 1.0))
+        if self.mindscape and getattr(self.mindscape, "continuation", None):
+            pending = self.mindscape.continuation.get("pending")
+            if pending and (pending.get("messages") or pending.get("thoughts")):
+                return 1.0
+
+        return {
+            "ACTIVE": self.ACTIVE_INTERVAL,
+            "REGULAR": self.REGULAR_INTERVAL,
+            "RESTING": self.RESTING_INTERVAL,
+        }.get(self._state, self.RESTING_INTERVAL)
 
     def _check_context_lifecycle(self, force_drift_check: bool = False):
         """Check context window health and trigger compression if needed.
@@ -997,21 +1084,22 @@ class PulseLoop:
         timestamp = datetime.now().strftime("%H:%M:%S")
 
         # Check for auto-disengage of idle toolsets
-        try:
-            from tools.tool_registry import registry
-            idle_toolsets = registry.get_idle_toolsets(
-                self._pulse_turn_counter,
-                idle_threshold=self._auto_disengage_threshold
-            )
-            to_disengage = idle_toolsets.intersection(self._active_toolsets)
-            if to_disengage:
-                for ts in to_disengage:
-                    self._active_toolsets.discard(ts)
-                    registry.deactivate_toolset_tracking(ts)
-                    logger.info(f"Auto-disengaged idle toolset: {ts} (inactive for {self._auto_disengage_threshold} turns)")
-                self._pending_toolset_rebuild = True
-        except Exception as e:
-            logger.error(f"Failed to check auto-disengage: {e}")
+        if self._auto_disengage_threshold and self._auto_disengage_threshold > 0:
+            try:
+                from tools.tool_registry import registry
+                idle_toolsets = registry.get_idle_toolsets(
+                    self._pulse_turn_counter,
+                    idle_threshold=self._auto_disengage_threshold
+                )
+                to_disengage = idle_toolsets.intersection(self._active_toolsets)
+                if to_disengage:
+                    for ts in to_disengage:
+                        self._active_toolsets.discard(ts)
+                        registry.deactivate_toolset_tracking(ts)
+                        logger.info(f"Auto-disengaged idle toolset: {ts} (inactive for {self._auto_disengage_threshold} turns)")
+                    self._pending_toolset_rebuild = True
+            except Exception as e:
+                logger.error(f"Failed to check auto-disengage: {e}")
 
         # 0. Snapshot sentinel state BEFORE the pulse fires.
         #    This captures the clean baseline for computing stability
@@ -1032,6 +1120,7 @@ class PulseLoop:
         requeue_events = list(events)
         requeue_office_envelopes = list(office_envelopes)
         if self.mindscape is not None:
+            self._private_continuation = self.mindscape.private_continuation()
             events.extend(self.mindscape.pending_events())
         if getattr(self, "sensory_cortex", None):
             sensory_data = self.sensory_cortex.pulse_tick()
@@ -1109,6 +1198,8 @@ class PulseLoop:
                 if self._chat is None or not hasattr(self._chat, "send_context"):
                     raise RuntimeError("Mindscape requires a session with replaceable pulse context")
                 self._chat.context_counter = self.mindscape.token_counter
+                self._chat.compiled_context_only = (
+                    self.mindscape.config["mindscape"]["context_item_limit"] is not None)
                 from core.mindscape_intention import decode_speech
                 self._chat.context_format = None
                 self._chat.context_decoder = decode_speech
@@ -1123,6 +1214,11 @@ class PulseLoop:
                 foreground_feeling = dict(self.mindscape.last_sensed_feeling)
                 foreground_motor_ids = set(getattr(self.mindscape, "_observed_motor_ids", ()))
                 if self._provider_config.provider_type in {'rwkv', 'bicameral_rwkv'}:
+                    self._chat.options['direct_speech'] = bool(
+                        foreground_feeling.get("modality") == "EXTERNAL_COMMUNICATION"
+                        or foreground_feeling.get("is_external")
+                        or getattr(self.mindscape, "last_sensed_modality", None) == "EXTERNAL_COMMUNICATION"
+                    )
                     self._chat.options['generation_progress_path'] = str(
                         self.mindscape.directory / 'foreground-in-progress.json')
                     self._chat.options['current_sensory_items'] = [
@@ -1130,12 +1226,26 @@ class PulseLoop:
                         {'text': event, 'producer': 'native_action_return'} for event in events
                         if event.startswith('Native action [receipt:')]
 
-        # 4. Send to LLM
-        thought = (
-            self._send_office_pulse(pulse_message)
-            if office_capsule is not None
-            else self._send_pulse(pulse_message)
-        )
+        if self._context_callback:
+            try:
+                rendered_ctx = pulse_message
+                if hasattr(self._chat, "context_counter") and hasattr(self._chat, "context_messages") and self._chat.context_counter:
+                    rendered_ctx = self._chat.context_counter.render_messages(self._chat.context_messages(pulse_message))
+                self._context_callback(self._pulse_count, rendered_ctx)
+            except Exception as _cb_err:
+                logger.debug(f"Context callback failed: {_cb_err}")
+
+        # Bind exact foreground exposure to this generation's execution context.
+        # Other focus threads do not inherit this attribution scope.
+        from core.progress_feedback import lesson_context
+        scope_id = f"{self._memory_session_id}:{self._pulse_count}"
+        exposed_ids = injected_belief_ids if self.mindscape is None else ()
+        with lesson_context(scope_id, exposed_ids):
+            thought = (
+                self._send_office_pulse(pulse_message)
+                if office_capsule is not None
+                else self._send_pulse(pulse_message)
+            )
 
         if self.mindscape is not None:
             provider_receipt = getattr(self._chat, "last_context_receipt", None)
@@ -1145,6 +1255,8 @@ class PulseLoop:
                 "foreground_model", helix_pulse=self._pulse_count,
                 model=getattr(self._chat, "model", None),
                 provider_options=getattr(self._chat, "options", {}),
+                dialogue_policy=("compiled pulse; historical dialogue competes for item admission"
+                                 if self._chat.compiled_context_only else "provider dialogue history"),
                 request_messages=self._chat.context_messages(pulse_message),
                 provider_receipt=provider_receipt,
             )
@@ -1342,7 +1454,7 @@ class PulseLoop:
         delivered_external = False
         # Speech is never executable. The sensory/motor thread alone dispatches
         # typed body signals; it can progress throughout language inference.
-        native_action = None
+        native_action = (self.mindscape.act(thought, self._pulse_count) if self.mindscape is not None else None)
         if native_action is not None and self.sentinel is not None:
             action_status = native_action.get("status") or native_action.get("receipt", {}).get("status")
             if action_status == "completed":
@@ -1353,7 +1465,7 @@ class PulseLoop:
             delivered_external = self._deliver_office_output(office_capsule, thought)
         elif self.mindscape is not None:
             feeling = foreground_feeling
-            if feeling.get("is_external") and native_action is None:
+            if (feeling.get("is_external") or feeling.get("speech_available")) and native_action is None:
                 delivered_external = self._deliver_mindscape_output(thought, events, feeling)
 
         if self.mindscape is not None:
@@ -1466,11 +1578,13 @@ class PulseLoop:
         )
         is_mindscape_response = bool(
             self.mindscape is not None
-            and getattr(self.mindscape, "last_sensed_feeling", {}).get("is_external")
+            and delivered_external
         )
-        is_external_response = is_office_response or is_mindscape_response or delivered_external
+        is_external_response = (delivered_external if self.mindscape is not None
+                                else is_office_response or is_mindscape_response or delivered_external)
 
-        thought_text = f"[{'response' if is_external_response else 'thought'}] {thought}"
+        stored_thought = thought.removeprefix("[thought] ") if not is_external_response else thought
+        thought_text = f"[{'response' if is_external_response else 'thought'}] {stored_thought}"
         thought_emb = self.physics.embed_text(thought_text)
         thought_emb_list = thought_emb.tolist() if thought_emb is not None else None
         thought_pos = (
@@ -1546,17 +1660,17 @@ class PulseLoop:
         )
 
         if self.mindscape is not None:
+            self._private_continuation = self._capture_private_continuation(
+                thought, thought_memory_id, action_attempted=native_action is not None,
+                external_response=is_external_response)
             self.mindscape.finish(thought, self._pulse_count, delivered_external=delivered_external,
-                                  observed_motor_ids=foreground_motor_ids)
+                                  observed_motor_ids=foreground_motor_ids,
+                                  private_continuation=self._private_continuation)
             if native_action is not None or getattr(self.mindscape, "needs_native_observation", False):
                 self._wake_event.set()
 
         # 8. Carry forward
         self._previous_thoughts = thought[-500:] if thought else ""
-        from core.pulse_context import carry_private_thought
-        self._private_continuation = carry_private_thought(
-            thought, thought_memory_id, action_attempted=native_action is not None,
-            external_response=is_external_response)
 
         # 9. Notify callback
         if self._thought_callback:
@@ -1607,10 +1721,40 @@ class PulseLoop:
                 lagrangian_before=lagrangian_before or {},
                 lagrangian_after=lagrangian_after or {},
                 injected_belief_ids=injected_belief_ids,
+                progress=self.progress_feedback.snapshot(),
             )
             run_hooks(hook_ctx)
         except Exception as e:
             logger.debug("Post-pulse hooks error: %s", e)
+
+    def _capture_private_continuation(self, thought, memory_id, *, action_attempted, external_response):
+        """Retain the private channel even when this generation also spoke/acted."""
+        from core.pulse_context import carry_private_thought
+        from core.mindscape_intention import extract_contemplation_and_actualization
+        if thought.startswith(("[internal error:", "[no LLM session")):
+            return self._private_continuation
+        contemplation = getattr(self._chat, "last_contemplation", None)
+        if not isinstance(contemplation, str):
+            receipt = getattr(self._chat, "last_context_receipt", None) or {}
+            raw = receipt.get("raw_foreground", "")
+            contemplation = extract_contemplation_and_actualization(raw)[0] if isinstance(raw, str) else ""
+        previous = self._private_continuation
+        carried = carry_private_thought(
+            thought, memory_id, action_attempted=action_attempted, external_response=external_response,
+            contemplation=contemplation, previous=previous)
+        if carried is None or carried is previous:
+            return carried
+        # A mixed thought/speech generation needs its own canonical private
+        # record. Its source must never point at the public response instead.
+        if external_response or carried.text != thought.removeprefix("[thought] "):
+            private_id = self.memory.store(
+                content="[thought] " + carried.text, memory_type="thought", source="pulse_contemplation",
+                importance=0.5,
+                tags=["pulse_thought", f"session:{self._memory_session_id}", f"turn:{self._pulse_count}"],
+                record_metadata={"kind": "thought", "record_kind": "thought", "direction": "internal"})
+            from dataclasses import replace
+            carried = replace(carried, source_ids=(f"mem_{private_id}",))
+        return carried
 
     def _build_pulse_message(
         self,
@@ -1714,12 +1858,16 @@ class PulseLoop:
                     options={**self._provider_config.options, "thought_only": True},
                 )
             native_tools = self._tool_format not in ("local", "orchestrated")
+            native_session = {}
+            if self.mindscape is not None and session_config.provider_type in {"rwkv", "bicameral_rwkv"}:
+                native_session["rwkv_backend"] = self.mindscape.foreground_backend(session_config.model)
             self._chat = create_session(
                 session_config,
                 system_instruction,
                 tool_declarations=tool_declarations if native_tools else None,
                 tool_executor=self.tool_executor if native_tools else None,
                 preconscious=self.preconscious,
+                **native_session,
             )
 
             # Orchestrated mode: the session above holds no tool schemas at
@@ -1809,6 +1957,11 @@ class PulseLoop:
 
         if self.mindscape is not None:
             parts.append(f"{primary_identity}\n\n{CONTEXT_GUIDANCE}")
+            if self.mindscape.config["mindscape"]["context_item_limit"] is not None:
+                from core.mindscape_intention import FOREGROUND_FORMAT_GUIDANCE
+                # Identity is the one fixed information item. Other beliefs
+                # and prior dialogue compete in the same pulse admission pool.
+                return parts[0] + "\n\n" + FOREGROUND_FORMAT_GUIDANCE
         else:
             parts.append(
                 f"{primary_identity}\n\n"
@@ -2089,7 +2242,7 @@ class PulseLoop:
             model=self._provider_config.model,
             context_window=self._provider_config.context_window,
             temperature=self._provider_config.temperature,
-            max_output_tokens=min(self._provider_config.max_output_tokens, 2048),
+            max_output_tokens=self._provider_config.max_output_tokens,
             options=options,
         )
         session = None
@@ -2209,7 +2362,18 @@ class PulseLoop:
             return False
 
         delivered = False
-        if self.channel_router is not None and channel not in {"direct", "console"}:
+        if channel == "dashboard" and feeling.get("recipient_source") == "configured primary dashboard":
+            from dashboard.dashboard_comms import get_comms
+            import hashlib
+            comms = get_comms()
+            receipt = comms.push_outbound(recipient, clean_text)
+            delivered = bool(receipt)
+            if delivered and self.mindscape is not None:
+                self.mindscape._receipt("speech_delivery", channel=channel, recipient=recipient,
+                    recipient_source=feeling["recipient_source"], verified=True,
+                    content_sha256=hashlib.sha256(clean_text.encode()).hexdigest(),
+                    dashboard_receipt=receipt)
+        elif self.channel_router is not None and channel not in {"direct", "console"}:
             try:
                 delivered = bool(self.channel_router.route_reply(recipient, clean_text))
             except Exception as exc:

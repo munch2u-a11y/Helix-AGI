@@ -9,6 +9,8 @@ class PulseWakeTests(unittest.TestCase):
         for state in ("DORMANT", "RESTING", "REGULAR", "ACTIVE"):
             with self.subTest(state=state):
                 pulse = PulseLoop.__new__(PulseLoop)
+                pulse._paused = False
+                pulse.mindscape = None
                 pulse._state = state
                 pulse._wake_event = threading.Event()
                 pulse._event_lock = threading.Lock()
@@ -29,6 +31,7 @@ class PulseWakeTests(unittest.TestCase):
     def test_active_wake_signals_but_failed_state_is_not_revived(self):
         for state in ("ACTIVE", "FAILED"):
             pulse = PulseLoop.__new__(PulseLoop)
+            pulse._paused = False
             pulse._state = state
             pulse._wake_event = threading.Event()
             pulse.wake()

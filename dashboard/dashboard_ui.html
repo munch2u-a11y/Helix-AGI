@@ -32,9 +32,58 @@
     padding: 3px 10px; border-radius: 12px; font-size: 11px;
     font-weight: 500; letter-spacing: 1px;
     background: rgba(74,222,128,0.15); color: var(--green); border: 1px solid rgba(74,222,128,0.3);
+    transition: all 0.2s ease;
   }
   .status-badge.dormant { background: rgba(100,116,139,0.15); color: var(--dim); border-color: rgba(100,116,139,0.3); }
   .status-badge.active { background: rgba(59,130,246,0.15); color: var(--accent); border-color: rgba(59,130,246,0.3); }
+  .status-badge.regular { background: rgba(6,182,212,0.15); color: #06b6d4; border-color: rgba(6,182,212,0.3); }
+  .status-badge.resting { background: rgba(129,140,248,0.15); color: #818cf8; border-color: rgba(129,140,248,0.3); }
+  .status-badge.paused { background: rgba(245,158,11,0.2); color: #fbbf24; border-color: rgba(245,158,11,0.5); box-shadow: 0 0 10px rgba(245,158,11,0.2); }
+  .status-badge.offline { background: rgba(100,116,139,0.15); color: #94a3b8; border-color: rgba(100,116,139,0.3); }
+
+  /* Header Agent Controls */
+  .agent-controls {
+    display: inline-flex; align-items: center; gap: 8px; margin-left: 8px;
+  }
+  .ctrl-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: all 0.2s ease;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  .pause-btn {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    color: #fbbf24;
+  }
+  .pause-btn:hover {
+    background: rgba(245, 158, 11, 0.25);
+    border-color: #fbbf24;
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.25);
+  }
+  .pause-btn.is-paused {
+    background: rgba(16, 185, 129, 0.15);
+    border-color: rgba(16, 185, 129, 0.4);
+    color: #34d399;
+  }
+  .pause-btn.is-paused:hover {
+    background: rgba(16, 185, 129, 0.3);
+    border-color: #34d399;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+  }
+  .offline-btn {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #f87171;
+  }
+  .offline-btn:hover {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: #f87171;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+  }
+  .ctrl-btn:disabled {
+    opacity: 0.35; cursor: not-allowed; pointer-events: none;
+  }
   .pulse-count { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--dim); margin-left: auto; }
 
   .main { display: flex; flex: 1; overflow: hidden; }
@@ -101,6 +150,22 @@
     position: absolute; top: 8px; left: 12px; font-size: 10px;
     color: var(--dim); letter-spacing: 1px; font-weight: 500;
     pointer-events: none;
+  }
+  .traversal-hud {
+    position: absolute; top: 26px; left: 12px; font-size: 10px;
+    color: var(--accent); letter-spacing: 0.5px; font-weight: 500;
+    pointer-events: none; background: rgba(10,14,23,0.78);
+    padding: 3px 8px; border-radius: 4px; border: 1px solid rgba(56,189,248,0.25);
+    display: inline-flex; align-items: center; gap: 6px; z-index: 5;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .traversal-hud-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 6px var(--accent); animation: pulseDot 1.5s infinite;
+  }
+  @keyframes pulseDot {
+    0%, 100% { opacity: 0.3; transform: scale(0.9); }
+    50% { opacity: 1; transform: scale(1.3); }
   }
   #tooltip {
     position: absolute; display: none; padding: 6px 10px;
@@ -549,6 +614,13 @@
     <span class="room-sub" id="agent-room-desc">Home Root</span>
   </div>
   <button id="staging-drawer-btn" class="staging-btn" title="Open Safe Staging Inbox">📥 Safe Staging (<span id="staged-count-badge">0</span>)</button>
+
+  <!-- Agent Lifecycle Controls -->
+  <div class="agent-controls">
+    <button id="agent-pause-btn" class="ctrl-btn pause-btn" title="Pause or Resume Agent autonomous cognitive pulses">⏸️ Pause</button>
+    <button id="agent-offline-btn" class="ctrl-btn offline-btn" title="Safely take Agent offline after saving all states">⏹️ Take Offline</button>
+  </div>
+
   <span id="state-badge" class="status-badge">UNKNOWN</span>
   <span class="pulse-count">Pulse <span id="pulse-num">—</span></span>
 </header>
@@ -650,6 +722,7 @@
   <!-- 3D Scene -->
   <div class="scene-panel">
     <div class="scene-label">HABITUS MINDSCAPE • 8D → 3D PCA LATTICE</div>
+    <div id="traversal-hud" class="traversal-hud"><span class="traversal-hud-dot"></span><span id="traversal-summary">INITIALIZING GRAPH TELEMETRY...</span></div>
     <canvas id="three-canvas"></canvas>
     <div id="tooltip"></div>
     <div class="legend" id="legend"></div>
@@ -1076,29 +1149,36 @@ controls.autoRotate = true;
 controls.autoRotateSpeed = 0.3;
 
 // Lights
-scene.add(new THREE.AmbientLight(0x334466, 0.6));
-const dLight = new THREE.DirectionalLight(0xffffff, 0.8);
+scene.add(new THREE.AmbientLight(0x334466, 0.7));
+const dLight = new THREE.DirectionalLight(0xffffff, 0.9);
 dLight.position.set(5, 10, 5);
 scene.add(dLight);
+const pLight = new THREE.PointLight(0x38bdf8, 1.2, 30);
+pLight.position.set(0, 0, 0);
+scene.add(pLight);
 
 // Grid
 const grid = new THREE.GridHelper(20, 20, 0x1e293b, 0x111827);
 grid.position.y = -0.5;
 scene.add(grid);
 
-// Point groups
+// Point groups & Vault Hubs
 let pointMeshes = [];
 let pointData = [];
 let latticeMesh = null;
+let vaultHubMeshes = [];
+let vaultHubData = [];
+let activeTargetNodes = [];
 
-// Psi Wave Packets (dynamic neural cipher pulses)
+// Real-Time Signal Wave Packets
+const NUM_PACKETS = 8;
 const psiPackets = [];
-for (let i = 0; i < 5; i++) {
-  const pGeo = new THREE.SphereGeometry(0.08, 8, 8);
+for (let i = 0; i < NUM_PACKETS; i++) {
+  const pGeo = new THREE.SphereGeometry(0.09, 10, 10);
   const pMat = new THREE.MeshBasicMaterial({
     color: 0x38bdf8,
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.95,
     blending: THREE.AdditiveBlending
   });
   const pMesh = new THREE.Mesh(pGeo, pMat);
@@ -1109,30 +1189,47 @@ for (let i = 0; i < 5; i++) {
     progress: 1.0,
     start: new THREE.Vector3(),
     end: new THREE.Vector3(),
-    speed: 0.012 + i * 0.004
+    speed: 0.015 + (i % 4) * 0.005,
+    targetMesh: null,
+    targetType: 'belief',
+    targetIndex: i,
+    hasTriggeredFlash: false
   });
 }
 
 // Attention crosshair
-const attnGeo = new THREE.OctahedronGeometry(0.25, 0);
+const attnGeo = new THREE.OctahedronGeometry(0.28, 0);
 const attnMat = new THREE.MeshStandardMaterial({
-  color: 0x3b82f6, emissive: 0x3b82f6, emissiveIntensity: 0.8,
-  transparent: true, opacity: 0.9
+  color: 0x38bdf8, emissive: 0x38bdf8, emissiveIntensity: 0.9,
+  transparent: true, opacity: 0.92
 });
 const attnMesh = new THREE.Mesh(attnGeo, attnMat);
 scene.add(attnMesh);
 
 // Trail line
-const trailMat = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.4 });
+const trailMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.45 });
 const trailGeo = new THREE.BufferGeometry().setFromPoints([
   new THREE.Vector3(), new THREE.Vector3()
 ]);
 const trailLine = new THREE.Line(trailGeo, trailMat);
 scene.add(trailLine);
 
+// Dynamic Active Traversal Path Line
+const traversalMat = new THREE.LineBasicMaterial({
+  color: 0x38bdf8,
+  transparent: true,
+  opacity: 0.75,
+  blending: THREE.AdditiveBlending
+});
+const traversalGeo = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(), new THREE.Vector3()
+]);
+const activeTraversalLine = new THREE.Line(traversalGeo, traversalMat);
+scene.add(activeTraversalLine);
+
 // Raycaster for hover
 const raycaster = new THREE.Raycaster();
-raycaster.params.Points = { threshold: 0.3 };
+raycaster.params.Points = { threshold: 0.35 };
 const mouse = new THREE.Vector2();
 const tooltip = document.getElementById('tooltip');
 
@@ -1141,58 +1238,172 @@ canvas.addEventListener('mousemove', (e) => {
   mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
   mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(mouse, camera);
+
+  // Check vault hubs first
   let hit = false;
-  for (let i = 0; i < pointMeshes.length; i++) {
-    const intersects = raycaster.intersectObject(pointMeshes[i]);
+  for (let i = 0; i < vaultHubMeshes.length; i++) {
+    const intersects = raycaster.intersectObject(vaultHubMeshes[i], true);
     if (intersects.length > 0) {
-      const d = pointData[i];
-      tooltip.innerHTML = `<strong>${d.category}</strong><br>${d.content || d.id}<br>mass: ${d.mass}`;
+      const v = vaultHubData[i];
+      tooltip.innerHTML = `
+        <div style="font-weight:700;color:${v.color};font-size:12px;margin-bottom:2px;">🏛️ ${v.name}</div>
+        <div>Vault: <code>${v.vault}</code></div>
+        <div>Indexed Items: ${v.record_count}</div>
+        <div>Status: ${v.active ? '<span style="color:#4ade80;font-weight:600;">⚡ ACTIVATED IN PULSE (' + v.active_count + ' items)</span>' : '<span style="color:#94a3b8;">Standby</span>'}</div>
+      `;
       tooltip.style.display = 'block';
-      tooltip.style.left = (e.clientX - canvas.getBoundingClientRect().left + 12) + 'px';
-      tooltip.style.top = (e.clientY - canvas.getBoundingClientRect().top - 10) + 'px';
+      tooltip.style.left = (e.clientX - rect.left + 14) + 'px';
+      tooltip.style.top = (e.clientY - rect.top - 10) + 'px';
       hit = true;
       break;
+    }
+  }
+
+  // Check point meshes
+  if (!hit) {
+    for (let i = 0; i < pointMeshes.length; i++) {
+      const intersects = raycaster.intersectObject(pointMeshes[i]);
+      if (intersects.length > 0) {
+        const d = pointData[i];
+        const activeBadge = d.active ? '<div style="color:#38bdf8;font-weight:700;font-size:10px;margin-bottom:3px;">⚡ ACTIVATED IN CURRENT PULSE</div>' : '';
+        const vaultText = d.vault ? ` • Vault: <em>${d.vault}</em>` : '';
+        tooltip.innerHTML = `
+          ${activeBadge}
+          <strong>${d.category}</strong>${vaultText}<br>
+          <div style="color:#cbd5e1;margin-top:2px;font-size:10px;">${d.content || d.id}</div>
+          <div style="color:#64748b;margin-top:3px;font-size:9px;">ID: ${d.id} • mass: ${d.mass}</div>
+        `;
+        tooltip.style.display = 'block';
+        tooltip.style.left = (e.clientX - rect.left + 14) + 'px';
+        tooltip.style.top = (e.clientY - rect.top - 10) + 'px';
+        hit = true;
+        break;
+      }
     }
   }
   if (!hit) tooltip.style.display = 'none';
 });
 
 function updateSpatial(data) {
-  // Remove old meshes
+  // 1. Remove old point meshes
   pointMeshes.forEach(m => { scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
   pointMeshes = [];
   pointData = data.points || [];
 
   const seenCategories = new Set();
+  activeTargetNodes = [];
 
+  // Build point meshes
   data.points.forEach(p => {
     const isMemory = p.type === 'memory';
     const isTrail = p.type === 'trail';
-    const radius = isMemory ? 0.13 : (isTrail ? 0.08 : Math.max(0.15, Math.min(0.38, Math.sqrt(p.mass || 0.5) * 0.32)));
+    const isActive = Boolean(p.active);
+    const radius = isMemory ? 0.14 : (isTrail ? 0.08 : Math.max(0.16, Math.min(0.40, Math.sqrt(p.mass || 0.5) * 0.34)));
     const geo = new THREE.SphereGeometry(radius, 14, 14);
-    const colorHex = p.color || CAT_COLORS[p.category] || '#38BDF8';
+    const colorHex = p.color || CAT_COLORS[p.category] || (isActive ? '#38BDF8' : '#64748b');
     const color = new THREE.Color(colorHex);
+
+    const baseEmissive = isActive ? 0.95 : (isTrail ? 0.2 : (isMemory ? 0.45 : 0.65));
     const mat = new THREE.MeshStandardMaterial({
-      color,
-      emissive: color,
-      emissiveIntensity: isTrail ? 0.2 : (isMemory ? 0.4 : 0.7),
-      roughness: 0.35,
-      metalness: 0.2,
-      transparent: isMemory,
-      opacity: isMemory ? 0.8 : 0.98,
+      color: color,
+      emissive: isActive ? new THREE.Color(0x38bdf8) : color,
+      emissiveIntensity: baseEmissive,
+      roughness: isActive ? 0.2 : 0.4,
+      metalness: 0.25,
+      transparent: isMemory || isTrail,
+      opacity: isMemory ? 0.85 : (isTrail ? 0.4 : 0.98),
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(p.x, p.y, p.z);
+    mesh.baseRadius = radius;
+    mesh.baseEmissive = baseEmissive;
+    mesh.pointId = p.id;
+    mesh.isPointActive = isActive;
     scene.add(mesh);
     pointMeshes.push(mesh);
     seenCategories.add(p.category);
+
+    if (isActive) {
+      activeTargetNodes.push({
+        position: mesh.position,
+        mesh: mesh,
+        id: p.id,
+        type: p.type || 'belief',
+        color: colorHex
+      });
+    }
   });
 
-  // Update attention
+  // 2. Build or Update Semantic Vault Hubs
+  vaultHubMeshes.forEach(m => {
+    scene.remove(m);
+    m.traverse(obj => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) obj.material.dispose();
+    });
+  });
+  vaultHubMeshes = [];
+  vaultHubData = data.vault_hubs || [];
+
+  vaultHubData.forEach(vh => {
+    const hubGroup = new THREE.Group();
+    hubGroup.position.set(vh.x, vh.y, vh.z);
+
+    const hubColor = new THREE.Color(vh.color || '#38BDF8');
+    const baseEmissive = vh.active ? 1.6 : 0.5;
+
+    // Core jewel
+    const coreGeo = new THREE.OctahedronGeometry(vh.active ? 0.36 : 0.26, 0);
+    const coreMat = new THREE.MeshStandardMaterial({
+      color: hubColor,
+      emissive: hubColor,
+      emissiveIntensity: baseEmissive,
+      roughness: 0.2,
+      metalness: 0.6,
+      transparent: true,
+      opacity: 0.92
+    });
+    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    hubGroup.add(coreMesh);
+
+    // Orbiting ring
+    const ringGeo = new THREE.RingGeometry(0.42, 0.48, 24);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: hubColor,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: vh.active ? 0.85 : 0.35,
+      blending: THREE.AdditiveBlending
+    });
+    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+    ringMesh.rotation.x = Math.PI / 3;
+    hubGroup.add(ringMesh);
+
+    hubGroup.coreMesh = coreMesh;
+    hubGroup.ringMesh = ringMesh;
+    hubGroup.baseEmissive = baseEmissive;
+    hubGroup.isVaultActive = vh.active;
+    hubGroup.vaultId = vh.id;
+
+    scene.add(hubGroup);
+    vaultHubMeshes.push(hubGroup);
+
+    if (vh.active) {
+      activeTargetNodes.push({
+        position: hubGroup.position,
+        mesh: coreMesh,
+        id: vh.id,
+        type: 'vault',
+        color: vh.color
+      });
+    }
+  });
+
+  // 3. Update Attention Center
   const a = data.attention;
   attnMesh.position.set(a.x, a.y, a.z);
 
-  // Update trail
+  // 4. Update Previous Trail
   const ap = data.attention_prev;
   const positions = trailLine.geometry.attributes.position;
   if (positions) {
@@ -1201,7 +1412,35 @@ function updateSpatial(data) {
     positions.needsUpdate = true;
   }
 
-  // Update legend
+  // 5. Update Active Traversal Route Line
+  const traversalPoints = [new THREE.Vector3(a.x, a.y, a.z)];
+  if (activeTargetNodes.length > 0) {
+    activeTargetNodes.forEach(t => {
+      traversalPoints.push(new THREE.Vector3(t.position.x, t.position.y, t.position.z));
+    });
+  }
+  if (traversalPoints.length >= 2) {
+    activeTraversalLine.geometry.dispose();
+    activeTraversalLine.geometry = new THREE.BufferGeometry().setFromPoints(traversalPoints);
+    activeTraversalLine.visible = true;
+  } else {
+    activeTraversalLine.visible = false;
+  }
+
+  // 6. Update HUD Summary
+  const hudSummary = document.getElementById('traversal-summary');
+  if (hudSummary) {
+    const activeBeliefsCount = (data.active_belief_ids || []).length;
+    const activeMemsCount = (data.active_memory_ids || []).length;
+    const activeVaults = vaultHubData.filter(h => h.active).map(h => h.name.replace(' Vault', ''));
+    if (activeBeliefsCount > 0 || activeMemsCount > 0 || activeVaults.length > 0) {
+      hudSummary.innerHTML = `Pulse #${data.pulse || '•'}: <span style="color:#38bdf8;">${activeBeliefsCount} beliefs, ${activeMemsCount} memories</span> traversed • Vaults: <span style="color:#4ade80;">${activeVaults.join(', ') || 'Standby'}</span>`;
+    } else {
+      hudSummary.innerHTML = `Pulse #${data.pulse || '•'}: Latent Baseline • Cognitive Lattice Idle`;
+    }
+  }
+
+  // 7. Update Legend
   const legendEl = document.getElementById('legend');
   legendEl.innerHTML = '';
   seenCategories.forEach(cat => {
@@ -1211,10 +1450,14 @@ function updateSpatial(data) {
     item.innerHTML = `<span class="legend-dot" style="background:${CAT_COLORS[cat]||'#666'}"></span>${cat}`;
     legendEl.appendChild(item);
   });
+  const vItem = document.createElement('span');
+  vItem.className = 'legend-item';
+  vItem.innerHTML = `<span class="legend-dot" style="background:#06b6d4;box-shadow:0 0 4px #06b6d4;"></span>Vaults`;
+  legendEl.appendChild(vItem);
 
   document.getElementById('point-count').textContent = data.point_count;
 
-  // Construct dynamic translucent habitus lattice using K-nearest neighbors
+  // 8. Construct dynamic translucent habitus lattice using K-nearest neighbors
   if (latticeMesh) {
     scene.remove(latticeMesh);
     latticeMesh.geometry.dispose();
@@ -1251,7 +1494,7 @@ function updateSpatial(data) {
     const edgeMat = new THREE.LineBasicMaterial({
       color: 0x818cf8,
       transparent: true,
-      opacity: 0.32,
+      opacity: 0.28,
       blending: THREE.AdditiveBlending
     });
     latticeMesh = new THREE.LineSegments(edgeGeo, edgeMat);
@@ -1280,6 +1523,29 @@ function updateGauges(data) {
   const badge = document.getElementById('state-badge');
   badge.textContent = data.state;
   badge.className = 'status-badge ' + (data.state || '').toLowerCase();
+
+  const pauseBtn = document.getElementById('agent-pause-btn');
+  const offlineBtn = document.getElementById('agent-offline-btn');
+  if (pauseBtn) {
+    if (data.state === 'OFFLINE' || data.is_online === false) {
+      pauseBtn.disabled = true;
+      pauseBtn.textContent = '⏸️ Pause';
+      pauseBtn.classList.remove('is-paused');
+      if (offlineBtn) offlineBtn.disabled = true;
+    } else {
+      pauseBtn.disabled = false;
+      if (offlineBtn) offlineBtn.disabled = false;
+      if (data.is_paused || data.state === 'PAUSED') {
+        pauseBtn.textContent = '▶️ Resume';
+        pauseBtn.classList.add('is-paused');
+        pauseBtn.title = 'Resume Agent autonomous cognitive pulses';
+      } else {
+        pauseBtn.textContent = '⏸️ Pause';
+        pauseBtn.classList.remove('is-paused');
+        pauseBtn.title = 'Pause Agent autonomous cognitive pulses';
+      }
+    }
+  }
 
   const catList = document.getElementById('cat-list');
   catList.innerHTML = '';
@@ -1326,22 +1592,78 @@ function animate() {
   controls.update();
   time += 0.02;
   attnMesh.rotation.y = time;
-  attnMesh.scale.setScalar(1 + Math.sin(time * 2) * 0.15);
+  attnMesh.scale.setScalar(1 + Math.sin(time * 2) * 0.12);
 
-  // Animate Psi Wave Packets traveling through habitus lattice
-  if (pointData.length > 1) {
+  // Rotate vault hubs & pulse active hubs
+  vaultHubMeshes.forEach(hub => {
+    hub.rotation.y += 0.015;
+    if (hub.ringMesh) hub.ringMesh.rotation.z -= 0.025;
+    if (hub.coreMesh && hub.coreMesh.material) {
+      const base = hub.baseEmissive || 0.5;
+      hub.coreMesh.material.emissiveIntensity = THREE.MathUtils.lerp(
+        hub.coreMesh.material.emissiveIntensity,
+        base + (hub.isVaultActive ? Math.sin(time * 3) * 0.4 : 0),
+        0.05
+      );
+    }
+  });
+
+  // Smoothly lerp point meshes emissive intensity and scale back to base
+  pointMeshes.forEach(m => {
+    if (m.material && m.baseEmissive !== undefined) {
+      m.material.emissiveIntensity = THREE.MathUtils.lerp(m.material.emissiveIntensity, m.baseEmissive, 0.04);
+    }
+    if (m.baseRadius) {
+      const curScale = m.scale.x;
+      m.scale.setScalar(THREE.MathUtils.lerp(curScale, 1.0, 0.06));
+    }
+  });
+
+  // Pulse Active Traversal Line
+  if (activeTraversalLine && activeTraversalLine.visible) {
+    activeTraversalLine.material.opacity = 0.55 + Math.sin(time * 3.5) * 0.35;
+  }
+
+  // Animate Real-Time Targeted Signal Packets
+  const hasActive = activeTargetNodes.length > 0;
+  const pool = hasActive ? activeTargetNodes : pointData;
+
+  if (pool.length > 0) {
     psiPackets.forEach((p) => {
       p.progress += p.speed;
       if (p.progress >= 1.0) {
         p.progress = 0.0;
+        p.hasTriggeredFlash = false;
         const src = attnMesh.position;
-        const target = pointData[Math.floor(Math.random() * pointData.length)];
+
+        // Choose target from actual active nodes (or resting nodes)
+        p.targetIndex = (p.targetIndex + 1) % pool.length;
+        const targetObj = pool[p.targetIndex];
+
         p.start.copy(src);
-        p.end.set(target.x, target.y, target.z);
+        if (targetObj.position) {
+          p.end.copy(targetObj.position);
+          p.targetMesh = targetObj.mesh;
+          p.mesh.material.color.set(targetObj.color || 0x38bdf8);
+        } else {
+          p.end.set(targetObj.x, targetObj.y, targetObj.z);
+          p.targetMesh = pointMeshes[p.targetIndex] || null;
+          p.mesh.material.color.set(targetObj.color || 0x38bdf8);
+        }
         p.mesh.visible = true;
       }
+
+      // Flash node as packet arrives
+      if (p.progress >= 0.92 && !p.hasTriggeredFlash) {
+        if (p.targetMesh && p.targetMesh.material) {
+          p.targetMesh.material.emissiveIntensity = 2.4;
+          p.targetMesh.scale.setScalar(1.4);
+        }
+        p.hasTriggeredFlash = true;
+      }
+
       p.mesh.position.lerpVectors(p.start, p.end, p.progress);
-      const s = Math.sin(p.progress * Math.PI) * 1.6;
+      const s = Math.sin(p.progress * Math.PI) * (hasActive ? 2.0 : 1.4);
       p.mesh.scale.setScalar(Math.max(0.01, s));
     });
   }
@@ -1468,7 +1790,7 @@ setInterval(() => {
 
 setInterval(() => {
   fetch('/api/spatial').then(r=>r.json()).then(updateSpatial).catch(()=>{});
-}, 10000);
+}, 3000);
 setInterval(() => {
   fetch('/api/status').then(r=>r.json()).then(updateGauges).catch(()=>{});
 }, 5000);
@@ -1671,6 +1993,75 @@ async function uploadStagedFile(file) {
   } catch (err) {
     console.error('Failed to upload staged file:', err);
   }
+}
+
+// ── Agent Lifecycle Controls (Pause/Resume & Safe Offline) ─────────
+const pauseBtnEl = document.getElementById('agent-pause-btn');
+const offlineBtnEl = document.getElementById('agent-offline-btn');
+
+if (pauseBtnEl) {
+  pauseBtnEl.addEventListener('click', async () => {
+    const isCurrentlyPaused = pauseBtnEl.classList.contains('is-paused');
+    const action = isCurrentlyPaused ? 'resume' : 'pause';
+    pauseBtnEl.disabled = true;
+    try {
+      const res = await fetch('/api/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        if (action === 'pause') {
+          pauseBtnEl.textContent = '▶️ Resume';
+          pauseBtnEl.classList.add('is-paused');
+          pauseBtnEl.title = 'Resume Agent autonomous cognitive pulses';
+        } else {
+          pauseBtnEl.textContent = '⏸️ Pause';
+          pauseBtnEl.classList.remove('is-paused');
+          pauseBtnEl.title = 'Pause Agent autonomous cognitive pulses';
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to ${action} agent:`, err);
+    } finally {
+      pauseBtnEl.disabled = false;
+      fetchStatus();
+    }
+  });
+}
+
+if (offlineBtnEl) {
+  offlineBtnEl.addEventListener('click', async () => {
+    const confirmed = confirm(
+      "Safely take the agent offline?\n\n" +
+      "The active pulse will finish, and all memory, belief, and spatial state will be cleanly committed to disk before shutting down."
+    );
+    if (!confirmed) return;
+
+    offlineBtnEl.disabled = true;
+    if (pauseBtnEl) pauseBtnEl.disabled = true;
+
+    try {
+      const res = await fetch('/api/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'shutdown' })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        const badge = document.getElementById('state-badge');
+        if (badge) {
+          badge.textContent = 'OFFLINE';
+          badge.className = 'status-badge offline';
+        }
+      }
+    } catch (err) {
+      console.error('Failed to take agent offline:', err);
+    } finally {
+      setTimeout(fetchStatus, 1500);
+    }
+  });
 }
 
 // Initial background poll for staged count

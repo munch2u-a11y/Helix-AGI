@@ -538,6 +538,7 @@ class BeliefStore:
             "verifications", "stability_index", "position_8d",
             "mass", "last_accessed", "access_count",
             "encoding_lagrangian", "tags", "tool_bindings",
+            "successful_uses", "last_successful_use",
         }
 
         for category in BELIEF_CATEGORIES:
@@ -1346,16 +1347,22 @@ class BeliefStore:
 
                 t_score = 0.40 * min(1.0, math.log2(days_held + 1) / math.log2(31))
 
-                # 3. Reliance (R) → Max +0.20 if 5 beliefs link to this
+                # 3. Reliance (R) → Max +0.20 if 5 beliefs link to this or proven tool/action utility
                 r_count = inbound_counts.get(b.get("id", ""), 0)
-                r_score = 0.20 * min(1.0, r_count / 5.0)
+                uses_count = float(b.get("successful_uses", 0))
+                effective_reliance = max(float(r_count), min(5.0, uses_count))
+                r_score = 0.20 * min(1.0, effective_reliance / 5.0)
 
                 # 4. Verifications (V) → Max +0.20 if 10 verifications
                 v_count = float(b.get("verifications", 1.0))
                 v_score = 0.20 * min(1.0, v_count / 10.0)
 
                 # 5. Stability modifier (S) → 0.0 to 1.0 (default 0.5)
+                # Repeated verified empirical usage grounds practical stability
                 s_index = float(b.get("stability_index", 0.5))
+                if uses_count >= 3:
+                    s_index = min(1.0, max(s_index, 0.5 + 0.1 * min(5.0, uses_count - 2.0)))
+                    b["stability_index"] = round(s_index, 4)
                 s_modifier = 0.5 + s_index
 
                 # Master Equation

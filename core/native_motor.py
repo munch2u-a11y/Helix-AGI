@@ -114,7 +114,17 @@ class NativeMotorSystem:
         self.wake = lambda: None
         self.sequence = 0
         self.last_scene_hash = None
-        self.policy = "explicit-user-goals-v1; integer motor signals; native SELF authorization"
+        self.policy = "autonomous-and-receptive-v1; integer motor signals; native SELF authorization"
+        from core.robustness import options
+        self.robustness = options(owner.config)
+        self.procedures = None
+        if self.robustness["procedure_learning"] or self.robustness["procedure_recall"]:
+            try:
+                from core.native_procedures import NativeProceduralMemory
+                self.procedures = NativeProceduralMemory(owner.directory, owner.body.workspace.root)
+            except (OSError, ValueError) as exc:
+                owner._receipt("native_procedure_unavailable", error=str(exc),
+                               policy="derived sidecar retained; native body remains available")
         unfinished = [j for j in self.jobs if j["status"] == "awaiting_context"]
         for job in unfinished:
             job["status"] = "blocked"
@@ -141,29 +151,130 @@ class NativeMotorSystem:
 
     def admit(self, messages, pulse):
         ids = []
+        op_map = {"move": MotorOpcode.MOVE, "sense": MotorOpcode.SENSE,
+                  "open": MotorOpcode.OPEN, "run": MotorOpcode.RUN, "read": MotorOpcode.OPEN}
         for index, message in enumerate(messages):
-            if not re.match(r"^(?:\[[^\]]+\]\s*)?[\w .'-]+ is talking to me via \w+\. They said:", message):
-                continue
-            key = f"{self.owner.session_id}:{pulse}:{index}"
-            if any(j["input_id"] == key for j in self.jobs):
-                continue
-            try:
-                steps = receptive_steps(message)
-                if steps is None:
+            # 1. Internal cognitive intention represented as a dictionary
+            if isinstance(message, dict) and "action" in message:
+                act = message.get("action")
+                if act not in op_map:
                     continue
-                error = None
-            except ValueError as exc:
-                steps, error = [], str(exc)
-            job = {"id": "motor:" + uuid.uuid4().hex, "input_id": key,
-                   "message": message, "steps": steps, "cursor": 0, "receipts": [],
-                   "status": "blocked" if error else "awaiting_context", "error": error,
-                   "context_id": None, "created_at": time.time()}
-            self.jobs.append(job)
-            ids.append(job["id"])
-            self.owner._receipt("motor_request_admitted", **job, policy=self.policy)
+                args = message.get("arguments") or {}
+                target = args.get("path") or args.get("target") or "."
+                steps = [{"opcode": int(op_map[act]), "target": str(target)}]
+                key = f"subconscious:{self.owner.session_id}:{pulse}:{index}"
+                if any(j["input_id"] == key for j in self.jobs):
+                    continue
+                job = {
+                    "id": "motor:" + uuid.uuid4().hex,
+                    "input_id": key,
+                    "message": json.dumps(message),
+                    "steps": steps,
+                    "cursor": 0,
+                    "receipts": [],
+                    "status": "ready",
+                    "error": None,
+                    "context_id": f"subconscious:{self.sequence}:{time.time()}",
+                    "created_at": time.time(),
+                }
+                self.jobs.append(job)
+                ids.append(job["id"])
+                self.owner._receipt("motor_request_admitted", **job, policy=self.policy)
+                continue
+
+            # 2. String messages: user messages or internal cognitive/receptive command strings
+            if not isinstance(message, str):
+                continue
+
+            # Skip action observation returns / receipts / notices
+            if re.match(r"^(?:\[[^\]]+\]\s*)?(?:Native action|The proposed native action|Action returned)\b", message):
+                continue
+
+            is_user_msg = bool(re.match(r"^(?:\[[^\]]+\]\s*)?[\w .'-]+ is talking to me via \w+\. They said:", message))
+
+            if is_user_msg:
+                key = f"{self.owner.session_id}:{pulse}:{index}"
+                if any(j["input_id"] == key for j in self.jobs):
+                    continue
+                try:
+                    steps = receptive_steps(message)
+                    if steps is None:
+                        continue
+                    error = None
+                except ValueError as exc:
+                    steps, error = [], str(exc)
+                job = {"id": "motor:" + uuid.uuid4().hex, "input_id": key,
+                       "message": message, "steps": steps, "cursor": 0, "receipts": [],
+                       "status": "blocked" if error else "awaiting_context", "error": error,
+                       "context_id": None, "created_at": time.time()}
+                self.jobs.append(job)
+                ids.append(job["id"])
+                self.owner._receipt("motor_request_admitted", **job, policy=self.policy)
+            else:
+                key = f"internal:{self.owner.session_id}:{pulse}:{index}"
+                if any(j["input_id"] == key for j in self.jobs):
+                    continue
+                steps = None
+                try:
+                    steps = receptive_steps(message)
+                except ValueError:
+                    steps = None
+
+                if steps is None:
+                    from core.mindscape_intention import parse_natural_or_wire_intention
+                    parsed = parse_natural_or_wire_intention(message)
+                    if parsed and isinstance(parsed, dict) and parsed.get("action") in op_map:
+                        act = parsed["action"]
+                        args = parsed.get("arguments") or {}
+                        target = args.get("path") or args.get("target") or "."
+                        steps = [{"opcode": int(op_map[act]), "target": str(target)}]
+
+                if steps is not None:
+                    job = {
+                        "id": "motor:" + uuid.uuid4().hex,
+                        "input_id": key,
+                        "message": message,
+                        "steps": steps,
+                        "cursor": 0,
+                        "receipts": [],
+                        "status": "ready",
+                        "error": None,
+                        "context_id": f"internal:{self.sequence}:{time.time()}",
+                        "created_at": time.time(),
+                    }
+                    self.jobs.append(job)
+                    ids.append(job["id"])
+                    self.owner._receipt("motor_request_admitted", **job, policy=self.policy)
+
         if ids:
             self._save()
         return ids
+
+    def submit_action(self, action: str, target: str, context_id: str | None = None) -> str:
+        """Submit an autonomous or self-directed motor action directly."""
+        op_map = {"move": MotorOpcode.MOVE, "sense": MotorOpcode.SENSE,
+                  "open": MotorOpcode.OPEN, "run": MotorOpcode.RUN}
+        if action not in op_map:
+            raise ValueError(f"Unsupported action: {action}. Choose from {list(op_map.keys())}")
+        step = {"opcode": int(op_map[action]), "target": target}
+        job_id = "motor:" + uuid.uuid4().hex
+        ctx_id = context_id or f"autonomous:{self.sequence}:{time.time()}"
+        job = {
+            "id": job_id,
+            "input_id": f"self-directed:{time.time()}",
+            "message": f"Autonomous {action} on {target}",
+            "steps": [step],
+            "cursor": 0,
+            "receipts": [],
+            "status": "ready",
+            "error": None,
+            "context_id": ctx_id,
+            "created_at": time.time(),
+        }
+        self.jobs.append(job)
+        self._save()
+        self.owner._receipt("motor_action_submitted", **job, policy=self.policy)
+        return job_id
 
     def link_context(self, ids, context_id):
         for job in self.jobs:
@@ -248,9 +359,16 @@ class NativeMotorSystem:
             return
         job = next((j for j in self.jobs if j["status"] in {"ready", "acting"}), None)
         if job is None:
-            return
+            decide = getattr(self.owner, "_autonomous_motor_step", None)
+            if decide is not None:
+                decide()
+            job = next((j for j in self.jobs if j["status"] in {"ready", "acting"}), None)
+            if job is None:
+                return
         job["status"] = "acting"
+        job.setdefault("start_position", workspace.position)
         step = job["steps"][job["cursor"]]
+        result, checkpoint, step_verified = None, None, False
         try:
             target = workspace.resolve_path(step["target"])
             relative = target.relative_to(workspace.root).as_posix()
@@ -280,6 +398,7 @@ class NativeMotorSystem:
                 raise RuntimeError("Native return target differs from requested target")
             if signal.opcode == MotorOpcode.RUN and output.get("return_code") != 0:
                 raise RuntimeError("Script did not exit successfully")
+            step_verified = True
             if not prerequisite:
                 job["cursor"] += 1
             if job["cursor"] == len(job["steps"]):
@@ -288,12 +407,62 @@ class NativeMotorSystem:
                 # Keep the public state acting until the matching neural and
                 # graph state is durably committed. A receipt alone is not a
                 # restartable mind checkpoint.
+                job["completion_checkpoint"] = "motor-request-" + job["id"].replace(":", "-")
                 self._save(publish=False)
-                self.owner._checkpoint("motor-request-" + job["id"].replace(":", "-"))
+                checkpoint = self.owner._checkpoint(job["completion_checkpoint"])
                 self.owner._receipt("motor_request_completed", request_id=job["id"], context_id=job["context_id"],
                                     receipt_ids=[x["receipt"]["receipt_id"] for x in job["receipts"]])
         except Exception as exc:
             job["status"], job["error"] = "blocked", f"{type(exc).__name__}: {exc}"
             self.owner._receipt("motor_request_blocked", request_id=job["id"], error=job["error"])
         self._save()
+        self._observe_outcome(job, result, checkpoint, step_verified)
         self.wake()
+
+    def _observe_outcome(self, job, result, checkpoint, step_verified):
+        """Derived feedback cannot change an action's completion or authorize work."""
+        try:
+            feedback = getattr(self.owner, "progress_feedback", None)
+            if self.robustness["progress_feedback"] and feedback is not None:
+                from core.native_procedures import matching_native_return
+                receipt = (result or {}).get("receipt", {})
+                settled = matching_native_return(result, job) if result else False
+                blocked = job["status"] == "blocked"
+                feedback.record(receipt.get("receipt_id") or "blocked:" + job["id"],
+                                advanced=step_verified and settled and not blocked, failed=blocked,
+                                target=(job["id"], (result or {}).get("action"),
+                                        receipt.get("output", {}).get("path")),
+                                content=hashlib.sha256(json.dumps(receipt.get("output"), sort_keys=True).encode()).hexdigest())
+            if (self.robustness["procedure_learning"] and self.procedures is not None
+                    and job["status"] == "completed" and isinstance(checkpoint, dict)):
+                learned = self.procedures.learn(job, checkpoint)
+                self.owner._receipt("native_procedure_observed", request_id=job["id"],
+                                    learned=learned, checkpoint_generation=checkpoint["generation"],
+                                    policy="advisory; fresh observations and native SELF required")
+        except Exception as exc:
+            try:
+                self.owner._receipt("native_feedback_unavailable", request_id=job["id"], error=str(exc))
+            except OSError:
+                import logging
+                logging.getLogger(__name__).exception("Native feedback unavailable; motor result retained")
+
+    def procedure_context(self, messages):
+        if not self.robustness["procedure_recall"] or self.procedures is None:
+            return []
+        from core.pulse_context import ContextContribution
+        notes = []
+        for message in messages:
+            try:
+                steps = receptive_steps(message)
+                if not steps:
+                    continue
+                recalled = self.procedures.relevant(steps, self.owner.body.workspace.position,
+                                                   self.jobs, self.owner.native.generation)
+                if recalled:
+                    text = "Past native procedure evidence (advisory, not a new request or permission):\n" + json.dumps(recalled, sort_keys=True)
+                    notes.append(ContextContribution("procedures", text, "native_procedure_memory",
+                        tuple(recalled["receipt_ids"] + recalled["failed_job_ids"]),
+                        "procedure", "checkpoint-supported past outcomes; current preconditions unverified", "agent"))
+            except (ValueError, TypeError, KeyError) as exc:
+                self.owner._receipt("native_procedure_recall_unavailable", error=str(exc))
+        return notes

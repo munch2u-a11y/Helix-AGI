@@ -5,7 +5,7 @@ Tests the full lifecycle:
   1. Failure capture — tool errors are queued as pending belief candidates
   2. Dedup — same (tool, error-signature) within 6h cooldown is not re-queued
   3. Belief store round-trip — distilled lessons carry tool_bindings
-  4. Verification loop — injected lesson + tool success = stability bump
+  4. Scoped successful exposure — outcome association never verifies a lesson
   5. Workflow skill — deterministic direct-write to skills category
   6. Express lane injection via belief cache
   7. Nightly note compilation (curator Phase 7 path)
@@ -214,7 +214,7 @@ def test_belief_with_tool_bindings(h: ToolLearningTestHarness):
 
 
 def test_verification_loop(h: ToolLearningTestHarness):
-    """Injected lesson + subsequent tool success = stability bump."""
+    """Matched lesson exposure is recorded without promoting truth or stability."""
     print("\n" + "=" * 60)
     print("TEST 5: Verification Loop")
     print("=" * 60)
@@ -254,15 +254,15 @@ def test_verification_loop(h: ToolLearningTestHarness):
         "run_command",
         {"command": "df -h"},
         "Filesystem      Size  Used Avail Use%\n/dev/sda1       100G   45G   55G  45%",
+        context_id="test:verification", lesson_ids={bid},
     )
 
-    # Check: stability and verifications should have been bumped
+    # A matched outcome records exposure, never causal proof of the lesson.
     updated = h.belief_store.get_belief(bid)
-    assert updated["stability_index"] > initial_stability, \
-        f"Stability should have increased: {initial_stability} -> {updated['stability_index']}"
-    assert updated["verifications"] > initial_verifications, \
-        f"Verifications should have increased: {initial_verifications} -> {updated['verifications']}"
-    print(f"  ✓ After success: stability={updated['stability_index']}, verifications={updated['verifications']}")
+    assert updated["successful_uses"] == 1
+    assert updated["stability_index"] == initial_stability
+    assert updated["verifications"] == initial_verifications
+    assert updated["last_successful_use"]["context_id"] == "test:verification"
 
     # Verify bump was consumed
     stats_after = h.tlt.get_stats()
@@ -309,12 +309,14 @@ def test_verification_ttl_expiry(h: ToolLearningTestHarness):
         "write_to_file",
         {"path": "/tmp/test.txt"},
         "File written successfully",
+        context_id="test:expired", lesson_ids={bid},
     )
 
     belief = h.belief_store.get_belief(bid)
     assert belief["stability_index"] == 0.5, \
         f"Stability should NOT have changed: {belief['stability_index']}"
-    print(f"  ✓ Expired injection not bumped: stability still {belief['stability_index']}")
+    assert belief.get("successful_uses", 0) == 0
+    print("  ✓ Expired injection receives no exposure credit")
 
     return True
 
@@ -498,23 +500,19 @@ def test_end_to_end_scenario(h: ToolLearningTestHarness):
         "run_command",
         {"command": "git remote -v"},
         "origin  https://github.com/user/repo.git (fetch)\norigin  https://github.com/user/repo.git (push)",
+        context_id="test:end-to-end", lesson_ids=set(lesson_ids),
     )
 
-    # All lessons bound to run_command should have been bumped
-    print("\n  --- Verification results ---\n")
-    bumped = 0
+    # Only the admitted lessons receive successful-exposure observations.
+    matched = 0
     for bid in lesson_ids:
-        b = h.belief_store.get_belief(bid)
-        if b["stability_index"] > 0.5 or b["verifications"] > 1.0:
-            bumped += 1
-            print(f"  ✓ {bid}: stability={b['stability_index']:.2f}, "
-                  f"verifications={b['verifications']:.1f} — VERIFIED")
-        else:
-            print(f"  ○ {bid}: stability={b['stability_index']:.2f}, "
-                  f"verifications={b['verifications']:.1f} — not bumped")
-
-    assert bumped >= 1, "At least one lesson should have been verified"
-    print(f"\n  ✓ {bumped}/{len(lesson_ids)} lessons verified by tool success")
+        belief = h.belief_store.get_belief(bid)
+        if belief.get("successful_uses", 0):
+            matched += 1
+        assert belief["stability_index"] == 0.5
+        assert belief["verifications"] == 1.0
+    assert matched >= 1, "At least one matched lesson exposure should be recorded"
+    print(f"  ✓ {matched}/{len(lesson_ids)} successful exposures; lesson claims remain unverified")
 
     # Final stats
     final_stats = h.tlt.get_stats()

@@ -12,7 +12,7 @@ from collections.abc import Mapping
 
 
 DEFAULT_PROFILES = {
-    "conversation": {"personal": 2.0, "prior_user": 2.0, "work": 2.0, "task": 2.0},
+    "conversation": {"personal": 2.0, "prior_user": 2.0, "prior_assistant": 2.0, "work": 2.0, "task": 2.0},
     "action": {"procedures": 3.0, "observations": 2.5, "work": 2.5, "task": 2.0},
     "writing": {"procedures": 2.0, "recalled": 2.0, "personal": 1.5},
     "inquiry": {"recalled": 3.0, "observations": 2.0, "associations": 1.5, "work": 2.0},

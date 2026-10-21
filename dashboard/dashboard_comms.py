@@ -36,7 +36,8 @@ class DashboardComms:
     def __init__(self, path: Path = None):
         if path is None:
             root = Path(__file__).resolve().parent.parent
-            config_path = root / "config/config.json"
+            from core.mindscape_config import configuration_path
+            config_path = configuration_path(root)
             config = json.loads(config_path.read_text()) if config_path.exists() else {}
             data = Path(config.get("data_dir", "data"))
             path = (data if data.is_absolute() else root / data) / "dashboard_messages.json"
@@ -48,7 +49,7 @@ class DashboardComms:
         """Create the message file if it doesn't exist."""
         if not self._path.exists():
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._write_state({"inbound": [], "outbound": [], "outbound_base": 0})
+            self._write_state({"inbound": [], "outbound": [], "outbound_base": 0, "control": []})
 
     def _read_state(self) -> dict:
         """Read the full message state from disk."""
@@ -56,14 +57,15 @@ class DashboardComms:
             with open(self._path, "r", encoding="utf-8") as f:
                 state = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
-            return {"inbound": [], "outbound": [], "outbound_base": 0}
+            return {"inbound": [], "outbound": [], "outbound_base": 0, "control": []}
 
         if not isinstance(state, dict):
-            return {"inbound": [], "outbound": [], "outbound_base": 0}
+            return {"inbound": [], "outbound": [], "outbound_base": 0, "control": []}
 
         state.setdefault("inbound", [])
         state.setdefault("outbound", [])
         state.setdefault("outbound_base", 0)
+        state.setdefault("control", [])
         return state
 
     def _write_state(self, state: dict):
@@ -119,7 +121,14 @@ class DashboardComms:
             state = self._read_state()
             state["outbound"].append(msg)
             self._write_state(state)
+            published = self._read_state()
+            if published.get("outbound", []) != state["outbound"]:
+                raise OSError("Dashboard outbound read-back differs; delivery not established")
+            receipt = {"path": str(self._path),
+                       "index": int(state.get("outbound_base", 0)) + len(state["outbound"]) - 1,
+                       "message": msg}
         logger.info(f"Dashboard outbound → {recipient}: {message[:80]}")
+        return receipt
 
     def get_outbound(self, since: int = 0) -> List[Dict[str, Any]]:
         """Get outbound messages from index `since` onward.
@@ -139,6 +148,78 @@ class DashboardComms:
         with self._lock:
             state = self._read_state()
         return int(state.get("outbound_base", 0)) + len(state.get("outbound", []))
+
+    # ── Control Commands (Browser → Helix) ───────────────────────────
+
+    def push_control(self, command: str, payload: Optional[Dict[str, Any]] = None):
+        """Queue a control command (e.g. 'pause', 'resume', 'shutdown')."""
+        if not command:
+            return
+        cmd_obj = {
+            "command": command.strip().lower(),
+            "payload": payload or {},
+            "timestamp": time.time(),
+        }
+        with self._lock:
+            state = self._read_state()
+            state.setdefault("control", [])
+            state["control"].append(cmd_obj)
+            self._write_state(state)
+        logger.info(f"Dashboard control queued: {command}")
+
+    def pop_control(self) -> List[Dict[str, Any]]:
+        """Consume all pending control commands."""
+        with self._lock:
+            state = self._read_state()
+            pending = state.get("control", [])
+            if not pending:
+                return []
+            state["control"] = []
+            self._write_state(state)
+        return pending
+
+    # ── Process Lifecycle & PID Tracking ─────────────────────────────
+
+    @property
+    def pid_file(self) -> Path:
+        return self._path.parent / "helix.pid"
+
+    def write_pid(self, pid: int, agent_name: str = "Helix"):
+        """Record the active Helix process PID."""
+        try:
+            self.pid_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.pid_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "pid": pid,
+                    "agent_name": agent_name,
+                    "started_at": time.time(),
+                }, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to write pid file: {e}")
+
+    def clear_pid(self):
+        """Remove the active PID file upon clean shutdown."""
+        try:
+            if self.pid_file.exists():
+                self.pid_file.unlink()
+        except Exception as e:
+            logger.error(f"Failed to clear pid file: {e}")
+
+    def get_agent_process(self) -> Optional[Dict[str, Any]]:
+        """Check if the agent process is actively running via its PID."""
+        if not self.pid_file.exists():
+            return None
+        try:
+            with open(self.pid_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            pid = data.get("pid")
+            if not pid or not isinstance(pid, int):
+                return None
+            import os
+            os.kill(pid, 0)
+            return data
+        except (OSError, json.JSONDecodeError):
+            return None
 
 
 # ── Module-level singleton ────────────────────────────────────────────

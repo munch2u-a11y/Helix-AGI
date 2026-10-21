@@ -95,7 +95,8 @@ def write_session_marker():
     try:
         _SESSION_MARKER_PATH.parent.mkdir(parents=True, exist_ok=True)
         config_data = {}
-        config_path = _BASE_DIR / "config" / "config.json"
+        from core.mindscape_config import configuration_path
+        config_path = configuration_path(_BASE_DIR)
         if config_path.exists():
             try:
                 with open(config_path, "r") as f:
@@ -207,7 +208,8 @@ def check_unclean_shutdown() -> Optional[dict]:
 
     # Read configuration safely
     config_data = {}
-    config_path = _BASE_DIR / "config" / "config.json"
+    from core.mindscape_config import configuration_path
+    config_path = configuration_path(_BASE_DIR)
     if config_path.exists():
         try:
             with open(config_path, "r") as f:
@@ -306,7 +308,8 @@ def generate_crash_report(exc_type, exc_value, exc_traceback, is_thread=False, t
 
     # Read config
     config_data = {}
-    config_path = _BASE_DIR / "config" / "config.json"
+    from core.mindscape_config import configuration_path
+    config_path = configuration_path(_BASE_DIR)
     if config_path.exists():
         try:
             with open(config_path, "r") as f:

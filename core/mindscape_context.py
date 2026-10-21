@@ -11,7 +11,11 @@ import re
 from context_loom.compiler import ContextCompiler
 from context_loom.models import Candidate
 from core.context_focus import infer_focus, resolve_profiles
-from core.pulse_context import PulseContext, SECTION_TITLES
+from core.pulse_context import PulseContext, SECTION_TITLES, PULSE_SECTION_ORDER
+
+
+class ContextItemBudgetExceeded(ValueError):
+    """Required current experience cannot fit the configured attention budget."""
 
 
 class MindscapeContextCompiler(ContextCompiler):
@@ -19,7 +23,7 @@ class MindscapeContextCompiler(ContextCompiler):
     optional_selection_policy = "independent memory-role streams; focus-weighted space allocation; no cross-module relevance score"
     optional_admission_reason = "selected within a memory role and producer; fits shared physical context"
 
-    def __init__(self, *args, focus_profiles=None, **kwargs):
+    def __init__(self, *args, focus_profiles=None, item_limit=None, **kwargs):
         if not hasattr(ContextCompiler, "_order_optional_candidates") or not hasattr(ContextCompiler, "_candidate_admitted"):
             raise RuntimeError("Configured MightyMem compiler lacks role-composition hooks")
         super().__init__(*args, **kwargs)
@@ -27,8 +31,13 @@ class MindscapeContextCompiler(ContextCompiler):
         self._supplied_candidates = {}
         self._covered_source_hashes = set()
         self.canonical_roles = {}
+        if item_limit is not None and (type(item_limit) is not int or item_limit < 1):
+            raise ValueError("context_item_limit must be a positive integer or null")
+        self.item_limit = item_limit
 
     def _optional(self, item):
+        if self.item_limit is not None:
+            return item.section not in {"thinking", "messages", "tool_observations", "task"}
         return item.section in {
             "recalled_thought", "personal", "associations", "recalled", "prior_user",
             "prior_assistant", "observations", "procedures", "summary", "topical",
@@ -115,15 +124,38 @@ class MindscapeContextCompiler(ContextCompiler):
             candidate = queues[stream].popleft()
             offered.add(candidate.id)
             self._offered_roles[candidate.id] = stream
+            if self.item_limit is not None and self._used_items + self._item_cost(candidate) > self.item_limit:
+                self._item_deferred.append({
+                    "candidate_id": candidate.id, "source_ids": list(dict.fromkeys([
+                        *candidate.source_record_ids,
+                        *(source for item in self._supplied_candidates.get(candidate.id, ()) for source in item.source_ids)])),
+                    "section": candidate.section, "text": candidate.text,
+                    "item_cost": self._item_cost(candidate), "admitted": False,
+                    "reason": "pulse item budget; retained in source memory for later retrieval"})
+                continue
             # The native compiler checks the complete rendering and calls the
             # admission observer only if this whole contribution actually fits.
             yield candidate
 
     def _candidate_admitted(self, candidate, added_tokens):
+        if self._pulse_context is not None:
+            cost = self._item_cost(candidate)
+            if self.item_limit is not None and self._used_items + cost > self.item_limit:
+                raise ContextItemBudgetExceeded(
+                    f"Required current experience needs {self._used_items + cost} items; "
+                    f"mindscape.context_item_limit is {self.item_limit}; no partial pulse was returned")
+            self._used_items += cost
         stream = self._offered_roles.get(candidate.id) if self._pulse_context else None
         if stream is not None:
             self._role_usage[stream[0]] += added_tokens
             self._producer_usage[stream] += added_tokens
+
+    def _item_cost(self, candidate):
+        if candidate.id in self._supplied_candidates:
+            return len(self._supplied_candidates[candidate.id])
+        # A grouped graph nomination cannot hide multiple source records in a
+        # single slot. Metadata and headings alone do not constitute new items.
+        return max(1, len(set(candidate.source_record_ids)))
 
     def _assembled(self, sections):
         if self._pulse_context is None:
@@ -159,9 +191,17 @@ class MindscapeContextCompiler(ContextCompiler):
         self._role_usage = defaultdict(int)
         self._producer_usage = defaultdict(int)
         self._offered_roles = {}
+        self._item_deferred = []
+        # One fixed identity item in the lean system prompt; all other
+        # information is admitted here, including recalled dialogue/beliefs.
+        self._used_items = 1 + len([item for item in context.selected()[0] if not self._optional(item)])
         self.last_assembly_receipt = None
         original_config = self.config
         try:
+            if self.item_limit is not None and self._used_items > self.item_limit:
+                raise ContextItemBudgetExceeded(
+                    f"Required current experience needs {self._used_items} items including identity; "
+                    f"mindscape.context_item_limit is {self.item_limit}; no input or thought was clipped")
             if input_allowance is not None:
                 if input_allowance <= 0:
                     raise ValueError("No physical provider context remains for this pulse")
@@ -174,6 +214,13 @@ class MindscapeContextCompiler(ContextCompiler):
                 **assembled.receipt(), "loom_packet_id": packet.id,
                 "duplicates": context.selected()[1],
                 "sections": sections,
+                "presentation_order": [key for key in PULSE_SECTION_ORDER if sections.get(key)],
+                "item_budget": {"limit": self.item_limit,
+                                "admitted": self._used_items if self.item_limit is not None else None,
+                                "fixed_identity_items": 1 if self.item_limit is not None else None,
+                                "reason": "user-requested cognitive breadth across pulses, independent of token size",
+                                "overflow": "explicit failure if required current experience cannot fit",
+                                "deferred": self._item_deferred},
                 "policy": self.optional_selection_policy,
                 "admitted_role_tokens": dict(self._role_usage),
                 "admitted_producer_tokens": {f"{role}/{producer}": tokens for (role, producer), tokens
@@ -184,7 +231,8 @@ class MindscapeContextCompiler(ContextCompiler):
                      "reason": entry.reason,
                      "sources": [item.receipt() for item in self._supplied_candidates[entry.candidate_id]]}
                     for entry in packet.manifest if entry.candidate_id in self._supplied_candidates
-                ],
+                ] + [{**entry, "sources": [item.receipt() for item in self._supplied_candidates[entry["candidate_id"]]]}
+                     for entry in self._item_deferred if entry["candidate_id"] in self._supplied_candidates],
                 "section_tokens": {key: self.token_counter.count(
                     f"[{SECTION_TITLES[key]}]\n" + "\n".join(values)) for key, values in sections.items()},
                 "packet_tokens": packet.token_count,
@@ -202,7 +250,7 @@ class MindscapeContextCompiler(ContextCompiler):
 
     def _trust_allowed(self, candidate):
         if self._pulse_context is not None:
-            if candidate.section == "prior_assistant":
+            if candidate.section == "prior_assistant" and self.item_limit is None:
                 request = "\n".join(item.text for item in self._pulse_context.contributions
                                     if item.section in {"messages", "task"}) or self._pulse_context.query
                 requested = re.search(

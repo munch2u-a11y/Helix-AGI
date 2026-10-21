@@ -265,6 +265,52 @@ class OfficeBriefTests(unittest.TestCase):
         selected = retriever._fill_budget(records, max_items=2, token_budget=1)
         self.assertEqual([item["id"] for item in selected], ["a", "b"])
 
+    def test_office_arbiter_blocks_repetitive_candidates(self):
+        candidates = [
+            {
+                "id": "cand_1",
+                "content": "I am standing by and waiting for user instructions on the task.",
+                "office_desk": "semantic_advisor",
+                "relevance": 0.95,
+                "confidence": 0.9,
+            },
+            {
+                "id": "cand_repeat",
+                "content": "I am standing by and waiting for user instructions on this task.",
+                "office_desk": "facts",
+                "relevance": 0.90,
+                "confidence": 0.85,
+            },
+            {
+                "id": "cand_distinct",
+                "content": "The storage volume mounted at /mnt/data is currently 85 percent full.",
+                "office_desk": "beliefs",
+                "relevance": 0.80,
+                "confidence": 0.85,
+            },
+            {
+                "id": "cand_internal_loop",
+                "content": (
+                    "Checking memory status. Checking memory status. Checking memory status. "
+                    "Checking memory status. Checking memory status."
+                ),
+                "office_desk": "beliefs",
+                "relevance": 0.99,
+                "confidence": 0.99,
+            },
+        ]
+        arbiter = OfficeArbiter()
+        selected = arbiter.allocate(
+            candidates,
+            active_desks={"semantic_advisor", "facts", "beliefs"},
+            max_items=2,
+        )
+        selected_ids = [item["id"] for item in selected]
+        self.assertNotIn("cand_internal_loop", selected_ids)
+        self.assertNotIn("cand_repeat", selected_ids)
+        self.assertEqual(selected_ids, ["cand_1", "cand_distinct"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

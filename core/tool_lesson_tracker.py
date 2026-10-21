@@ -12,12 +12,11 @@ deterministic:
      batch service distills them into proper lesson beliefs — the LLM
      does the language, this module does the routing.
 
-  2. VERIFICATION LOOP (lesson injected → tool succeeds → lesson gains)
-     The preconscious reports which tool-bound lessons it injected via
-     note_lessons_injected(). When that tool then succeeds within the
-     TTL window, the lesson's verifications and stability are bumped —
-     lessons that prove useful gain mass, surface more, and survive
-     nightly attrition. Useless lessons decay out naturally.
+  2. SUCCESSFUL EXPOSURE (matched lesson/context + verified tool outcome)
+     A successful tool result can record that an admitted lesson was present.
+     It cannot establish that the lesson caused success or that its claim is
+     true. Successful exposures use separate fields; verification, confidence
+     and stability are unchanged. Unscoped legacy callers receive no credit.
 
   3. WORKFLOW SKILLS (deterministic direct write)
      The WorkflowDetector's crystallized patterns are template-generated
@@ -52,7 +51,7 @@ _FAILURE_RE = re.compile(r"^(Tool error \(|Error\b|Unknown tool)")
 # Re-capture the same (tool, error) signature at most this often.
 _SIGNATURE_COOLDOWN_SECONDS = 6 * 3600
 
-# A success verifies an injected lesson only within this window.
+# A successful exposure may be associated with an injection within this window.
 #
 # Sized originally for a single API tool call, where the gap between
 # injecting a lesson and the tool succeeding is seconds. An orchestrated
@@ -152,20 +151,20 @@ def _queue_candidate(candidate: Dict[str, Any]) -> bool:
 
 # ── 1. Failure capture / success observation ─────────────────────────
 
-def observe_tool_result(tool_name: str, args: Optional[dict], result: str):
-    """Classify a tool result and route it. Called by the executor on
-    EVERY function call — must be cheap and must never raise."""
+def observe_tool_result(tool_name: str, args: Optional[dict], result: str, *,
+                        receipt=None, context_id="", lesson_ids=()):
+    """Capture failure or matched exposure; outcome alone never verifies a lesson."""
     try:
         # Use the same typed boundary as task verification.  The historical
         # prefix-only expression missed real handler returns such as
         # ``Search failed: ...`` and ``Could not deliver ...``, causing a
         # failed path to verify its lesson as though it had succeeded.
         from core.action_protocol import classify_tool_result
-        receipt = classify_tool_result(tool_name, args, result)
+        receipt = receipt or classify_tool_result(tool_name, args, result)
         if not receipt.ok:
             _record_failure(tool_name, args, result)
         else:
-            _record_success(tool_name)
+            _record_success(tool_name, receipt=receipt, context_id=context_id, lesson_ids=lesson_ids)
     except Exception as e:
         logger.debug("observe_tool_result failed (non-fatal): %s", e)
 
@@ -210,14 +209,17 @@ def _record_failure(tool_name: str, args: Optional[dict], error: str):
         )
 
 
-def _record_success(tool_name: str):
-    """A tool succeeded — verify any recently injected lesson bound to it."""
-    if _belief_store is None:
+def _record_success(tool_name: str, *, receipt=None, context_id="", lesson_ids=()):
+    """Record a matched successful exposure, never causal verification of a lesson."""
+    from core.action_protocol import verify_receipts, EvidenceLevel
+    if (_belief_store is None or receipt is None or not context_id or not lesson_ids
+            or receipt.evidence not in {EvidenceLevel.OBSERVED, EvidenceLevel.CONFIRMED}
+            or not verify_receipts([receipt]).verified):
         return
 
     now = time.time()
     name = tool_name.lower()
-    to_bump = []
+    to_bump = set()
 
     with _state_lock:
         for note in _recent_injections:
@@ -225,9 +227,9 @@ def _record_success(tool_name: str):
                 continue
             if now - note["t"] > _VERIFICATION_TTL_SECONDS:
                 continue
-            if name in note["tools"]:
+            if name in note["tools"] and note["belief_id"] in lesson_ids:
                 note["bumped"] = True
-                to_bump.append(note["belief_id"])
+                to_bump.add(note["belief_id"])
 
     for bid in to_bump:
         try:
@@ -235,15 +237,16 @@ def _record_success(tool_name: str):
             if not belief:
                 continue
             _belief_store.update_belief(
-                bid, verifications=belief.get("verifications", 1.0) + 1.0,
+                bid, successful_uses=belief.get("successful_uses", 0) + 1,
+                last_successful_use={"call_id": receipt.call_id, "context_id": context_id,
+                                     "tool": tool_name, "evidence": receipt.evidence.value},
             )
-            _belief_store.update_stability_index(bid, +0.05)
             logger.info(
-                "Tool lesson verified by success (%s): %s",
+                "Tool lesson observed alongside a matched successful outcome (%s): %s",
                 tool_name, bid,
             )
         except Exception as e:
-            logger.debug("Lesson verification bump failed for %s: %s", bid, e)
+            logger.debug("Lesson exposure record failed for %s: %s", bid, e)
 
 
 # ── 2. Injection reporting (called by the preconscious) ──────────────

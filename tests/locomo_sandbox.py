@@ -285,6 +285,53 @@ def extract_answer(raw_text: str) -> str:
     return first_line or cleaned.strip()
 
 
+def classify_factual_fate(
+    category: int,
+    answer_em: float,
+    answer_f1: float,
+    evidence: Sequence[str],
+    retrieved_ids: Sequence[str],
+) -> Dict[str, Any]:
+    """Classify the factual outcome of a question into an explicit cognitive fate."""
+    retrieved_set = set(retrieved_ids or [])
+    retrieved_evidence = [eid for eid in (evidence or []) if eid in retrieved_set]
+    missing_evidence = [eid for eid in (evidence or []) if eid not in retrieved_set]
+    retrieval_hit = bool(retrieved_evidence) if evidence else True
+
+    if category == 5:
+        if answer_em >= 1.0 or answer_f1 >= 0.5:
+            fate = "CORRECT_ABSTENTION"
+        else:
+            fate = "FAILED_ABSTENTION"
+    else:
+        if answer_em >= 1.0 or answer_f1 >= 0.5:
+            fate = "ACCURATELY_RECALLED"
+        elif retrieval_hit:
+            fate = "LOST_IN_REASONING"
+        else:
+            fate = "LOST_IN_RETRIEVAL"
+
+    return {
+        "fate": fate,
+        "retrieval_hit": retrieval_hit,
+        "retrieved_evidence": retrieved_evidence,
+        "missing_evidence": missing_evidence,
+    }
+
+
+class ScriptedObservationSession:
+    """High-throughput scripted operational session for dialogue observation ingestion."""
+
+    def __init__(self):
+        self.history = []
+
+    def send_message(self, message: str) -> str:
+        return "[observation] Noted."
+
+    def close(self) -> None:
+        pass
+
+
 def load_provider_config(backend: str = "auto", model: str = ""):
     from llm.providers.base import ProviderConfig, detect_available_provider
     from scripts.cli_benchmark_adapter import _load_helix_credentials
@@ -301,6 +348,28 @@ def load_provider_config(backend: str = "auto", model: str = ""):
                 "url": os.environ.get("OLLAMA_URL", "http://localhost:11434"),
             },
         )
+
+    if backend == "rwkv":
+        rwkv_candidates = [
+            model,
+            os.environ.get("RWKV_MODEL_PATH"),
+            str(Path.home() / "habitus-ai-experiments" / "habitus-mind" / "models" / "rwkv7-g1j-1.5b-20260831-2c18b29"),
+            str(Path.home() / "models" / "rwkv7-g1j-1.5b-20260831-2c18b29"),
+            str(Path("models") / "rwkv7-g1j-1.5b-20260831-2c18b29"),
+        ]
+        resolved_rwkv = next((c for c in rwkv_candidates if c and Path(c).exists()), rwkv_candidates[2])
+        return ProviderConfig(
+            provider_type="rwkv",
+            model=resolved_rwkv,
+            context_window=8192,
+            temperature=0.2,
+            max_output_tokens=128,
+            options={
+                "on_boundary": "truncate",
+                "stop_sequences": ("<|endoftext|>", "\nUser:", "\n\nAssistant:", "\n\n[Pulse", "}\n"),
+            },
+        )
+
 
     _load_helix_credentials()
     provider_config = detect_available_provider()
@@ -567,7 +636,13 @@ def run_operational_pulse(
         previous_answer=previous_answer,
         max_pulses=max_pulses,
     )
-    raw_response = session.send_message(pulse_message)
+    try:
+        raw_response = session.send_message(pulse_message)
+    except RuntimeError as exc:
+        if "RWKV produced only private contemplation" in str(exc):
+            raw_response = getattr(session, "last_contemplation", "") or "[thought] Noted."
+        else:
+            raise
     if str(raw_response).lstrip().lower().startswith("[internal error:"):
         raise RuntimeError(str(raw_response).strip())
 
@@ -610,6 +685,7 @@ def replay_dialogue(
     ingest_batch_size: int = 1,
     maintenance_mode: str = "off",
     maintenance_model: str = "",
+    ingest_mode: str = "scripted",
 ) -> Dict[str, Any]:
     """Replay live sessions with optional between-session maintenance."""
     from llm.providers.base import create_session
@@ -640,13 +716,16 @@ def replay_dialogue(
             for turn in conv[session_key]
         ]
         total_turns += len(session_events)
-        session = create_session(
-            provider_config,
-            INGEST_SYSTEM_INSTRUCTION,
-            tool_declarations=None,
-            tool_executor=None,
-            preconscious=runtime["preconscious"],
-        )
+        if ingest_mode == "scripted":
+            session = ScriptedObservationSession()
+        else:
+            session = create_session(
+                provider_config,
+                INGEST_SYSTEM_INSTRUCTION,
+                tool_declarations=None,
+                tool_executor=None,
+                preconscious=runtime["preconscious"],
+            )
         previous_thought = ""
         session_memory_ids: List[str] = []
         try:
@@ -961,6 +1040,7 @@ def run_evaluation(
     model: str = "",
     maintenance: str = "off",
     maintenance_model: str = "",
+    ingest_mode: str = "scripted",
     dry_run: bool = False,
     save_path: Optional[str] = None,
     details_path: Optional[str] = None,
@@ -1031,6 +1111,23 @@ def run_evaluation(
     cat_contextual_recall: Dict[int, Dict[str, List[float]]] = {
         cat: init_recall_store() for cat in CATEGORY_NAMES
     }
+    global_fates: Dict[str, int] = {
+        "ACCURATELY_RECALLED": 0,
+        "LOST_IN_RETRIEVAL": 0,
+        "LOST_IN_REASONING": 0,
+        "CORRECT_ABSTENTION": 0,
+        "FAILED_ABSTENTION": 0,
+    }
+    cat_fates: Dict[int, Dict[str, int]] = {
+        cat: {
+            "ACCURATELY_RECALLED": 0,
+            "LOST_IN_RETRIEVAL": 0,
+            "LOST_IN_REASONING": 0,
+            "CORRECT_ABSTENTION": 0,
+            "FAILED_ABSTENTION": 0,
+        }
+        for cat in CATEGORY_NAMES
+    }
     details: List[Dict[str, Any]] = []
     maintenance_audit: List[Dict[str, Any]] = []
     maintenance_snapshots: List[Dict[str, Any]] = []
@@ -1049,6 +1146,7 @@ def run_evaluation(
                 ingest_batch_size=max(1, ingest_batch_size),
                 maintenance_mode=maintenance,
                 maintenance_model=maintenance_model,
+                ingest_mode=ingest_mode,
             )
             maintenance_audit.extend(replay.get("maintenance", []))
             if maintenance != "off":
@@ -1075,9 +1173,10 @@ def run_evaluation(
                     ],
                 })
             logger.info(
-                "Replayed %d dialogue turns through %d operational pulses.",
+                "Replayed %d dialogue turns through %d operational pulses (ingest_mode=%s).",
                 replay["turn_count"],
                 replay["pulse_count"],
+                ingest_mode,
             )
 
             qa_items = dialogue["qa"]
@@ -1111,6 +1210,17 @@ def run_evaluation(
                 )
                 answer_em, answer_f1 = compute_answer_metrics(agent_result["answer"], answer_target, category)
 
+                fate_info = classify_factual_fate(
+                    category=category,
+                    answer_em=answer_em,
+                    answer_f1=answer_f1,
+                    evidence=evidence,
+                    retrieved_ids=retrieval["unified_ids"],
+                )
+                fate = fate_info["fate"]
+                global_fates[fate] = global_fates.get(fate, 0) + 1
+                cat_fates[category][fate] = cat_fates[category].get(fate, 0) + 1
+
                 global_answer["em"].append(answer_em)
                 global_answer["f1"].append(answer_f1)
                 global_answer["latency"].append(agent_result["latency_ms"])
@@ -1137,6 +1247,10 @@ def run_evaluation(
                         "prediction": agent_result["answer"],
                         "answer_em": answer_em,
                         "answer_f1": answer_f1,
+                        "fate": fate,
+                        "retrieval_hit": fate_info["retrieval_hit"],
+                        "retrieved_evidence": fate_info["retrieved_evidence"],
+                        "missing_evidence": fate_info["missing_evidence"],
                         "evidence": evidence,
                         "contextual_ids": retrieval["contextual_ids"],
                         "semantic_ids": retrieval["semantic_ids"],
@@ -1159,6 +1273,7 @@ def run_evaluation(
     report_lines.append(f"**Questions Evaluated**: {len(global_answer['f1'])}")
     report_lines.append(f"**Question Pulses**: {max_pulses}")
     report_lines.append(f"**Replay Batch Size**: {ingest_batch_size}")
+    report_lines.append(f"**Ingest Mode**: {ingest_mode}")
     report_lines.append(f"**Between-Session Maintenance**: {maintenance}")
     if maintenance == "full":
         report_lines.append(
@@ -1199,6 +1314,40 @@ def run_evaluation(
     report_lines.append(f"| Average Answer F1 | {mean(global_answer['f1']):.4f} |")
     report_lines.append(f"| Avg Latency (ms) | {mean(global_answer['latency']):.2f} ms |")
     report_lines.append(f"| Avg Pulses | {mean(global_answer['pulses']):.2f} |")
+    report_lines.append("")
+
+    report_lines.append("## Factual Information Tracking & Loss Diagnostics")
+    report_lines.append("")
+    total_q = len(details)
+    report_lines.append("| Fate / Bottleneck | Count | Percentage | Description |")
+    report_lines.append("|---|---|---|---|")
+    fates_meta = [
+        ("ACCURATELY_RECALLED", "Accurately Recalled", "Evidence retrieved into context and answer accurately extracted (F1 >= 0.5)"),
+        ("LOST_IN_RETRIEVAL", "Lost in Retrieval", "Evidence turns were never retrieved into the context window"),
+        ("LOST_IN_REASONING", "Lost in Reasoning/Extraction", "Evidence was in context, but the reader failed to extract or infer the answer"),
+        ("CORRECT_ABSTENTION", "Correct Abstention", "Correctly rejected adversarial / unmentioned premise"),
+        ("FAILED_ABSTENTION", "Failed Abstention (Hallucination)", "Hallucinated an answer to an unmentioned premise"),
+    ]
+    for fate_key, label, desc in fates_meta:
+        count = global_fates.get(fate_key, 0)
+        pct = (count / total_q * 100.0) if total_q > 0 else 0.0
+        report_lines.append(f"| {label} | {count} | {pct:.1f}% | {desc} |")
+    report_lines.append("")
+
+    report_lines.append("### Factual Fate by Category")
+    report_lines.append("| Category | Recalled | Lost Retrieval | Lost Reasoning | Correct Abstain | Failed Abstain |")
+    report_lines.append("|---|---|---|---|---|---|")
+    for cat, label in CATEGORY_NAMES.items():
+        if len(cat_answer[cat]["f1"]) == 0:
+            continue
+        c_fates = cat_fates[cat]
+        report_lines.append(
+            f"| {label} | {c_fates.get('ACCURATELY_RECALLED', 0)} | "
+            f"{c_fates.get('LOST_IN_RETRIEVAL', 0)} | "
+            f"{c_fates.get('LOST_IN_REASONING', 0)} | "
+            f"{c_fates.get('CORRECT_ABSTENTION', 0)} | "
+            f"{c_fates.get('FAILED_ABSTENTION', 0)} |"
+        )
     report_lines.append("")
 
     report_lines.append("## Evidence Recall Diagnostics")
@@ -1280,7 +1429,8 @@ def run_evaluation(
     return True
 
 
-def main() -> None:
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser."""
     parser = argparse.ArgumentParser(description="Helix LoCoMo agent benchmark")
     parser.add_argument(
         "--dataset",
@@ -1308,9 +1458,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--backend",
-        choices=("auto", "ollama"),
+        choices=("auto", "ollama", "rwkv"),
         default="auto",
-        help="Reader backend; choose ollama to bypass stored API credentials",
+        help="Reader backend; choose ollama or rwkv to bypass stored API credentials",
     )
     parser.add_argument(
         "--model",
@@ -1327,6 +1477,12 @@ def main() -> None:
         "--maintenance-model",
         default="",
         help="Optional model for the bounded maintenance worker",
+    )
+    parser.add_argument(
+        "--ingest-mode",
+        choices=("scripted", "live"),
+        default="scripted",
+        help="Ingestion mode: scripted observation or live operational pulses",
     )
     parser.add_argument(
         "--max-pulses",
@@ -1347,6 +1503,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--save-results",
+        "--save-report",
+        dest="save_results",
         type=str,
         default="documents/locomo_benchmark_report.md",
         help="Path to save the markdown report",
@@ -1363,6 +1521,11 @@ def main() -> None:
         default="",
         help="Optional path for case counts, maintenance cycles, and source-linked profiles",
     )
+    return parser
+
+
+def main() -> None:
+    parser = build_argument_parser()
     args = parser.parse_args()
 
     success = run_evaluation(
@@ -1376,6 +1539,7 @@ def main() -> None:
         model=args.model,
         maintenance=args.maintenance,
         maintenance_model=args.maintenance_model,
+        ingest_mode=args.ingest_mode,
         dry_run=args.dry_run,
         save_path=args.save_results,
         details_path=args.save_details,

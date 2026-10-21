@@ -99,7 +99,7 @@ Do not quietly import frozen audit source to make missing native tests pass. Tha
 
 core/mindscape_config.py already resolves MIGHTYMEM_PATH, RWKV_MODEL_PATH, configured paths, and explicit source activation. main.py separately contains RWKV path fallback logic.
 
-More seriously, core/bicameral_rwkv.py prepends the literal /home/nemo/MightyMem to sys.path before importing habitus_ai.rwkv7_language. That competes with the declared activation path. Depending on import order and whether that directory exists, it can influence which dependency package is selected; this review did not reproduce a wrong-source import on the original host.
+More seriously, core/bicameral_rwkv.py previously prepended a literal MightyMem host path to sys.path before importing habitus_ai.rwkv7_language. That competes with the declared activation path. Depending on import order and whether that directory exists, it can influence which dependency package is selected; this review did not reproduce a wrong-source import on the original host.
 
 tests/test_path_agnosticism.py passed here, but its scan excludes both core/mindscape_config.py and core/bicameral_rwkv.py. Its success therefore does not substantiate the broader “all paths” message.
 

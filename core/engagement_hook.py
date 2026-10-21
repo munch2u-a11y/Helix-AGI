@@ -5,7 +5,7 @@ Tracks thought repetition and tool activity to modulate Ω (hedonic
 omega) through the Stability Sentinel.  The effect:
 
   Looping (same thought 3+ times)  → Ω drops → S_total rises → boredom
-  Active tool use                  → Ω boosts → S_total stable → flow
+  New verified outcomes            → progress credit; activity alone earns none
 
 Uses DUAL metrics to detect stagnation:
   1. Word-overlap ratio  (cheap, catches literal repeats)
@@ -140,8 +140,8 @@ def engagement_hook(ctx) -> None:
     activity, feeding the result into the sentinel's omega signal.
 
     Effects:
-      - Tool calls reset stagnation counter and boost Ω
-      - Multiple unique tools give an extra boost
+      - New verified outcomes reset stagnation and boost Ω
+      - Failed, repeated or unverified calls do not earn progress credit
       - Repeated thoughts increment stagnation counter
       - After 3+ stagnant pulses, Ω is nudged downward
       - After 6+, a stronger downward nudge is applied
@@ -154,34 +154,25 @@ def engagement_hook(ctx) -> None:
     thought = ctx.thought or ""
     tool_calls = ctx.tool_calls or []
 
-    # ── Tool activity: boost Ω and reset stagnation ──────────────
-    if tool_calls:
-        _sentinel.nudge_omega_from_event("productive_tool_use")
-
-        # Bonus for diverse tool usage (2+ different tools)
-        unique_tools = set(tc.get("name", "") for tc in tool_calls)
-        if len(unique_tools) >= 2:
-            _sentinel.nudge_omega_from_event("diverse_tool_use")
-
-        # Reset stagnation — active engagement breaks the loop
+    # Outcomes come from the executor/native owner, not model call names.
+    progress = getattr(ctx, "progress", {}) or {}
+    # Keep failures visible even when other work advanced in the same pulse.
+    failures = progress.get("failures", 0)
+    if failures:
+        _sentinel.nudge_omega_from_event("tool_failure")
+    if progress.get("advanced", 0) > 0:
+        _sentinel.nudge_omega_from_event("verified_progress")
         _stagnation_counter = 0
-
-        logger.debug(
-            "Engagement: tools used (%s), stagnation reset",
-            ", ".join(unique_tools),
-        )
-        # Still update the thought window (but don't penalize)
         _update_window(thought)
         return
-
-    # ── No tools: check for thought stagnation ───────────────────
-    # Skip very short thoughts (pulse headers, empty)
-    if len(thought) < 20:
+    # Attempts without new verified evidence are not productive engagement.
+    unproductive = bool(tool_calls or progress.get("attempts", 0))
+    if len(thought) < 20 and not unproductive:
         _update_window(thought)
         return
 
     embedding = _embed_thought(thought)
-    stagnant = _is_stagnant(thought, embedding)
+    stagnant = unproductive or _is_stagnant(thought, embedding)
 
     if stagnant:
         _stagnation_counter += 1

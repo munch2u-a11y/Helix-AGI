@@ -22,8 +22,8 @@ _shutdown_requested = threading.Event()
 # Select dependency source and neural device before imports can initialize torch.
 import json
 from pathlib import Path
-from core.mindscape_config import activate as activate_mindscape
-_config_path = Path(__file__).resolve().parent / "config/config.json"
+from core.mindscape_config import activate as activate_mindscape, configuration_path
+_config_path = configuration_path()
 _startup_config = json.loads(_config_path.read_text()) if _config_path.exists() else {}
 _mindscape_settings = activate_mindscape(_startup_config)
 
@@ -136,6 +136,17 @@ def on_thought(pulse_number: int, thought: str, events: list):
     logging.getLogger("helix.core.pulse_loop").info(f"[thought] [Pulse {pulse_number}] {thought}")
 
 
+def on_context(pulse_number: int, context_text: str):
+    """Callback for each pulse — prints exact context window fed to the agent."""
+    print(f"\n  📖 [Context Window — Pulse {pulse_number}]")
+    print(f"  {'─' * 60}")
+    for line in context_text.strip().splitlines():
+        print(f"    {line}")
+    print(f"  {'─' * 60}")
+    import logging
+    logging.getLogger("helix.core.pulse_loop").debug(f"[context] [Pulse {pulse_number}]\n{context_text}")
+
+
 def on_delivery(recipient: str, message: str):
     """Callback for outbound messages — prints to console."""
     print(f"\n  📤 → {recipient}: {message}")
@@ -154,7 +165,8 @@ def resolve_main_provider(mindscape_settings: dict | None, cfg: dict | None = No
             from core.model_paths import default_rwkv_model
             fallback_rwkv = default_rwkv_model(Path(__file__).resolve().parent)
             rwkv_path = (
-                mindscape_settings.get("mindscape", {}).get("rwkv_model")
+                os.environ.get("RWKV_MODEL_PATH")
+                or mindscape_settings.get("mindscape", {}).get("rwkv_model")
                 or mindscape_settings.get("local_model")
                 or fallback_rwkv
             )
@@ -163,7 +175,7 @@ def resolve_main_provider(mindscape_settings: dict | None, cfg: dict | None = No
                 model=str(rwkv_path),
                 context_window=int(mindscape_settings.get("local_context_window", 8192)),
                 temperature=0.7,
-                max_output_tokens=None,
+                max_output_tokens=int(mindscape_settings["max_output_tokens"]) if mindscape_settings.get("max_output_tokens") is not None else None,
             )
         else:
             context = int(mindscape_settings.get("local_context_window", 32768))
@@ -177,7 +189,7 @@ def resolve_main_provider(mindscape_settings: dict | None, cfg: dict | None = No
     return detect_available_provider()
 
 
-def setup_helix(data_dir: str = "data", *, start_sensors: bool = True):
+def setup_helix(data_dir: str = "data", *, start_sensors: bool = True, show_context: bool = False):
     """Initialize the complete Helix cognitive architecture."""
     print("Initializing Helix Architecture...")
     local_models = None
@@ -190,7 +202,7 @@ def setup_helix(data_dir: str = "data", *, start_sensors: bool = True):
     global _cfg
     _cfg = {}
     try:
-        with open("config/config.json", "r") as _f:
+        with open(_config_path, "r") as _f:
             _cfg = _json.load(_f)
     except Exception:
         pass
@@ -442,6 +454,7 @@ def setup_helix(data_dir: str = "data", *, start_sensors: bool = True):
                 journal_dir=journal_dir,
                 thought_callback=on_thought,
                 delivery_callback=on_delivery,
+                context_callback=on_context if show_context else None,
                 sentinel=sentinel,
                 sensory_cortex=sensory_cortex,
             )
@@ -462,6 +475,7 @@ def setup_helix(data_dir: str = "data", *, start_sensors: bool = True):
                 journal_dir=journal_dir,
                 thought_callback=on_thought,
                 delivery_callback=on_delivery,
+                context_callback=on_context if show_context else None,
                 sentinel=sentinel,
                 sensory_cortex=sensory_cortex,
             )
@@ -480,6 +494,7 @@ def setup_helix(data_dir: str = "data", *, start_sensors: bool = True):
             journal_dir=journal_dir,
             thought_callback=on_thought,
             delivery_callback=on_delivery,
+            context_callback=on_context if show_context else None,
             sentinel=sentinel,
             sensory_cortex=sensory_cortex,
         )
@@ -488,6 +503,7 @@ def setup_helix(data_dir: str = "data", *, start_sensors: bool = True):
     if _mindscape_settings is not None:
         from core.mindscape import Mindscape
         pulse_loop.mindscape = Mindscape(_mindscape_settings, data_dir, preconscious, local_models=local_models)
+        pulse_loop.mindscape.progress_feedback = pulse_loop.progress_feedback
         auxiliary_llm.context_counter = pulse_loop.mindscape.token_counter
         print("  Mindscape: Helix + mRAG + MightyMem/Habitus cortex + RWKV + Context Loom loaded")
         print(f"  Composition receipt: {pulse_loop.mindscape.directory / 'composition-manifest.json'}")
@@ -650,15 +666,15 @@ def setup_helix(data_dir: str = "data", *, start_sensors: bool = True):
     return pulse_loop, orchestrator, daemon, memory_manager, belief_store, scratchpad, telegram_bot, discord_bot, slack_bot, whatsapp_bot, webhook_channel, sentinel
 
 
-def main_loop(data_dir="data", interactive=False):
+def main_loop(data_dir="data", interactive=False, show_context=False):
     """Interactive loop — user messages are events in the pulse stream."""
-    pulse_loop, orchestrator, daemon, memory, beliefs, scratchpad, telegram_bot, discord_bot, slack_bot, whatsapp_bot, webhook_channel, sentinel = setup_helix(data_dir)
+    pulse_loop, orchestrator, daemon, memory, beliefs, scratchpad, telegram_bot, discord_bot, slack_bot, whatsapp_bot, webhook_channel, sentinel = setup_helix(data_dir, show_context=show_context)
     if _shutdown_requested.is_set():
         pulse_loop.stop()
         return
 
     print("\n--- Helix Pulse System ---")
-    print("Commands: 'exit', 'stats', 'core', 'recent', 'beliefs', 'notes', 'dream'")
+    print("Commands: 'exit', 'stats', 'core', 'recent', 'beliefs', 'notes', 'dream', 'context'")
     print("Anything else is sent as a user message into the pulse stream.\n")
 
     # Start communication bots
@@ -679,6 +695,19 @@ def main_loop(data_dir="data", interactive=False):
         poller_logger = logging.getLogger("helix.main.dashboard_poller")
         while once or pulse_loop._running:
             try:
+                # Process inbound control commands
+                for cmd_obj in comms.pop_control():
+                    cmd = cmd_obj.get("command")
+                    poller_logger.info(f"Dashboard control command: {cmd}")
+                    if cmd == "pause":
+                        pulse_loop.pause()
+                    elif cmd == "resume":
+                        pulse_loop.resume()
+                    elif cmd == "shutdown":
+                        poller_logger.info("Graceful shutdown requested via dashboard")
+                        _shutdown_requested.set()
+                        return
+
                 messages = comms.pop_inbound()
                 for msg in messages:
                     poller_logger.info(f"Dashboard inbound message from {msg['sender']}: {msg['content'][:100]}")
@@ -698,6 +727,11 @@ def main_loop(data_dir="data", interactive=False):
             time.sleep(1)
 
     import threading
+    from dashboard.dashboard_comms import get_comms
+    comms = get_comms()
+    agent_name = _cfg.get("agent_name", "Helix")
+    comms.write_pid(os.getpid(), agent_name=agent_name)
+
     # The consumer's running condition must be true before its thread starts.
     # Admit already queued real messages before the first autonomous pulse.
     poll_dashboard(once=True)
@@ -794,6 +828,11 @@ def main_loop(data_dir="data", interactive=False):
                     except Exception as e:
                         print(f"[Dream Engine] Error: {e}")
                     continue
+                elif user_input.lower() in ("context", "show-context"):
+                    show_context = not getattr(pulse_loop, "_context_callback", None)
+                    pulse_loop._context_callback = on_context if show_context else None
+                    print(f"[Context View] show_context is now {'ON' if show_context else 'OFF'}")
+                    continue
                 else:
                     # Inject as user message event
                     orchestrator.send_user_message(user_input, sender="User")
@@ -805,6 +844,11 @@ def main_loop(data_dir="data", interactive=False):
                 break
 
     pulse_loop.stop()
+    try:
+        from dashboard.dashboard_comms import get_comms
+        get_comms().clear_pid()
+    except Exception:
+        pass
     print("\nHelix offline.")
 
 
@@ -819,10 +863,11 @@ if __name__ == "__main__":
                         help="Agent data directory; defaults to the profile selected during setup")
     parser.add_argument("--check-setup", action="store_true", help="Load the actual composition, sync/checkpoint, then exit")
     parser.add_argument("--interactive", action="store_true", help="Force interactive CLI mode even without TTY")
+    parser.add_argument("--show-context", action="store_true", help="Print exact rendered context window fed to the agent on each pulse")
     args = parser.parse_args()
     if args.check_setup:
-        components = setup_helix(args.data_dir, start_sensors=False)
+        components = setup_helix(args.data_dir, start_sensors=False, show_context=args.show_context)
         components[0].stop()
         print("Setup initialized. This verifies loading, not agent competence.")
     else:
-        main_loop(args.data_dir, interactive=args.interactive)
+        main_loop(args.data_dir, interactive=args.interactive, show_context=args.show_context)

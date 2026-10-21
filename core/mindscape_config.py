@@ -14,6 +14,15 @@ ROOT = Path(__file__).resolve().parents[1]
 _ACTIVE_NATIVE_SOURCE = None
 
 
+def configuration_path(root=ROOT):
+    """Explicit launch profile, shared by every production config reader."""
+    selected = Path(os.environ.get("HELIX_CONFIG_PATH") or Path(root) / "config/config.json").expanduser()
+    selected = (selected if selected.is_absolute() else Path(root) / selected).resolve()
+    if os.environ.get("HELIX_CONFIG_PATH") and not selected.is_file():
+        raise FileNotFoundError(f"Explicit Helix launch profile is missing: {selected}")
+    return selected
+
+
 def defaults(root=ROOT):
     root = Path(root).resolve()
     from core.model_paths import default_native_source, default_rwkv_model
@@ -36,8 +45,20 @@ def defaults(root=ROOT):
             "device": "cpu",
             "gestation": "if_missing",
             "context_focus_profiles": {},
+            "context_item_limit": 8,
+            "context_item_limits": {},
+            "gradient_learning": {
+                "enabled": True,
+                "train_rwkv_tail": False,
+                "rwkv_tail_blocks": 1,
+                "chunk_tokens": 128,
+                "learning_rates": {"rwkv": 1e-5, "cortex": 1e-4, "interface": 3e-4},
+                "gradient_clip_norm": 0.5,
+            },
             "action_intent_source": "native_motor",
             "sensory_interval_seconds": 1.0,
+            "pulse_interval_seconds": 1.0,
+            "robustness": {},
         },
     }
 
@@ -51,6 +72,16 @@ def resolve(config, root=ROOT):
     result = defaults(root)
     result.update(config)
     result["mindscape"] = {**defaults(root)["mindscape"], **config.get("mindscape", {})}
+    base_learning = defaults(root)["mindscape"]["gradient_learning"]
+    requested_learning = config.get("mindscape", {}).get("gradient_learning", {})
+    if not isinstance(requested_learning, dict) or set(requested_learning) - set(base_learning):
+        raise ValueError("mindscape.gradient_learning contains unknown settings")
+    rates = requested_learning.get("learning_rates", {})
+    if not isinstance(rates, dict) or set(rates) - set(base_learning["learning_rates"]):
+        raise ValueError("gradient learning rates must name rwkv, cortex or interface")
+    learning = {**base_learning, **requested_learning,
+                "learning_rates": {**base_learning["learning_rates"], **rates}}
+    result["mindscape"]["gradient_learning"] = learning
     if result.get("pulse_mode") != "standard":
         raise ValueError("Mindscape requires the standard Helix PulseLoop; dual mode is a different composition")
     if result.get("local_provider") not in {"ollama", "rwkv", "bicameral_rwkv"}:
@@ -73,11 +104,33 @@ def resolve(config, root=ROOT):
     if not isinstance(result["mindscape"]["modules_require_room"], bool):
         raise ValueError("modules_require_room must be a boolean")
     import math
+    for key in ("enabled", "train_rwkv_tail"):
+        if type(learning[key]) is not bool:
+            raise ValueError(f"gradient_learning.{key} must be a boolean")
+    for key, minimum in (("chunk_tokens", 2), ("rwkv_tail_blocks", 1)):
+        if type(learning[key]) is not int or learning[key] < minimum:
+            raise ValueError(f"gradient_learning.{key} must be an integer >= {minimum}")
+    for value in [learning["gradient_clip_norm"], *learning["learning_rates"].values()]:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise ValueError("Gradient learning rates and clipping norm must be finite positive values")
     cadence = float(result["mindscape"]["sensory_interval_seconds"])
     if not math.isfinite(cadence) or cadence <= 0:
         raise ValueError("sensory_interval_seconds must be finite and positive (filesystem observation cadence)")
+    pulse_cadence = float(result["mindscape"]["pulse_interval_seconds"])
+    if not math.isfinite(pulse_cadence) or pulse_cadence < 0:
+        raise ValueError("pulse_interval_seconds must be finite and nonnegative (delay between completed awake pulses)")
     if int(result["local_context_window"]) <= 0:
         raise ValueError("local_context_window must be positive")
+    limits = result["mindscape"]["context_item_limits"]
+    if not isinstance(limits, dict) or any(not isinstance(key, str) or not key for key in limits):
+        raise ValueError("mindscape.context_item_limits must map exact local_model values to item budgets")
+    for item_limit in [result["mindscape"]["context_item_limit"], *limits.values()]:
+        if item_limit is not None and (type(item_limit) is not int or item_limit < 1):
+            raise ValueError("mindscape.context_item_limit must be a positive integer or null")
+    result["mindscape"]["context_item_limit"] = limits.get(
+        result["local_model"], result["mindscape"]["context_item_limit"])
+    from core.robustness import options
+    options(result)
     from core.context_focus import resolve_profiles
     resolve_profiles(result["mindscape"]["context_focus_profiles"])
     for key in ("package_path", "rwkv_model", "workspace", "home"):
@@ -150,7 +203,7 @@ def configured_native_source(root=ROOT):
     """Allow explicit RWKV providers to use the same source choice as main."""
     from core.model_paths import default_native_source
     root = Path(root).resolve()
-    path = root / "config/config.json"
+    path = configuration_path(root)
     config = json.loads(path.read_text()) if path.exists() else {}
     selected = Path(config.get("mindscape", {}).get("package_path") or default_native_source(root)).expanduser()
     return (selected if selected.is_absolute() else root / selected).resolve()
@@ -180,7 +233,7 @@ def source_receipt(root):
     def git(*args):
         result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
         return result.stdout.strip() if result.returncode == 0 else None
-    paths = [p for directory in ("core", "memory", "llm", "tools", "brain", "comms", "context_loom", "habitus_ai")
+    paths = [p for directory in ("core", "memory", "llm", "tools", "brain", "comms", "dashboard", "bootstrap", "context_loom", "habitus_ai")
              for p in (root / directory).rglob("*.py")]
     paths += [p for name in ("main.py", "setup.py", "pyproject.toml") if (p := root / name).is_file()]
     return {"root": str(root), "revision": git("rev-parse", "HEAD"),

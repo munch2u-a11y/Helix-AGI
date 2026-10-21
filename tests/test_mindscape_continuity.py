@@ -12,6 +12,17 @@ from llm.providers.ollama_provider import OllamaSession
 
 
 class ContinuityTests(unittest.TestCase):
+    def test_compiled_item_policy_does_not_replay_the_dialogue_archive(self):
+        session = self.session()
+        session.history = [{"role": "user", "content": "older received request"},
+                           {"role": "assistant", "content": "older delivered reply"}]
+        session.compiled_context_only = True
+        messages = session.context_messages("admitted current pulse")
+        self.assertEqual(messages, [{"role": "system", "content": "identity"},
+                                    {"role": "user", "content": "admitted current pulse"}])
+        self.assertEqual(len(session.history), 2)
+        self.assertEqual(session.covered_source_hashes(), set())
+
     def session(self):
         session = OllamaSession("local-test", "identity", options={"num_ctx": 1000})
         session.context_counter = SimpleNamespace(

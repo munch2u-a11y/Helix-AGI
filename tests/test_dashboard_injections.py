@@ -30,7 +30,8 @@ class DashboardInjectionTests(unittest.TestCase):
                         "get_generation_params": lambda self: {"mode": "tonic"},
                     },
                 )()
-                pre.physics = type("Physics", (), {"_pulse_count": 0})()
+                Path("data/spatial").mkdir(parents=True)
+                pre.physics = type("Physics", (), {"_pulse_count": 0, "data_dir": "data/spatial"})()
 
                 for pulse in range(1, 4):
                     pre.physics._pulse_count = pulse

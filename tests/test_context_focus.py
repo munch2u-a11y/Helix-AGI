@@ -127,6 +127,7 @@ class AwarenessTests(unittest.TestCase):
     def test_local_system_instruction_does_not_invent_a_gemini_dispatcher(self):
         from core.pulse_loop import PulseLoop
         pulse = self.controller.pulse_loop
+        pulse.mindscape = SimpleNamespace(config={"mindscape": {"context_item_limit": 8}})
         pulse._task_cognition = self.controller
         pulse.beliefs = SimpleNamespace(get_category=lambda *args, **kwargs: [])
         pulse.preconscious = SimpleNamespace()

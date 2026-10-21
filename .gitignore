@@ -1,8 +1,22 @@
-# Runtime data
+# Runtime data & User-made Agents
 data/
+sandbox/
 private_presets/
+agents/
+homes/
+data/agents/
+data/homes/
+data/agent_home/
+agent_home/
 *.db
 *.sqlite3
+*.pid
+helix.pid
+data/helix.pid
+data/dashboard_messages.json
+dashboard_messages.json
+data/control.json
+control.json
 memory_store/
 chroma_shadow/
 chroma_db/
@@ -100,5 +114,12 @@ benchmark_results/*/
 # Import review artifacts
 data/imports/
 
-# Customizations
+# Customizations & Assistant Configs
 .agents/
+.claude/
+.gemini/
+*.env
+credentials.env
+
+# Local audit trials with agent state
+documents/audits/2026-10-20-*/

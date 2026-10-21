@@ -51,6 +51,12 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             session.finish_context(['question'], 'other', delivered=True)
 
+    def test_direct_speech_accounting_matches_evaluated_input(self):
+        session = self.session(iter(['Direct reply']))
+        session.options['direct_speech'] = True
+        text = session.send_context('hello')
+        self.assertEqual(text, 'Direct reply')
+
     def test_render_messages_does_not_duplicate_trailing_assistant_role(self):
         messages = [
             {'role': 'user', 'content': 'User: Hi\nAssistant: Hello\nUser: What is 2+2?\nAssistant:'}
@@ -113,11 +119,31 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(output.strip(), 'Assistant: Actual reply')
         self.assertEqual(generator.last_generation_receipt['done_reason'], 'conversation_boundary')
 
+    def test_leading_double_newline_assistant_echo_does_not_abort_generation(self):
+        generator = self.generator('\n\nAssistant: Actual reply\nUser: next turn')
+        output = generator.generate_language('prompt', temperature=0)
+        self.assertEqual(output.strip(), 'Assistant: Actual reply')
+        self.assertEqual(generator.last_generation_receipt['done_reason'], 'conversation_boundary')
+
+
     def test_explicit_output_boundary_rejects_partial_result(self):
         generator = self.generator('unfinished output')
         with self.assertRaisesRegex(RuntimeError, 'incomplete generation withheld'):
             generator.generate_language('prompt', temperature=0, max_new_tokens=2)
         self.assertEqual(generator.last_generation_receipt['done_reason'], 'configured_output_boundary')
+
+    def test_repeated_leading_assistant_echo_does_not_abort_generation(self):
+        generator = self.generator('Assistant:\n\nAssistant: Actual reply\nUser: next turn')
+        output = generator.generate_language('prompt', temperature=0)
+        self.assertIn('Actual reply', output)
+        self.assertEqual(generator.last_generation_receipt['done_reason'], 'conversation_boundary')
+
+
+    def test_bracketed_scaffold_stops_generation(self):
+        generator = self.generator('Actual reply\n\n[What I want to do:] Invented plan\nUser: next turn')
+        output = generator.generate_language('prompt', temperature=0)
+        self.assertEqual(output.strip(), 'Actual reply')
+        self.assertEqual(generator.last_generation_receipt['done_reason'], 'conversation_boundary')
 
 
 if __name__ == '__main__':

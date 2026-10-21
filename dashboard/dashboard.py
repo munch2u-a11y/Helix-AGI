@@ -44,7 +44,8 @@ from core.agent_home import write_home_json
 LOG_PATH = BASE_DIR / "logs" / "helix.log"
 BELIEFS_DIR = BASE_DIR / "data" / "beliefs"
 SPATIAL_DIR = BASE_DIR / "data" / "spatial"
-CONFIG_PATH = BASE_DIR / "config" / "config.json"
+from core.mindscape_config import configuration_path
+CONFIG_PATH = configuration_path(BASE_DIR)
 _startup = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
 _data = Path(_startup.get("data_dir", "data"))
 DATA_DIR = _data if _data.is_absolute() else BASE_DIR / _data
@@ -240,6 +241,48 @@ def _pca_3d(positions: Any) -> Any:
     return proj * scale
 
 
+def _get_latest_pulse_traversal(paths=None) -> Dict[str, Any]:
+    """Read latest graph trace and active vaults from receipts.jsonl."""
+    traversal = {
+        "y_paths": [],
+        "vault_record_ids": [],
+        "surface_candidates": [],
+        "pulse": None,
+    }
+    receipts_candidates = [
+        (paths.data / "mindscape" / "receipts.jsonl") if paths else None,
+        DATA_DIR / "mindscape" / "receipts.jsonl",
+        BASE_DIR / "data" / "mindscape" / "receipts.jsonl",
+    ]
+    receipts_path = None
+    for p in receipts_candidates:
+        if p and p.exists():
+            receipts_path = p
+            break
+
+    if receipts_path:
+        try:
+            file_size = receipts_path.stat().st_size
+            read_size = min(file_size, 131072)
+            with open(receipts_path, "rb") as f:
+                if file_size > read_size:
+                    f.seek(file_size - read_size)
+                chunk = f.read().decode("utf-8", errors="ignore")
+            for line in reversed(chunk.strip().split("\n")):
+                if '"kind": "pulse_context"' in line:
+                    entry = json.loads(line)
+                    gt = entry.get("graph_trace") or {}
+                    traversal["y_paths"] = gt.get("y_paths", [])
+                    traversal["vault_record_ids"] = gt.get("vault_record_ids", [])
+                    traversal["surface_candidates"] = gt.get("surface_candidates", [])
+                    traversal["pulse"] = entry.get("helix_pulse") or entry.get("habitus_pulse")
+                    break
+        except Exception:
+            pass
+
+    return traversal
+
+
 def read_spatial() -> Dict[str, Any]:
     """Read all spatial state files and return JSON-ready dict."""
     points = []
@@ -352,6 +395,114 @@ def read_spatial() -> Dict[str, Any]:
                     "color": CATEGORY_COLORS.get(cat, "#666666"),
                 })
 
+    # Read active pulse telemetry from spatial injection and receipts
+    active_belief_ids = []
+    active_memory_ids = []
+    pulse_num = None
+
+    if SPATIAL_INJECTION_PATH.exists():
+        try:
+            with open(SPATIAL_INJECTION_PATH) as f:
+                inj = json.load(f)
+            pulse_num = inj.get("pulse")
+            active_belief_ids = inj.get("active_belief_ids") or [
+                b.get("id") for b in inj.get("beliefs", []) if b.get("id")
+            ]
+            active_memory_ids = inj.get("active_memory_ids") or [
+                m.get("id") for m in inj.get("memories", []) if m.get("id")
+            ]
+            if not active_belief_ids and inj.get("beliefs"):
+                for b in inj.get("beliefs", []):
+                    b_content = b.get("content", "")
+                    if b_content:
+                        for p in projected:
+                            p_cnt = p.get("content", "")
+                            if p_cnt and (p_cnt[:35] in b_content or b_content[:35] in p_cnt):
+                                if p["id"] not in active_belief_ids:
+                                    active_belief_ids.append(p["id"])
+        except Exception:
+            pass
+
+    traversal_info = _get_latest_pulse_traversal()
+    vault_record_ids = traversal_info.get("vault_record_ids", [])
+    y_paths = traversal_info.get("y_paths", [])
+    if pulse_num is None:
+        pulse_num = traversal_info.get("pulse")
+
+    active_id_set = set(active_belief_ids) | set(active_memory_ids) | set(vault_record_ids)
+
+    # Classify vault for points and mark active
+    def _classify_vault(pid: str, ptype: str, pcat: str) -> str:
+        if pid.startswith("gestation:") or "boot" in pid or pcat in {"premises", "propositions"}:
+            return "gestation"
+        if ptype == "memory" or "mem_" in pid or pcat in {"memory", "episodes"}:
+            return "episodes"
+        if pcat in {"concepts", "facts", "knowledge"}:
+            return "facts"
+        if pcat in {"observations", "tools", "system"}:
+            return "observations"
+        if pcat in {"skills", "procedures"}:
+            return "skills"
+        return "facts"
+
+    for p in projected:
+        pid = p["id"]
+        p["active"] = (pid in active_id_set) or any(act and (act in pid or pid in act) for act in active_id_set)
+        p["vault"] = _classify_vault(pid, p["type"], p["category"])
+
+    # Define the canonical semantic vault hubs in 3D lattice space
+    known_vaults = [
+        {"id": "vault:gestation", "name": "Gestation Core", "vault": "gestation", "color": "#f43f5e", "pos": [0.0, 3.2, -5.5]},
+        {"id": "vault:episodes", "name": "Episodes Vault", "vault": "episodes", "color": "#06b6d4", "pos": [-5.5, -1.2, 2.2]},
+        {"id": "vault:facts", "name": "Facts Vault", "vault": "facts", "color": "#10b981", "pos": [5.5, -1.2, 2.2]},
+        {"id": "vault:observations", "name": "Observations Vault", "vault": "observations", "color": "#f59e0b", "pos": [-3.5, 2.4, 4.5]},
+        {"id": "vault:skills", "name": "Skills Vault", "vault": "skills", "color": "#a855f7", "pos": [3.5, 2.4, -4.5]},
+    ]
+
+    vault_hubs = []
+    for kv in known_vaults:
+        v_name = kv["vault"]
+        member_pts = [p for p in projected if p.get("vault") == v_name]
+        active_in_vault = [p["id"] for p in member_pts if p.get("active")]
+        for v_rec in vault_record_ids:
+            if _classify_vault(v_rec, "", "") == v_name and v_rec not in active_in_vault:
+                active_in_vault.append(v_rec)
+
+        if member_pts and len(member_pts) >= 3:
+            avg_x = sum(p["x"] for p in member_pts) / len(member_pts)
+            avg_y = sum(p["y"] for p in member_pts) / len(member_pts)
+            avg_z = sum(p["z"] for p in member_pts) / len(member_pts)
+            norm = (avg_x**2 + avg_y**2 + avg_z**2)**0.5 or 1.0
+            scale_out = max(5.5, norm * 1.3) / norm
+            pos_x, pos_y, pos_z = round(avg_x * scale_out, 3), round(avg_y * scale_out, 3), round(avg_z * scale_out, 3)
+        else:
+            pos_x, pos_y, pos_z = kv["pos"]
+
+        vault_hubs.append({
+            "id": kv["id"],
+            "name": kv["name"],
+            "vault": v_name,
+            "color": kv["color"],
+            "x": pos_x,
+            "y": pos_y,
+            "z": pos_z,
+            "active": len(active_in_vault) > 0,
+            "active_count": len(active_in_vault),
+            "record_count": len(member_pts),
+        })
+
+    # Traversal paths formatted for 3D visualization
+    traversal_paths = []
+    for yp in y_paths:
+        nodes = yp.get("path_node_ids", [])
+        if nodes:
+            traversal_paths.append({
+                "trace_id": yp.get("trace_id", ""),
+                "nodes": nodes,
+                "target": yp.get("target_node_id", ""),
+                "score": round(float(yp.get("endpoint_score", 0.0)), 4),
+            })
+
     # Attention center
     attn = {"x": 0, "y": 0, "z": 0}
     attn_prev = {"x": 0, "y": 0, "z": 0}
@@ -388,6 +539,12 @@ def read_spatial() -> Dict[str, Any]:
         "identity": identity,
         "gamma": gamma,
         "point_count": len(projected),
+        "active_belief_ids": active_belief_ids,
+        "active_memory_ids": active_memory_ids,
+        "vault_record_ids": vault_record_ids,
+        "vault_hubs": vault_hubs,
+        "traversal_paths": traversal_paths,
+        "pulse": pulse_num or 0,
     }
 
 
@@ -410,10 +567,19 @@ def read_status(paths=None) -> Dict[str, Any]:
     if g is not None:
         gamma = round(float(g[0]), 3)
 
+    # Live agent process tracking via PID
+    try:
+        from dashboard.dashboard_comms import get_comms
+    except ImportError:
+        from dashboard_comms import get_comms
+    comms = get_comms()
+    proc_info = comms.get_agent_process()
+    is_online = proc_info is not None
+
     # Parse last known values from log
     omega = 0.5
     pulse = 0
-    state = "UNKNOWN"
+    state = "ONLINE" if is_online else "OFFLINE"
     if LOG_PATH.exists():
         try:
             with open(LOG_PATH, "rb") as f:
@@ -426,15 +592,22 @@ def read_status(paths=None) -> Dict[str, Any]:
                 m = re.search(r"Pulse (\d+)", line)
                 if m:
                     pulse = int(m.group(1))
-                m = re.search(r"→ (DORMANT|RESTING|REGULAR|ACTIVE)", line)
+                m = re.search(r"→ (DORMANT|RESTING|REGULAR|ACTIVE|PAUSED)", line)
                 if m:
                     state = m.group(1)
                 if "state=" in line.lower():
-                    m2 = re.search(r"state['\"]?\s*[:=]\s*['\"]?(DORMANT|RESTING|REGULAR|ACTIVE)", line, re.I)
+                    m2 = re.search(r"state['\"]?\s*[:=]\s*['\"]?(DORMANT|RESTING|REGULAR|ACTIVE|PAUSED)", line, re.I)
                     if m2:
                         state = m2.group(1).upper()
+                if "Pulse loop paused" in line:
+                    state = "PAUSED"
+                if "Pulse loop stopped" in line and not is_online:
+                    state = "OFFLINE"
         except Exception:
             pass
+
+    if not is_online:
+        state = "OFFLINE"
 
     # Load affect from spatial_injection.json if available
     affect = {"dominant": "neutral", "intensity": 0.0}
@@ -484,6 +657,9 @@ def read_status(paths=None) -> Dict[str, Any]:
         "gamma": gamma,
         "pulse": pulse,
         "state": state,
+        "is_online": is_online,
+        "is_paused": state == "PAUSED",
+        "agent_pid": proc_info.get("pid") if proc_info else None,
         "affect": affect,
         "room": current_room,
         "rooms": rooms,
@@ -690,6 +866,33 @@ def create_app():
         messages = comms.get_outbound(since)
         total = comms.get_outbound_count()
         return jsonify({"messages": messages, "total": total})
+
+    @app.route("/api/control", methods=["POST"])
+    def api_control():
+        """Handle agent lifecycle control actions (pause, resume, shutdown)."""
+        data = request.get_json(force=True, silent=True) or {}
+        action = (data.get("action") or "").strip().lower()
+        if action not in ("pause", "resume", "shutdown"):
+            return jsonify({"ok": False, "error": f"Invalid action: {action}"}), 400
+
+        comms.push_control(action)
+        proc_info = comms.get_agent_process()
+        pid = proc_info.get("pid") if proc_info else None
+
+        if action == "shutdown" and pid:
+            import signal, os
+            try:
+                # Deliver SIGTERM so main.py triggers its safe shutdown immediately
+                os.kill(pid, signal.SIGTERM)
+            except OSError as e:
+                logger.warning(f"Failed to signal PID {pid}: {e}")
+
+        return jsonify({
+            "ok": True,
+            "action": action,
+            "agent_pid": pid,
+            "message": f"Action '{action}' dispatched successfully."
+        })
 
     # ── Safe File Staging Endpoints ──────────────────────────────────────────
 

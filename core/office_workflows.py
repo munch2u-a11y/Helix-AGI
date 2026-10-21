@@ -8,6 +8,8 @@ it does not own a permanent section of the final prompt.
 from __future__ import annotations
 
 import math
+import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Sequence, Set
 
@@ -163,14 +165,103 @@ class OfficeArbiter:
                     - (0.035 * desk_counts.get(str(others[index].get("office_desk", "")), 0))
                 ) / others[index]["office_bid_cost"],
             )
-            winner = others.pop(best_index)
-            chosen.append(winner)
-            desk = str(winner.get("office_desk", ""))
+            candidate = others.pop(best_index)
+            content = str(candidate.get("content") or candidate.get("statement") or candidate.get("text") or "")
+            if self._is_internally_repetitive(content):
+                candidate["office_bid_blocked"] = "repetitive"
+                continue
+            if self._is_redundant(candidate, chosen):
+                candidate["office_bid_blocked"] = "redundant"
+                continue
+
+            chosen.append(candidate)
+            desk = str(candidate.get("office_desk", ""))
             desk_counts[desk] = desk_counts.get(desk, 0) + 1
-            if winner.get("formation_type") == "session_profile":
+            if candidate.get("formation_type") == "session_profile":
                 profile_count += 1
             slots -= 1
         return chosen
+
+    @staticmethod
+    def _is_internally_repetitive(text: str, max_repeats: int = 3) -> bool:
+        """Detect runaway feedback loops within a single candidate's text."""
+        if not text:
+            return False
+        patterns = [
+            r"\*\([^\)]+\)\*",
+            r"\([^\)]+\)",
+            r"\[[^\]]+\]",
+        ]
+        for pattern in patterns:
+            try:
+                matches = re.findall(pattern, text)
+                if len(matches) >= max_repeats:
+                    counts = Counter(matches)
+                    if any(count >= max_repeats for count in counts.values()):
+                        return True
+            except Exception:
+                pass
+
+        sentences = [s.strip().lower() for s in re.split(r"[.!?\n;]", text) if len(s.strip()) > 8]
+        if len(sentences) >= max_repeats:
+            counts = Counter(sentences)
+            if any(count >= max_repeats for count in counts.values()):
+                return True
+
+        words = re.findall(r"\w+", text.lower())
+        if len(words) >= 12:
+            ngrams = [tuple(words[i : i + 4]) for i in range(len(words) - 3)]
+            counts = Counter(ngrams)
+            if any(count >= max_repeats for count in counts.values()):
+                return True
+
+        return False
+
+    @staticmethod
+    def _is_redundant(
+        item: Dict[str, Any],
+        chosen: Sequence[Dict[str, Any]],
+        threshold: float = 0.70,
+    ) -> bool:
+        """Check if candidate item redundantly repeats an already chosen item."""
+        content = str(item.get("content") or item.get("statement") or item.get("text") or "").strip()
+        if not content:
+            return False
+        content_lower = content.lower()
+        words = set(re.findall(r"\w+", content_lower))
+
+        protected_roles = {
+            "current_state", "state_history", "calculation_member",
+            "relation_member", "catalog_member", "causal_member",
+        }
+
+        for prior in chosen:
+            if (
+                item.get("office_verified")
+                and prior.get("office_verified")
+                and item.get("office_scope")
+                and item.get("office_scope") == prior.get("office_scope")
+                and (
+                    item.get("office_role") in protected_roles
+                    or prior.get("office_role") in protected_roles
+                )
+            ):
+                continue
+
+            prior_content = str(prior.get("content") or prior.get("statement") or prior.get("text") or "").strip()
+            if not prior_content:
+                continue
+            if content_lower == prior_content.lower():
+                return True
+
+            prior_words = set(re.findall(r"\w+", prior_content.lower()))
+            if len(words) >= 4 and len(prior_words) >= 4:
+                overlap = len(words & prior_words) / len(words | prior_words)
+                if overlap >= threshold:
+                    return True
+
+        return False
+
 
     @staticmethod
     def _unit(value: Any, default: float) -> float:

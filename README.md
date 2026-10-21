@@ -27,8 +27,13 @@ ordinary language rather than a generated `SPEAK` command or tool call.
 - **Keep a persistent home and identity.** Named rooms, personal files, memory
   and completed actions survive graceful shutdown and restart.
 
-The current body controller follows explicit user action requests. Learning
-to choose and sequence actions independently is the next stage.
+The native body can also select exploratory actions without a user request.
+Its own clock admits the production context, advances the native mind and
+returns verified observations while the language stream remains unfinished.
+An [Ada trial](documents/audits/2026-10-20-autonomous-stream/verification.json)
+verified an unprompted file open, learning and foreground use of the updated
+weights. Target selection still uses a bootstrap adapter; coherent spontaneous
+speech and general independent task competence remain unverified.
 
 [How sensing, action and speech fit together →](documents/sensing-action-speech.md)
 

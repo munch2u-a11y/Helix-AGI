@@ -17,9 +17,11 @@ ABILITY_DESCRIPTIONS = {
 ACTIONS = set(ABILITY_DESCRIPTIONS)
 
 FOREGROUND_FORMAT_GUIDANCE = (
-    "Speak in ordinary language. Your body has an independent sensory and motor loop. "
-    "Describe file contents and action outcomes only from actual returned observations. "
-    "Private contemplation can be enclosed in <think> tags. Speech is separate from motor output."
+    "Private thinking can continue over as many pulses as needed. Enclose private language in <think> tags. "
+    "When choosing to speak, put ordinary outward prose outside those tags. "
+    "Receiving a message does not require an immediate spoken answer. "
+    "The body has an independent sensory and motor loop; actual returned observations supply "
+    "file contents and action outcomes. Speaking or acting does not end private continuity."
 )
 
 
@@ -58,21 +60,43 @@ def foreground_schema(*, intention_required=False):
 def extract_contemplation_and_actualization(raw: str) -> tuple[str, str]:
     """Extracts internal <think>...</think> contemplation and the actualized foreground text."""
     text = (raw or "").strip()
-    think_pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
-    match = think_pattern.search(text)
-    if match:
-        contemplation = match.group(1).strip()
+    text = re.sub(r"^(?:Assistant|Helix|AI):\s*", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"^(?:\[(?:MODE:\s*\w+|ASSISTANT|Helix|AI)\]\s*)+", "", text, flags=re.IGNORECASE).strip()
+    think_pattern = re.compile(r"<(think|thought)>(.*?)</\1>", re.DOTALL | re.IGNORECASE)
+    matches = think_pattern.findall(text)
+    if matches:
+        contemplation = "\n".join(m[1].strip() for m in matches).strip()
         actualized = think_pattern.sub("", text).strip()
+    elif "</think>" in text or "</thought>" in text:
+        tag = "</think>" if "</think>" in text else "</thought>"
+        parts = text.split(tag, 1)
+        contemplation = parts[0].strip()
+        open_tag = "<think>" if tag == "</think>" else "<thought>"
+        if contemplation.lower().startswith(open_tag):
+            contemplation = contemplation[len(open_tag):].strip()
+        actualized = parts[1].strip()
     else:
-        if text.startswith("<think>"):
-            contemplation = text[len("<think>"):].strip()
+        if text.startswith("<think>") or text.startswith("<thought>"):
+            open_len = len("<think>") if text.startswith("<think>") else len("<thought>")
+            contemplation = text[open_len:].strip()
             actualized = ""
         else:
             contemplation = ""
             actualized = text
 
-    # Strip any residual role prefixes like Assistant: or Helix: from actualized
-    actualized = re.sub(r"^(?:Assistant|Helix|AI):\s*", "", actualized, flags=re.IGNORECASE).strip()
+    # Strip any residual role prefixes or bracket headers like Assistant: or [MODE: ACTUAL] from actualized
+    while True:
+        cleaned = re.sub(
+            r"^(?:(?:Assistant|Helix|AI|User):\s*|\[(?:MODE:\s*\w+|ASSISTANT|Helix|AI)\]\s*)+",
+            "",
+            actualized,
+            flags=re.IGNORECASE,
+        ).strip()
+        if cleaned == actualized:
+            break
+        actualized = cleaned
+    actualized = re.sub(r"<\|im_end\|>.*$", "", actualized).strip()
+    actualized = re.split(r"\n+(?:#\s*file:|---|##\s)", actualized)[0].strip()
     return contemplation, actualized
 
 
@@ -142,8 +166,9 @@ def decode_speech(raw):
     contemplation, text = extract_contemplation_and_actualization(raw)
     if not text:
         return "", "contemplation" if contemplation else "empty"
-    if text.startswith("<intention>"):
+    if text.startswith("<intention>") or text.startswith("<tool_calls>") or text.startswith("<tool_call>"):
         return "", "empty"
+
     try:
         value = json.loads(text)
     except ValueError:
@@ -376,9 +401,9 @@ def ability_awareness(root, position):
         f"My native workspace is {root}; my current position within it is /{'' if position == '.' else position}.\n"
         "These are my installed abilities and their actual effects:\n"
         + "\n".join(ABILITY_DESCRIPTIONS.values()) + "\n"
-        "When I need an action, I express one private intention and wait for its actual return. "
+        "I can autonomously initiate exploratory actions (sensing rooms, inspecting files) or execute requested tasks. "
+        "When taking an action, I express one private intention and wait for its actual return. "
         "This takes precedence over an outward speaking impulse. I do not narrate completion in advance. "
-        "A request to perform an action calls for performing it, rather than a tutorial or an offer to do it later. "
         "My foreground output uses the message field for prose, or action and arguments for a needed intention. "
         "An intention contains no predicted result or accompanying message: its real return arrives next pulse. "
         "The native controller must select the ability before it executes. Relative paths follow my position; "
@@ -396,6 +421,46 @@ def parse_natural_or_wire_intention(text: str):
     val = (text or "").strip()
     if not val:
         return None
+    if val.lower().startswith("[thought]"):
+        # Code/envelopes considered in private are not committed intentions.
+        # The native cortex may still select a motor impulse independently.
+        return None
+
+    # 0. Tool calls format: <tool_calls>...</tool_calls> or <tool_call>...</tool_call>
+    m_tool = re.search(r"<(?:tool_calls|tool_call)>(.*?)</(?:tool_calls|tool_call)>", val, re.DOTALL | re.IGNORECASE)
+    if m_tool:
+        body = m_tool.group(1).strip()
+        try:
+            items = json.loads(body)
+            if isinstance(items, dict):
+                items = [items]
+            if isinstance(items, list) and items:
+                first = items[0]
+                fn = first.get("name") or first.get("function", {}).get("name")
+                raw_args = first.get("arguments") or first.get("function", {}).get("arguments") or {}
+                if isinstance(raw_args, str):
+                    try:
+                        raw_args = json.loads(raw_args)
+                    except Exception:
+                        raw_args = {}
+                name_map = {
+                    "list_files": "sense", "sense": "sense", "scan": "sense", "inspect": "sense", "ls": "sense",
+                    "read_file": "open", "open": "open", "read": "open", "view_file": "open", "cat": "open",
+                    "write_file": "write", "write": "write", "create_file": "write",
+                    "move": "move", "cd": "move", "navigate": "move",
+                    "run": "run", "execute": "run", "execute_script": "run",
+                    "mkdir": "mkdir", "create_folder": "mkdir",
+                    "activate": "activate", "disengage": "disengage",
+                }
+                action = name_map.get(str(fn).lower())
+                if action:
+                    args = dict(raw_args)
+                    if action in {"sense", "open", "move", "mkdir"}:
+                        path = args.get("path") or args.get("directory") or args.get("file") or "."
+                        args = {"path": str(path)}
+                    return {"action": action, "arguments": args}
+        except Exception:
+            pass
 
     # 1. Wire format: <intention>...</intention>
     if val.startswith("<intention>") and val.endswith("</intention>"):
@@ -403,6 +468,7 @@ def parse_natural_or_wire_intention(text: str):
             return parse_intention(val)
         except Exception:
             return None
+
 
     # 2. Raw JSON format
     if val.startswith("{") and val.endswith("}"):
@@ -444,11 +510,48 @@ def parse_natural_or_wire_intention(text: str):
     # 4. Natural action imperative or declaration
     lower = val.lower()
 
+    # Private internal monologue tagged [thought] cannot dispatch loose natural actions
+    if lower.startswith("[thought]"):
+        return None
+
+    # Passive reflection or recounting of user request is not an active intention
+    if re.search(r"\b(?:(?:have\s+been|was|were|am)\s+(?:asked|told|instructed|requested)\s+to|user\s+(?:asked|wants|requested)\s+(?:me\s+)?to|they\s+said)\b", lower):
+        return None
+
+    # Capability descriptions, infinitives, or hypothetical statements are not active intentions
+    if re.search(r"\b(?:how\s+to|learned\s+(?:how\s+)?to|able\s+to|ability\s+to|in\s+order\s+to|used\s+to|trying\s+to|meant\s+to|learning\s+to|designed\s+to|trained\s+to|know\s+how\s+to|could\s+have|would\s+have)\s+(?:sense|move|open|run|inspect|read|write|list)\b", lower):
+        return None
+
+    STOP_WORDS = {
+        "the", "files", "directory", "workspace", "room", "folder",
+        "my", "your", "our", "their", "its", "her", "his",
+        "this", "that", "a", "an", "here", "current",
+        "some", "all", "any", "or", "and", "to", "in", "at", "what",
+        "which", "system", "environment", "surroundings", "contents",
+        "something", "anything", "everything", ""
+    }
+
     # Sense
-    m_sense = re.search(r"\b(?:sense|inspect|scan|feel)\s+(?:the\s+)?(?:files|directory|workspace|room)?\s*(?:in|at)?\s*([./\w\-]+)?", lower)
+    # Dedicated sensing verbs: sense, inspect, scan, list
+    # Contextual verbs: check, see, look at (must mention files/directory/workspace/room/folder/contents)
+    # feel (must mention workspace/surroundings/environment)
+    m_sense = re.search(
+        r"\b(?:sense|inspect|scan|list)\s+(?:(?:the|all|my|our|this)\s+)?(?:files|directory|workspace|room|folder|contents)?\s*(?:in|at)?\s*(?:(?:the|my|our|this)\s+)?(?:workspace|directory|room|folder)?\s*([./\w\-]+)?",
+        lower
+    )
+    if not m_sense:
+        m_sense = re.search(
+            r"\b(?:check|see|look\s+at)\s+(?:(?:the|all|my|our|this)\s+)?(?:files|directory|workspace|room|folder|contents)\s*(?:in|at)?\s*(?:(?:the|my|our|this)\s+)?(?:workspace|directory|room|folder)?\s*([./\w\-]+)?",
+            lower
+        )
+    if not m_sense:
+        m_sense = re.search(
+            r"\bfeel\s+(?:(?:the|my|our|this)\s+)?(?:workspace|surroundings|environment)\s*([./\w\-]+)?",
+            lower
+        )
     if m_sense:
         target = (m_sense.group(1) or ".").strip()
-        if target in {"the", "files", "directory", "workspace", "room", ""}:
+        if target.lower() in STOP_WORDS:
             target = "."
         return {"action": "sense", "arguments": {"path": target}}
 
@@ -488,15 +591,11 @@ def parse_natural_or_wire_intention(text: str):
     return None
 
 
-def resolve_subconscious_action(obligations, observations, current_position=".", thought=""):
-    """Resolve next concrete action directly from subconscious obligations and motor affordance."""
+def resolve_subconscious_action(obligations, observations, current_position=".", thought="", active_trunks=None, unobserved_targets=None):
+    """Resolve next concrete action directly from subconscious obligations, exploration drive, and motor affordance."""
     from_thought = parse_natural_or_wire_intention(thought)
     if from_thought is not None:
         return from_thought
-
-    required = set(obligations.get("required_abilities", ()))
-    if not required:
-        return None
 
     completed_actions = {
         obs.get("action") for obs in (observations or [])
@@ -509,43 +608,102 @@ def resolve_subconscious_action(obligations, observations, current_position=".",
         if obs.get("action") in {"open", "sense"} and obs.get("status") in {"error", "not_completed"}:
             settled_actions.add(obs.get("action"))
 
-    target_dirs = [p for p in obligations.get("target_paths", ()) if "." not in Path(p).name]
-    target_files = [p for p in obligations.get("target_paths", ()) if "." in Path(p).name]
-    target_file = target_files[0] if target_files else "/workshop/experiment.py"
+    required = set(obligations.get("required_abilities", ())) if obligations else set()
 
-    known_hashes = {}
-    for obs in (observations or []):
-        h = obs.get("sha256") or obs.get("receipt", {}).get("sha256")
-        if h:
-            p = obs.get("path") or obs.get("receipt", {}).get("path")
-            if p:
-                known_hashes[Path(p).name] = h
-    target_name = Path(target_file).name
-    sha_val = known_hashes.get(target_name)
+    # 1. User-requested obligations take priority if present
+    if required:
+        target_dirs = [p for p in obligations.get("target_paths", ()) if "." not in Path(p).name]
+        target_files = [p for p in obligations.get("target_paths", ()) if "." in Path(p).name]
+        target_file = target_files[0] if target_files else "/workshop/experiment.py"
 
-    if "move" in required and "move" not in settled_actions:
-        dest = target_dirs[0] if target_dirs else "/workshop"
-        if not dest.startswith("/") and not dest.startswith("."):
-            dest = "/" + dest
-        return {"action": "move", "arguments": {"path": dest}}
+        known_hashes = {}
+        for obs in (observations or []):
+            h = obs.get("sha256") or obs.get("receipt", {}).get("sha256")
+            if h:
+                p = obs.get("path") or obs.get("receipt", {}).get("path")
+                if p:
+                    known_hashes[Path(p).name] = h
+        target_name = Path(target_file).name
+        sha_val = known_hashes.get(target_name)
 
-    if "sense" in required and "sense" not in settled_actions:
-        return {"action": "sense", "arguments": {"path": "."}}
+        if "move" in required and "move" not in settled_actions:
+            dest = target_dirs[0] if target_dirs else "/workshop"
+            if not dest.startswith("/") and not dest.startswith("."):
+                dest = "/" + dest
+            return {"action": "move", "arguments": {"path": dest}}
 
-    if "open" in required and "open" not in settled_actions:
-        return {"action": "open", "arguments": {"path": target_file}}
+        if "sense" in required and "sense" not in settled_actions:
+            return {"action": "sense", "arguments": {"path": "."}}
 
-    if "write" in required and "write" not in completed_actions:
-        args = {"path": target_file, "content": "# Generated experiment\n"}
-        if sha_val:
-            args["expected_sha256"] = sha_val
-        return {"action": "write", "arguments": args}
+        if "open" in required and "open" not in settled_actions:
+            return {"action": "open", "arguments": {"path": target_file}}
 
-    if "run" in required and "run" not in completed_actions:
-        args = {"path": target_file}
-        if sha_val:
-            args["expected_sha256"] = sha_val
-        return {"action": "run", "arguments": args}
+        if "write" in required and "write" not in completed_actions:
+            args = {"path": target_file, "content": "# Generated experiment\n"}
+            if sha_val:
+                args["expected_sha256"] = sha_val
+            return {"action": "write", "arguments": args}
+
+        if "run" in required and "run" not in completed_actions:
+            args = {"path": target_file}
+            if sha_val:
+                args["expected_sha256"] = sha_val
+            return {"action": "run", "arguments": args}
+
+        return None
+
+    # 2. Native Subconscious Exploration & Drive (OutputTrunk.LOOK or OutputTrunk.DO)
+    active = set(active_trunks or ())
+    # Check string names or enum values
+    active_names = {getattr(t, "name", str(t)) for t in active} | {str(t) for t in active}
+    look_active = "LOOK" in active_names or any(str(t).endswith(".LOOK") for t in active)
+    do_active = "DO" in active_names or any(str(t).endswith(".DO") for t in active)
+
+    if look_active:
+        def normalized(path):
+            path = str(path or ".").lstrip("/")
+            return current_position.strip("/") if path == "." else path
+
+        scenes, opened = [], {}
+        for obs in observations or ():
+            if not isinstance(obs, dict):
+                continue
+            receipt = obs.get("receipt") or {}
+            output = obs.get("output") or receipt.get("output") or {}
+            if not isinstance(output, dict):
+                continue
+            path = output.get("path") or obs.get("path") or obs.get("arguments", {}).get("path")
+            if obs.get("action") == "sense" and normalized(path) == normalized(current_position):
+                scenes.append(output)
+            elif obs.get("action") == "open" and path:
+                opened[normalized(path)] = output
+        if not scenes:
+            return {"action": "sense", "arguments": {"path": "."}}
+        # The latest real scene supersedes older directory listings. Changed
+        # file attributes permit a new read; unchanged content stays remembered.
+        for entry in scenes[-1].get("entries", ()):
+            if not isinstance(entry, dict) or entry.get("kind") != "file":
+                continue
+            fname = entry.get("name")
+            if not isinstance(fname, str) or Path(fname).name != fname:
+                continue
+            target = (Path(normalized(current_position)) / fname).as_posix()
+            prior = opened.get(target)
+            changed = prior is not None and any(
+                key in prior and key in entry and prior[key] != entry[key]
+                for key in ("modified_ns", "size_bytes"))
+            if prior is None or changed:
+                return {"action": "open", "arguments": {"path": "/" + target}}
+
+        if unobserved_targets:
+            for target in unobserved_targets:
+                if normalized(target) not in opened:
+                    return {"action": "open", "arguments": {"path": target}}
+
+    if do_active:
+        if current_position in {".", "thinking", "/thinking"}:
+            return {"action": "move", "arguments": {"path": "/workshop"}}
 
     return None
+
 

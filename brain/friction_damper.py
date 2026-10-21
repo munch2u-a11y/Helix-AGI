@@ -31,6 +31,10 @@ class FrictionDamper:
         max_displacement: float,
         damping_coefficient: float,
     ):
+        if (any(not math.isfinite(value) or value < 0 for value in (
+                coefficient_of_friction, normal_force, max_displacement, damping_coefficient))
+                or max_displacement == 0):
+            raise ValueError("Damper coefficients must be finite/nonnegative and displacement positive")
         self.coefficient_of_friction = coefficient_of_friction
         self.normal_force = normal_force
         self.max_displacement = max_displacement
@@ -65,9 +69,17 @@ class FrictionDamper:
             )
 
         # Viscous damping component
-        viscous_damping_force = self.damping_coefficient * current_velocity
+        viscous_damping_force = -self.damping_coefficient * current_velocity
 
         return friction_force + viscous_damping_force
+
+    def dampen_signal(self, previous: float, target: float, gain: float = 0.1) -> float:
+        """Resist a change without reversing it or overshooting either endpoint."""
+        import math
+        if not all(math.isfinite(x) for x in (previous, target, gain)) or gain < 0:
+            raise ValueError("Damping inputs must be finite and gain nonnegative")
+        correction = gain * self.calculate_damping_force(target - previous)
+        return max(min(previous, target), min(max(previous, target), target + correction))
 
     def update_state(
         self, time_step: float, displacement: float, velocity: float

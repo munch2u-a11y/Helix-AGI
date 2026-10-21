@@ -175,6 +175,50 @@ class TestBeliefCategories(unittest.TestCase):
             self.assertTrue(filename.endswith(".json"))
 
 
+class TestBeliefCognitiveAttrition(unittest.TestCase):
+    """Test cognitive attrition and promotion mechanics."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.beliefs_dir = os.path.join(self.temp_dir, "beliefs")
+        os.makedirs(self.beliefs_dir, exist_ok=True)
+        self.store = BeliefStore(self.beliefs_dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_empirical_tool_lesson_graduates_to_deep_memory(self):
+        """Tool lessons with repeated verified usage must graduate into deep memory via reliance."""
+        self.store.add_belief(
+            "propositions",
+            "pro_deploy_rule",
+            "Before git push, verify remote exists with git remote -v",
+            stability_index=0.5,
+            verifications=1.0,
+            tool_bindings=["run_command"],
+        )
+        # 5 verified successful uses
+        self.store.update_belief("pro_deploy_rule", successful_uses=5)
+
+        # Run cognitive attrition / nightly consolidation
+        self.store.recalculate_all_confidences()
+
+        belief = self.store.get_belief("pro_deploy_rule")
+        self.assertIsNotNone(belief)
+        weight = self.store._resolve_weight(belief["confidence"])
+        self.assertGreaterEqual(
+            belief["confidence"],
+            0.60,
+            f"Belief failed to reach deep memory threshold (>= 0.60): conf={belief['confidence']}"
+        )
+        self.assertEqual(
+            weight,
+            "deep",
+            f"Expected weight 'deep', got '{weight}' with confidence {belief['confidence']}"
+        )
+
+
+
 def run_belief_operations_tests():
     """Run all belief operations tests."""
     print("Running Belief Operations Test Suite...")

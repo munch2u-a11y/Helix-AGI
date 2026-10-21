@@ -9,6 +9,41 @@ from core.mindscape_config import defaults, resolve, activate, write_json
 
 
 class CompositionContractTests(unittest.TestCase):
+    def test_subconscious_learning_is_default_and_tail_updates_are_explicit(self):
+        config = defaults()
+        config["mindscape"]["gradient_learning"] = {"train_rwkv_tail": True}
+        policy = resolve(config)["mindscape"]["gradient_learning"]
+        self.assertTrue(policy["enabled"])
+        self.assertTrue(policy["train_rwkv_tail"])
+        self.assertEqual(set(policy["learning_rates"]), {"rwkv", "cortex", "interface"})
+        self.assertFalse(resolve(defaults())["mindscape"]["gradient_learning"]["train_rwkv_tail"])
+
+    def test_invalid_learning_policy_cannot_be_silently_ignored(self):
+        for policy in ({"enabled": "yes"}, {"train_rwkv_tail": 1}, {"chunk_tokens": 1},
+                       {"learning_rates": {"cortex": 0}}, {"learning_rates": {"typo": 0.1}},
+                       {"gradient_clip_norm": float("inf")}, {"unknown": True}):
+            config = defaults()
+            config["mindscape"]["gradient_learning"] = policy
+            with self.assertRaises(ValueError):
+                resolve(config)
+
+    def test_attention_budget_can_follow_the_exact_selected_model(self):
+        config = defaults()
+        config["mindscape"]["context_item_limits"] = {config["local_model"]: 5, "other-model": 12}
+        selected = resolve(config)
+        self.assertEqual(selected["mindscape"]["context_item_limit"], 5)
+        config["local_model"] = "other-model"
+        self.assertEqual(resolve(config)["mindscape"]["context_item_limit"], 12)
+        config["local_model"] = "uncalibrated-model"
+        self.assertEqual(resolve(config)["mindscape"]["context_item_limit"], 8)
+
+    def test_invalid_attention_budget_is_rejected(self):
+        for value in (0, -1, True, 2.5, "8"):
+            config = defaults()
+            config["mindscape"]["context_item_limit"] = value
+            with self.assertRaisesRegex(ValueError, "context_item_limit"):
+                resolve(config)
+
     def test_legacy_config_is_explicitly_separate(self):
         self.assertIsNone(resolve({"local_provider": "ollama"}))
 

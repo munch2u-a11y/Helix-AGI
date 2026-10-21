@@ -18,6 +18,52 @@ activate_native_source(selected_native_source())
 
 from habitus_ai.rwkv7_language import Rwkv7Backend
 
+_BACKEND_CACHE: dict[tuple[str, str], Any] = {}
+_BACKEND_CACHE_LOCK = threading.RLock()
+
+
+def clear_rwkv_backend_cache():
+    """Clear cached RWKV backends to release memory."""
+    with _BACKEND_CACHE_LOCK:
+        _BACKEND_CACHE.clear()
+
+
+class GenericRwkv7Backend:
+    """Dynamic HuggingFace/Safetensors backend for arbitrary RWKV-7 checkpoints (e.g. 2.9B)."""
+
+    def __init__(self, directory: Path | str, device: str = "cpu"):
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        self.device = device
+        self.torch = torch
+        resolved_str = str(Path(directory).resolve())
+        self.model = AutoModelForCausalLM.from_pretrained(
+            resolved_str, dtype=torch.bfloat16, trust_remote_code=True
+        ).to(device)
+        self.tokenizer = AutoTokenizer.from_pretrained(resolved_str, trust_remote_code=True)
+        self.embedding_dimension = self.model.config.hidden_size
+        self.eos_token_id = getattr(self.tokenizer, "eos_token_id", 0)
+
+    def encode(self, text: str) -> list[int]:
+        return self.tokenizer.encode(text)
+
+    def decode(self, token_ids: list[int]) -> str:
+        return self.tokenizer.decode(token_ids)
+
+
+def get_shared_rwkv_backend(model_path: str | Path, device: str = "cpu"):
+    """Get or create a cached frozen Rwkv7Backend shared across sessions."""
+    resolved_path = str(Path(model_path).resolve())
+    key = (resolved_path, device)
+    with _BACKEND_CACHE_LOCK:
+        if key not in _BACKEND_CACHE:
+            try:
+                _BACKEND_CACHE[key] = Rwkv7Backend(Path(resolved_path), device=device)
+            except (ValueError, FileNotFoundError):
+                _BACKEND_CACHE[key] = GenericRwkv7Backend(resolved_path, device=device)
+        return _BACKEND_CACHE[key]
+
+
 
 class BicameralTranslatorBridge:
     """Manifold Translator Bridge connecting Sensory and Language representation spaces.
@@ -79,7 +125,7 @@ class BicameralRWKV:
         else:
             if not self.model_path:
                 raise ValueError("model_path is required when backend is not provided")
-            self.backend = Rwkv7Backend(self.model_path, device=device)
+            self.backend = get_shared_rwkv_backend(self.model_path, device=device)
         self.torch = self.backend.torch
         self.device = self.backend.device
         self.model = self.backend.model
@@ -87,7 +133,9 @@ class BicameralRWKV:
         self.hidden_size = self.backend.embedding_dimension
 
         # Instantiate the Translator Bridge
-        self.bridge = BicameralTranslatorBridge(self.hidden_size, self.torch, self.device)
+        self.native_stream = getattr(self.backend, 'native_stream', False) is True
+        self.bridge = (None if self.native_stream else
+                       BicameralTranslatorBridge(self.hidden_size, self.torch, self.device))
 
         # Instantiate Vocabulary Membrane
         from core.vocabulary_membrane import VocabularyMembrane
@@ -104,13 +152,18 @@ class BicameralRWKV:
             self.sensory_state = self.model.rwkv7.allocate_state(1, self.device, self.torch.bfloat16)
             self.language_state = self.model.rwkv7.allocate_state(1, self.device, self.torch.bfloat16)
 
+    def _forward_model(self, **kwargs):
+        if hasattr(self.backend, "forward_branch"):
+            return self.backend.forward_branch(**kwargs)
+        return self.model(**kwargs)
+
     def sensory_observe(self, text: str) -> None:
         """Processes continuous sensory or environmental observations into the sensory state."""
         ids = self.backend.encode(text)
         if not ids:
             return
         with self.torch.inference_mode():
-            result = self.model(
+            result = self._forward_model(
                 input_ids=self.torch.tensor([ids], device=self.device),
                 state=self.sensory_state,
                 use_cache=True,
@@ -137,8 +190,8 @@ class BicameralRWKV:
             raise ValueError("Prompt cannot be empty")
 
         with self.torch.inference_mode():
-            if coupling_gain <= 0.0:
-                result = self.model(
+            if coupling_gain <= 0.0 or getattr(self, 'native_stream', False):
+                result = self._forward_model(
                     input_ids=self.torch.tensor([ids], device=self.device),
                     state=self.language_state,
                     use_cache=True,
@@ -161,7 +214,7 @@ class BicameralRWKV:
                 norm_embeds = embeds.norm(dim=-1, keepdim=True)
                 embeds = (embeds + gain * norm_embeds * guidance_tensor).to(self.model.rwkv7.emb.weight.dtype)
 
-                result = self.model(
+                result = self._forward_model(
                     inputs_embeds=embeds,
                     state=self.language_state,
                     use_cache=True,
@@ -172,6 +225,53 @@ class BicameralRWKV:
             logits = result.logits[0, -1].detach().float().cpu().numpy()
             return logits
 
+    def _apply_repetition_penalty(
+        self,
+        logits: np.ndarray,
+        generated_ids: list[int],
+        repetition_penalty: float = 1.15,
+        repetition_window: int = 128,
+    ) -> np.ndarray:
+        """Progressively penalizes repeated tokens in proportion to frequency within repetition window."""
+        if repetition_penalty == 1.0 or not generated_ids:
+            return logits
+
+        effective_logits = logits.copy()
+        from collections import Counter
+        window = generated_ids[-repetition_window:]
+        counts = Counter(window)
+        for token_id, count in counts.items():
+            if token_id >= len(effective_logits):
+                continue
+            penalty = repetition_penalty ** count
+            if effective_logits[token_id] > 0:
+                effective_logits[token_id] /= penalty
+            else:
+                effective_logits[token_id] *= penalty
+        return effective_logits
+
+    @staticmethod
+    def _detect_repetition_loop(
+        generated_ids: list[int],
+        min_cycle: int = 1,
+        max_cycle: int = 128,
+    ) -> bool:
+        """Detects whether recent generated tokens are trapped in a repeating cycle."""
+        n = len(generated_ids)
+        for cycle_len in range(min_cycle, min(max_cycle + 1, n // 2 + 1)):
+            required_repeats = 4 if cycle_len == 1 else (2 if cycle_len >= 32 else 3)
+            if n < cycle_len * required_repeats:
+                continue
+            target = generated_ids[-cycle_len:]
+            repeats = 1
+            idx = n - cycle_len
+            while idx >= cycle_len and generated_ids[idx - cycle_len:idx] == target:
+                repeats += 1
+                idx -= cycle_len
+                if repeats >= required_repeats:
+                    return True
+        return False
+
     def generate_language(
         self,
         prompt: str,
@@ -181,11 +281,24 @@ class BicameralRWKV:
         coupling_gain: float = 0.15,
         membrane_state: str | np.ndarray | None = None,
         membrane_gain: float = 0.0,
-        repetition_penalty: float = 1.0,
-        # A generated human-role header ends this assistant turn. The model
-        # must never invent another received message, including after a date.
-        stop_sequences: tuple[str, ...] = ("<|endoftext|>", "\nUser:", "\n\nAssistant:", "\n\n[Pulse"),
+        repetition_penalty: float = 1.25,
+        repetition_window: int = 512,
+        stop_sequences: tuple[str, ...] = (
+            "<|endoftext|>",
+            "<|im_end|>",
+            "\nUser:",
+            "\n\n[",
+            "\n[Pulse",
+            "\n[MODE:",
+            "\n\n###",
+            "\n###",
+            "\n---\n",
+            "\n## ",
+            "\n# ",
+            "\n\n# ",
+        ),
         reset_state: bool = True,
+        on_boundary: str = "raise",
     ) -> str:
         """Autoregressively generate language tokens, steered by sensory continuous state and vocabulary membrane."""
         if reset_state:
@@ -207,25 +320,34 @@ class BicameralRWKV:
         text_so_far = ""
 
         self.last_generation_receipt = {'prompt_tokens': len(self.backend.encode(prompt)),
-                                        'output_token_cap': max_new_tokens}
+                                        'output_token_cap': max_new_tokens,
+                                        'stop_sequences': list(stop_sequences),
+                                        'on_boundary': on_boundary,
+                                        'decoding': {'temperature': temperature, 'top_p': top_p,
+                                                     'repetition_penalty': repetition_penalty,
+                                                     'repetition_window': repetition_window},
+                                        'sensory_coupling': ('native learned Habitus cortex/interface field' if getattr(self, 'native_stream', False)
+                                                            else 'bootstrap bicameral projections'),
+                                        'extra_projection_gain': 0.0 if getattr(self, 'native_stream', False) else coupling_gain}
         while True:
             if self.cancel_event.is_set():
                 self.last_generation_receipt.update(done_reason='cancelled', generated_tokens=len(generated_ids))
                 raise RuntimeError('RWKV generation cancelled; unfinished output withheld')
             if max_new_tokens is not None and len(generated_ids) >= max_new_tokens:
                 self.last_generation_receipt.update(done_reason='configured_output_boundary', generated_tokens=len(generated_ids))
-                raise RuntimeError('RWKV reached the configured output boundary; incomplete generation withheld')
+                if on_boundary == 'raise':
+                    raise RuntimeError('RWKV reached the configured output boundary; incomplete generation withheld')
+                else:
+                    stopped = True
+                    break
+
             effective_logits = logits.copy()
             if membrane_bias is not None:
                 effective_logits = effective_logits + float(membrane_gain) * membrane_bias
 
-            if repetition_penalty != 1.0 and generated_ids:
-                recent_ids = set(generated_ids[-32:])
-                for past_id in recent_ids:
-                    if effective_logits[past_id] > 0:
-                        effective_logits[past_id] /= repetition_penalty
-                    else:
-                        effective_logits[past_id] *= repetition_penalty
+            effective_logits = self._apply_repetition_penalty(
+                effective_logits, generated_ids, repetition_penalty=repetition_penalty, repetition_window=repetition_window
+            )
 
             if temperature <= 0.0:
                 next_id = int(np.argmax(effective_logits))
@@ -250,29 +372,43 @@ class BicameralRWKV:
                 break
             generated_ids.append(next_id)
 
+            # Check for repetition loops
+            if self._detect_repetition_loop(generated_ids):
+                self.last_generation_receipt['done_reason'] = 'repetition_loop_detected'
+                if getattr(self.backend, 'native_stream', False) is True:
+                    self.last_generation_receipt['generated_tokens'] = len(generated_ids)
+                    raise RuntimeError('Native RWKV repeated a generation cycle; unfinished output withheld')
+                stopped = True
+                break
+
             # Check stop sequences
             text_so_far = self.backend.decode(generated_ids)
             if self.generation_progress is not None:
                 self.generation_progress({'generated_tokens': len(generated_ids), 'text': text_so_far})
             stopped = False
             import re
-            ts_user_match = re.search(r"\n(\[[^\]]+\]\s*)?User:", text_so_far)
+            ts_user_match = re.search(r"\n(\[[^\]]+\]\s*)?(?:###\s*)?User:", text_so_far)
             if ts_user_match:
                 text_so_far = text_so_far[:ts_user_match.start()]
                 stopped = True
             else:
                 for stop in stop_sequences:
                     if stop in text_so_far:
-                        text_so_far = text_so_far.split(stop, 1)[0]
+                        prefix = text_so_far.split(stop, 1)[0]
+                        clean_prefix = re.sub(r"^(?:(?:Assistant|Helix|AI|User):\s*)+", "", prefix.strip(), flags=re.IGNORECASE).strip()
+                        if not clean_prefix and "Assistant" in stop:
+                            continue
+                        text_so_far = prefix
                         stopped = True
                         break
+
             if stopped:
                 self.last_generation_receipt['done_reason'] = 'conversation_boundary'
                 break
 
             # Forward step single next_id
             with self.torch.inference_mode():
-                result = self.model(
+                result = self._forward_model(
                     input_ids=self.torch.tensor([[next_id]], device=self.device),
                     state=self.language_state,
                     use_cache=True,
@@ -288,7 +424,11 @@ class BicameralRWKV:
 
     def feedback_language_to_sensory(self, feedback_gain: float = 0.15) -> None:
         """Modulates sensory state with continuous cognitive feedback vector via Translator Bridge."""
-        if feedback_gain <= 0.0:
+        if getattr(self, 'native_stream', False):
+            # The serial native owner admits the completed thought into the
+            # actual graph/cortex. Do not add an untrained second projection.
+            return
+        if feedback_gain <= 0.0 or self.language_state is None or self.sensory_state is None:
             return
         with self.torch.no_grad():
             raw_lang = self.get_language_state_vector()

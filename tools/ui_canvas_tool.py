@@ -58,7 +58,8 @@ def render_ui_canvas(
             "media_url": media_url, "auto_switch": auto_switch,
             "metadata": {} if metadata is None else metadata,
         })
-        config_path = BASE_DIR / "config" / "config.json"
+        from core.mindscape_config import configuration_path
+        config_path = configuration_path(BASE_DIR)
         config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
         spatial_dir = RuntimePaths.from_config(config, root=BASE_DIR).data / "spatial"
         spatial_dir.mkdir(parents=True, exist_ok=True)

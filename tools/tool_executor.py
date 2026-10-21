@@ -52,7 +52,8 @@ TERMINAL_TIMEOUT = 30      # seconds
 
 # Config path for safety mode / whitelist
 _BASE_DIR = Path(__file__).parent.parent.resolve()
-_CONFIG_PATH = _BASE_DIR / "config" / "config.json"
+from core.mindscape_config import configuration_path
+_CONFIG_PATH = configuration_path(_BASE_DIR)
 
 
 def _load_config() -> dict:
@@ -237,6 +238,7 @@ class ToolExecutor:
         self._update_tools_status(running_tool=name)
         start_time = time.monotonic()
         result = None
+        receipt = None
         try:
             # Primary: registry dispatch (check_fn + TTL caching)
             if hasattr(self, '_registry'):
@@ -261,10 +263,15 @@ class ToolExecutor:
                         result = f"Tool error ({name}): {e}"
 
             # Tool learning boundary: failures are captured as lesson
-            # candidates, successes verify recently injected lessons.
+            # candidates, matched successful exposures remain observations.
             try:
+                from core.action_protocol import classify_tool_result
                 from core.tool_lesson_tracker import observe_tool_result
-                observe_tool_result(name, args, result or "")
+                receipt = classify_tool_result(name, args, result or "")
+                from core.progress_feedback import current_lesson_context
+                context_id, lesson_ids = current_lesson_context()
+                observe_tool_result(name, args, result or "", receipt=receipt,
+                                    context_id=context_id, lesson_ids=lesson_ids)
             except Exception as e:
                 logger.debug(f"Tool lesson observation failed: {e}")
 
@@ -276,8 +283,14 @@ class ToolExecutor:
                 from core.interaction_ledger import (
                     record_from_call, annotate_result,
                 )
-                receipt = classify_tool_result(name, args, result or "")
+                receipt = receipt or classify_tool_result(name, args, result or "")
                 self._last_action_receipt = receipt.to_dict()
+                feedback = getattr(getattr(self, "_pulse_loop", None), "progress_feedback", None)
+                if feedback is not None:
+                    try:
+                        feedback.observe_tool(receipt)
+                    except Exception as exc:
+                        logger.debug("Progress observation failed: %s", exc)
                 # An attempted reply is not an interaction.  Only a receipt
                 # that actually confirms delivery may suppress future work on
                 # the artifact.

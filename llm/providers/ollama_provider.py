@@ -54,6 +54,7 @@ class OllamaSession(ChatSession):
         self.temperature = temperature
         self.max_output_tokens = max_output_tokens
         self.options = dict(options or {})
+        self.compiled_context_only = False
         # keep_alive is an Ollama request parameter, not a model-generation
         # option. A short-lived auxiliary worker can set it to zero so its
         # model is unloaded before the foreground and embedding models resume.
@@ -107,7 +108,8 @@ class OllamaSession(ChatSession):
     def context_messages(self, message):
         """Render durable dialogue plus one replaceable pulse presentation."""
         messages = [{"role": "system", "content": self.system_instruction}]
-        for item in self.history + [{"role": "user", "content": message}]:
+        history = [] if self.compiled_context_only else self.history
+        for item in history + [{"role": "user", "content": message}]:
             item = dict(item)
             if item["role"] == "assistant" and self.context_format and self.context_decoder:
                 # The native foreground emits message envelopes. Present its
@@ -137,6 +139,8 @@ class OllamaSession(ChatSession):
     def covered_source_hashes(self):
         """Canonical dialogue already present in the provider request."""
         import hashlib
+        if self.compiled_context_only:
+            return set()
         values = set()
         for item in self.history:
             text = item["content"]

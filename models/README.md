@@ -11,8 +11,8 @@ The default Mindscape profile selects the pinned safetensors checkpoint
 Configure the actual directory in `mindscape.rwkv_model` and the foreground
 `local_model`/`llm_model`; include its index and all four shards.
 
-The verified path was
-`/home/nemo/habitus-ai-experiments/habitus-mind/models/rwkv7-g1j-1.5b-20260831-2c18b29`.
+An example model checkpoint path is
+`models/rwkv7-g1j-1.5b-20260831-2c18b29` (or an external directory configured via `RWKV_MODEL_PATH`).
 It is an external checkpoint location, not a portable default guaranteed to
 exist on another machine. `RWKV_MODEL_PATH` participates in path discovery.
 

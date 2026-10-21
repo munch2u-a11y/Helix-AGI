@@ -36,7 +36,7 @@ source, not a replacement `context_loom` package from pip. Paths can be supplied
 through setup or defaults discovered using `MIGHTYMEM_PATH` and
 `RWKV_MODEL_PATH`.
 
-The October 17 run used `/home/nemo/MightyMem`, including local gestation-seed
+The October 17 run verified with an external `MightyMem` directory (configured via `MIGHTYMEM_PATH`), including local gestation-seed
 support and cooperative cancellation changes in `habitus_ai/continual_rwkv.py`.
 Its dependency patch and source hashes are in the
 [operational audit](audits/2026-10-17-native-body-operational/README.md).

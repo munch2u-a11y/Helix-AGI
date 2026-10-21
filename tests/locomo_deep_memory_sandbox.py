@@ -40,6 +40,7 @@ from tests.locomo_sandbox import (
     reset_question_state,
     run_agent_question,
     run_operational_pulse,
+    run_session_maintenance,
 )
 
 
@@ -213,10 +214,14 @@ def run_progressive_evaluation(
     max_pulses: int = 1,
     ingest_mode: str = "scripted",
     num_samples: Optional[int] = None,
+    sleep_consolidation: str = "off",
+    sleep_model: str = "",
     save_path: Optional[str] = None,
     details_path: Optional[str] = None,
     dry_run: bool = False,
 ) -> bool:
+    if sleep_consolidation not in {"off", "cases", "full"}:
+        raise ValueError(f"Unknown sleep consolidation mode: {sleep_consolidation}")
     dataset_file = Path(dataset_path)
     if not dataset_file.exists():
         logger.error("Dataset not found: %s", dataset_file)
@@ -234,7 +239,7 @@ def run_progressive_evaluation(
         sessions = sum(len(session_numbers(sample["conversation"])) for sample in selected_samples)
         print(
             f"Deep-memory dataset valid: {len(selected_samples)} sample(s), "
-            f"{sessions} checkpoints, {probes} probes."
+            f"{sessions} checkpoints, {probes} probes. Sleep consolidation: {sleep_consolidation}."
         )
         return True
 
@@ -248,6 +253,7 @@ def run_progressive_evaluation(
 
     details: List[Dict[str, Any]] = []
     checkpoint_graphs: Dict[Tuple[str, int], Dict[str, Any]] = {}
+    sleep_audits: Dict[Tuple[str, int], Dict[str, Any]] = {}
     started = time.time()
 
     for sample in selected_samples:
@@ -281,6 +287,7 @@ def run_progressive_evaluation(
 
                     session_key = f"session_{checkpoint}"
                     session_datetime = conversation.get(f"{session_key}_date_time", "")
+                    session_memory_ids: List[str] = []
                     for turn in conversation[session_key]:
                         ingest_pulse += 1
                         event = format_dialogue_payload(
@@ -299,9 +306,47 @@ def run_progressive_evaluation(
                             advance_physics=True,
                             store_thought_artifact=(ingest_mode == "connector"),
                         )
+                        session_memory_ids.extend(pulse.get("artifact_memory_ids", []))
                         previous_thought = (
                             pulse["raw_response"] if ingest_mode == "connector" else ""
                         )
+
+                    if sleep_consolidation != "off":
+                        session_id = f"D{checkpoint}"
+                        maintenance_stats = run_session_maintenance(
+                            runtime,
+                            provider,
+                            session_id=session_id,
+                            memory_ids=session_memory_ids,
+                            mode=sleep_consolidation,
+                            maintenance_model=sleep_model or provider.model,
+                        )
+                        attrition_stats = runtime["belief_store"].recalculate_all_confidences()
+                        runtime["preconscious"]._lexicon_lookup = {}
+                        runtime["preconscious"]._load_layer2_anchors()
+                        runtime["preconscious"]._belief_cache = []
+                        runtime["preconscious"]._belief_cache_count = 0
+                        runtime["preconscious"]._belief_cache_mass = 0.0
+                        sleep_audits[(sample_id, checkpoint)] = {
+                            "checkpoint": checkpoint,
+                            "session_id": session_id,
+                            "mode": sleep_consolidation,
+                            "cases_touched": maintenance_stats.get("cases_touched", 0),
+                            "case_names": maintenance_stats.get("case_names", []),
+                            "exact_summary_written": maintenance_stats.get("exact_summary_written", False),
+                            "derived_summaries_written": maintenance_stats.get("derived_summaries_written", 0),
+                            "profiles_written": maintenance_stats.get("profiles_written", 0),
+                            "profiles_reinforced": maintenance_stats.get("profiles_reinforced", 0),
+                            "worker_error": maintenance_stats.get("worker_error", ""),
+                            "attrition": attrition_stats,
+                        }
+                    else:
+                        sleep_audits[(sample_id, checkpoint)] = {
+                            "checkpoint": checkpoint,
+                            "session_id": f"D{checkpoint}",
+                            "mode": "off",
+                            "cases_touched": 0,
+                        }
 
                     checkpoint_graphs[(sample_id, checkpoint)] = _association_stats(runtime)
                     reset_question_state(runtime["preconscious"], runtime["physics"])
@@ -332,6 +377,7 @@ def run_progressive_evaluation(
                             "context_string": final_pulse.get("context_string", ""),
                             "retrieval_stats": retrieval_stats,
                             "association_graph": checkpoint_graphs[(sample_id, checkpoint)],
+                            "sleep_consolidation": sleep_audits[(sample_id, checkpoint)],
                             "pulses": result["pulses"],
                         })
                         logger.info(
@@ -357,6 +403,7 @@ def run_progressive_evaluation(
         f"- mRAG profile: {profile}",
         f"- Associative memory: {'on' if association_memory else 'off'}",
         f"- Ingestion mode: {ingest_mode}",
+        f"- Sleep consolidation: {sleep_consolidation}",
         f"- Samples: {len(selected_samples)}",
         f"- Probes: {len(details)}",
         f"- Elapsed: {time.time() - started:.1f}s",
@@ -370,6 +417,29 @@ def run_progressive_evaluation(
     ]
     for probe_type in sorted(by_type):
         report.append(f"| {probe_type} | {len(by_type[probe_type])} | {_mean(by_type[probe_type]):.3f} |")
+
+    if sleep_consolidation != "off":
+        report.extend([
+            "",
+            "## Sleep consolidation audit",
+            "",
+            "| Checkpoint | Cases | Exact summary | Derived summaries | Profiles written | Reinforced | Attrition promoted |",
+            "|---:|---:|---:|---:|---:|---:|---:|",
+        ])
+        for checkpoint in sorted(by_checkpoint):
+            audit = next(
+                (row.get("sleep_consolidation", {}) for row in details if row["checkpoint"] == checkpoint),
+                {},
+            )
+            attr = audit.get("attrition", {})
+            report.append(
+                f"| {checkpoint} | {audit.get('cases_touched', 0)} | "
+                f"{'yes' if audit.get('exact_summary_written') else 'no'} | "
+                f"{audit.get('derived_summaries_written', 0)} | "
+                f"{audit.get('profiles_written', 0)} | "
+                f"{audit.get('profiles_reinforced', 0)} | "
+                f"{attr.get('promoted', 0)} |"
+            )
 
     report.extend([
         "",
@@ -438,6 +508,8 @@ def main() -> None:
     parser.add_argument("--context-limit", type=int, default=128_000)
     parser.add_argument("--association-memory", choices=("on", "off"), default="on")
     parser.add_argument("--ingest-mode", choices=("scripted", "connector"), default="scripted")
+    parser.add_argument("--sleep-consolidation", "--maintenance", choices=("off", "cases", "full"), default="off", dest="sleep_consolidation", help="Between-session sleep consolidation cycle")
+    parser.add_argument("--sleep-model", "--maintenance-model", default="", dest="sleep_model", help="Optional model for sleep consolidation worker")
     parser.add_argument("--max-pulses", type=int, default=1)
     parser.add_argument("--num-samples", type=int, default=None)
     parser.add_argument("--save-results", default="benchmark_results/deep_memory_report.md")
@@ -458,6 +530,8 @@ def main() -> None:
         max_pulses=max(1, args.max_pulses),
         ingest_mode=args.ingest_mode,
         num_samples=args.num_samples,
+        sleep_consolidation=args.sleep_consolidation,
+        sleep_model=args.sleep_model,
         save_path=args.save_results,
         details_path=args.save_details,
         dry_run=args.dry_run,

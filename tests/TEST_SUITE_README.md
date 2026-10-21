@@ -242,7 +242,7 @@ and dirty source paths are recorded before the run.
 
 ```bash
 venv/bin/python tests/ragoffice_parity_sandbox.py \
-  --ragoffice-root /home/nemo/RAGOffice \
+  --ragoffice-root /path/to/RAGOffice \
   --model granite4.1:8b \
   --context-office on \
   --resume
@@ -274,3 +274,15 @@ exams and cannot be compared as equivalent scores.
 No fixed throughput, latency, or pass-rate numbers are promised here. Those
 figures depend on hardware, store size, provider, local model availability, and
 the exact commit, so performance claims belong in dated benchmark reports.
+
+## Experimental native robustness checks
+
+The offline group covers `test_stability_policy.py`, `test_progress_feedback.py`
+and `test_native_robustness.py`, plus the retained Context Office diagnostics.
+They use injected probe scores, temporary files/SQLite and explicitly fake neural
+receipts. The standalone `python tests/test_tool_learning_pipeline.py` script
+checks failure capture and successful-exposure accounting with real temporary
+belief stores; successful use does not verify a lesson's truth.
+
+The [second-branch guide](../documents/maintenance/NATIVE_ROBUSTNESS.md) provides
+controls, a read-only checkpoint inspector and the native PC acceptance workflow.

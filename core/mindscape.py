@@ -54,7 +54,7 @@ def projection(item):
                          "historical_projection": True, "record_envelope": envelope}}
 
 
-def classify_sensed_feeling(sensed: Any, events: Sequence[str]) -> dict[str, Any]:
+def classify_sensed_feeling(sensed: Any, events: Sequence[str], *, delivery_target=None) -> dict[str, Any]:
     """Decode RWKV recurrent cortex dynamics into an explicit sensory-motor feeling.
 
     Distinguishes between:
@@ -109,47 +109,53 @@ def classify_sensed_feeling(sensed: Any, events: Sequence[str]) -> dict[str, Any
 
     # Determine feeling modality:
     # An external communication is felt if:
-    # 1) An inbound speaker addressed us AND cortex supports speaking (or doesn't inhibit it)
+    # 1) An inbound speaker addressed us directly
     # 2) Or the recurrent state's desire/pressure indicates should_express with speak affordance/route
     # 3) Or cortex proposal strongly predicts SPEAK (prob >= 0.5)
     is_external = False
-    if has_inbound_speaker and (speak_prob >= 0.25 or selected_speak or route_speak or recurrent_express):
+    if has_inbound_speaker:
         is_external = True
     elif selected_speak or route_speak or (recurrent_express and speak_prob >= 0.4):
         is_external = True
 
     outward_requested = is_external
-    # An impulse does not identify a recipient. Autonomous directed messages
-    # need an explicit target before they can cross the external boundary.
+    recipient_source = "received message" if has_inbound_speaker else None
+    if not has_inbound_speaker and delivery_target:
+        inbound_speaker_name = delivery_target["recipient"]
+        inbound_channel = delivery_target["channel"]
+        recipient_source = delivery_target["source"]
+    speech_available = bool(inbound_speaker_name and inbound_channel)
     is_external = bool(outward_requested and inbound_speaker_name and inbound_channel)
     modality = "EXTERNAL_COMMUNICATION" if is_external else "INTERNAL_MONOLOGUE"
 
-    if is_external:
+    if speech_available and not has_inbound_speaker:
+        feeling_tag = "[Somatic Sensory Feeling: SELF_INITIATED_COMMUNICATION_AVAILABLE]"
+        feeling_guidance = (
+            f"{feeling_tag}\nNo new message arrived. I can continue thinking privately, act, "
+            f"or choose to speak to {inbound_speaker_name} through {inbound_channel}. "
+            "Choosing speech does not require being asked a question. Actual returns inform my next thought.")
+    elif is_external:
         feeling_tag = "[Somatic Sensory Feeling: EXTERNAL_COMMUNICATION_DIRECTED]"
-        target_str = f" ({inbound_speaker_name})" if inbound_speaker_name else ""
         feeling_guidance = (
             f"{feeling_tag}\n"
-            f"The RWKV recurrent cortex registers an OUTWARD COMMUNICATIVE IMPULSE "
-            f"(speak_salience={speak_prob:.2f}, express_pressure={recurrent_express}). "
-            f"An outward response can address the external recipient{target_str}. "
-            f"If the current request needs an action or missing information, take the necessary private action first. "
-            f"Otherwise answer the current request directly. A speaking impulse is not evidence that work is complete."
+            f"I am hearing {inbound_speaker_name} through {inbound_channel}; speech can reach them. "
+            "I can keep thinking privately before choosing whether to speak. "
+            "If I need more information or an action, its actual return can inform my next thought."
         )
     else:
         feeling_tag = "[Somatic Sensory Feeling: INTERNAL_MONOLOGUE_ONLY]"
         feeling_guidance = (
             f"{feeling_tag}\n"
-            f"The RWKV recurrent cortex registers NO outbound communicative impulse "
-            f"(speak_salience={speak_prob:.2f}, express_pressure={recurrent_express}). "
-            f"This turn is PURE INTERNAL MONOLOGUE / PRIVATE REFLECTION. "
-            f"Do NOT address an external interlocutor, do NOT format as a conversational message, "
-            f"and do NOT leak private musings into external channels. Think purely to yourself."
+            "My thought is private. There is no resolved external recipient for this pulse. "
+            "I can continue my line of thought and let new sensations and action returns inform it."
         )
 
     return {
         "modality": modality,
         "is_external": is_external,
         "outward_requested": outward_requested,
+        "speech_available": speech_available,
+        "recipient_source": recipient_source,
         "speak_probability": speak_prob,
         "recurrent_express": recurrent_express,
         "selected_speak": selected_speak,
@@ -185,6 +191,8 @@ class Mindscape:
         self.native = None
         self.loom = None
         self.session_id = uuid.uuid4().hex
+        from core.progress_feedback import ProgressFeedback
+        self.progress_feedback = ProgressFeedback()
         self._receipt_lock = threading.Lock()
         self.manifest = {
             "schema": "helix-mindscape-composition-v1",
@@ -209,8 +217,12 @@ class Mindscape:
                            "product_result": None},
             "boundaries": {
                 "new_action_or_reasoning_ceiling": None, "sync_record_limit": None,
-                "rwkv_chunk_tokens": {"value": 128, "meaning": "native compute batch; all input tokens consumed"},
+                "rwkv_chunk_tokens": {"value": self.config["mindscape"]["gradient_learning"]["chunk_tokens"],
+                                      "meaning": "configurable training compute/BPTT batch for memory use; all input tokens consumed"},
                 "loom_context": {"value": self.config["local_context_window"], "reason": "selected foreground context"},
+                "pulse_items": {"value": self.config["mindscape"]["context_item_limit"],
+                                "reason": "user-requested cognitive breadth across pulses; whole items only",
+                                "overflow": "required current experience fails explicitly; optional sources deferred"},
                 "loom_adaptive_shortlist": "disabled; compiler uses selected context",
                 "private_evidence": "typed cognitive context only; not factual or action evidence",
                 "retrieval_nominations": "all eligible heads and sources; no count/token shortlist before production context admission",
@@ -222,7 +234,7 @@ class Mindscape:
             "capability_status": {
                 "rwkv_role": f"native recurrent input/cortex coupling; {self.config['local_provider']} foreground language",
                 "non_tool_file_motor": "independent filesystem sensor and typed motor body; explicit user-goal bootstrap, not learned autonomy",
-                "rwkv_gradient_training": False,
+                "gradient_learning": self.config["mindscape"]["gradient_learning"],
                 "cortex_plasticity": "native Habitus runtime; no fabricated rewards",
             },
         }
@@ -244,6 +256,11 @@ class Mindscape:
     def _receipt(self, kind, **values):
         with self._receipt_lock, (self.directory / "receipts.jsonl").open("a") as stream:
             stream.write(json.dumps({"time": time.time(), "kind": kind, **values}, default=str, allow_nan=False) + "\n")
+
+    def foreground_backend(self, model_path):
+        if Path(model_path).resolve() != Path(self.config["mindscape"]["rwkv_model"]).resolve():
+            raise RuntimeError("Native foreground must use the declared agent-owned checkpoint; no frozen substitute was loaded")
+        return self.language_backend
 
     def _open(self):
         from habitus_ai.continual_mind import ContinualMind
@@ -276,24 +293,29 @@ class Mindscape:
         from core.agent_creation import native_seed, verify_native_profile
         self.home = prepare_home(self.config, state_directory=self.directory)
         requested_seed = native_seed(self.config) if not resumed or self.config.get("creation") else None
+        learning = self.config["mindscape"]["gradient_learning"]
         self.native = ContinualMind(model=Path(self.config["mindscape"]["rwkv_model"]),
                                     directory=joint, workspace=Path(self.home["root"]),
-                                    gestation_seed=requested_seed)
+                                    gestation_seed=requested_seed,
+                                    trainable_blocks=learning["rwkv_tail_blocks"], chunk_tokens=learning["chunk_tokens"])
         self.gestation_receipt = (verify_native_profile(self.native.profile, self.config) if requested_seed else
                                   {"actual": asdict(self.native.profile), "legacy_profile_preserved": True})
-        self.native.backend.training_enabled = False
+        from core.native_learning import NativeGradientLearning, NativeLanguageBackend
+        self.learning = NativeGradientLearning(self, learning)
+        self.language_backend = NativeLanguageBackend(self)
         from core.mindscape_workspace import NativeWorkspaceBody
         self.body = NativeWorkspaceBody(self.native, self.home["root"], home=self.home)
         self.continuation = json.loads(self.native.mind.store.get_metadata("helix_pulse_continuation", "{}"))
         from core.native_motor import NativeMotorSystem
         self.motor = NativeMotorSystem(self)
         self._admitted_foreground = None
+        self._motor_context_id = None
         self._observed_return_id = None
         if str(self.native.backend.device) != "cpu" or str(self.native.runtime.cortex.device) != "cpu":
             raise RuntimeError("Native joint bridge initialized on an undeclared device")
         if self.config['local_provider'] in {'rwkv', 'bicameral_rwkv'}:
             from llm.rwkv_tokens import RWKVTokenCounter
-            self.token_counter = RWKVTokenCounter(self.native.backend.encode, self.config['local_model'])
+            self.token_counter = RWKVTokenCounter(self.native.backend.encode, self.config['local_model'], thinking=True)
         else:
             from llm.ollama_tokens import OllamaTokenCounter
             self.token_counter = OllamaTokenCounter(self.config["local_model"])
@@ -314,6 +336,7 @@ class Mindscape:
             embedding_provider=compiler.embedding_provider,
             lanes=compiler.lanes, token_counter=self.token_counter,
             focus_profiles=self.config["mindscape"]["context_focus_profiles"],
+            item_limit=self.config["mindscape"]["context_item_limit"],
         )
         self.topical = TopicalTracker(self.loom.store)
         self._current_topic_frame = None
@@ -385,6 +408,9 @@ class Mindscape:
             metadata={"helix_pulse": pulse, "sensor": "home_filesystem", "content_opened": False})
         self._receipt("home_sensory_intake", helix_pulse=pulse, observation=scene,
                       content_sha256=hashlib.sha256(text.encode()).hexdigest(), rwkv_tokens=len(ids))
+        self.continuation["body_scene"] = {"id": scene["observation_id"], "action": "sense",
+            "path": scene["surroundings"]["path"], "status": "success",
+            "output": scene["surroundings"], "source": "actual filesystem sensor"}
         return sensory, scene, text, len(ids)
 
     def sync(self):
@@ -445,7 +471,7 @@ class Mindscape:
             self._receipt("motor_receptor_no_action", input_sha256=hashlib.sha256(event.encode()).hexdigest(),
                           reason="no explicit positive motor request")
             return
-        input_id = "receptive:" + uuid.uuid4().hex
+        input_id = getattr(event, "event_id", "receptive:" + uuid.uuid4().hex)
         self._receptive_pending.add(input_id)
         self._intake.submit(self._receive_event, event, input_id)
 
@@ -490,6 +516,9 @@ class Mindscape:
     def _prepare(self, events, context, pulse, mrag, input_allowance=None, covered_source_hashes=(), motor_input_id=None):
         from habitus_ai.developmental_runtime import DevelopmentalInput
         from habitus_ai.types import InputTrunk
+        private = self._load_private_continuation()
+        if private is not None and not any(item.producer == "foreground_private" for item in context.contributions):
+            context = context.extend(private)
         before = hashlib.sha256(self.native.backend.dump_state()).hexdigest()
         inputs = []
         token_count = 0
@@ -508,20 +537,28 @@ class Mindscape:
                     "module", json.dumps(active, ensure_ascii=False), "home_module",
                     kind="interface_state", evidence="controller state; actual output is in the action return"))
         for event in events:
-            returned = self.continuation.get("return")
-            if returned and event == f"Native action [{returned['id']}] returned: " + returned["content"]:
+            returns = list(self.continuation.get("motor_returns", ()))
+            if self.continuation.get("return"):
+                returns.append(self.continuation["return"])
+            if any(event == f"Native action [{item['id']}] returned: " + item["content"] for item in returns):
                 # Already consumed by ToolRegistry's native return pulse and
                 # the RWKV return admission; present it to Helix once without
                 # manufacturing a second external experience in Habitus.
                 continue
-            # These are Helix's provenance-bearing event strings, not recalled
-            # context replayed as a fresh utterance. No gradient learning here.
-            ids = self.native.backend.encode(event)
-            if ids:
-                self.native.backend.consume(ids)
-                token_count += len(ids)
+            from core.native_learning import StreamEvent
+            if isinstance(event, StreamEvent) and event.event_type in {"user_message", "incoming_message", "telegram_message"}:
+                admission = self.learning.external(event.payload, event.event_id, kind="received_language")
+                token_count += admission["tokens"]
+                if admission["reused"]:
+                    continue
+            else:
+                # Internal controller events advance state, never target weights.
+                ids = self.native.backend.encode(event)
+                if ids:
+                    self.native.backend.consume(ids)
+                    token_count += len(ids)
             inputs.append(DevelopmentalInput(content=event, lane=InputTrunk.NOTICE,
-                source_id="helix-pulse-event", motor_eligible=False,
+                source_id=getattr(event, "event_id", "helix-pulse-event"), motor_eligible=False,
                 embedding=tuple(self.native.runtime.embedder.embed(event)),
                 metadata={"helix_pulse": pulse, "unverified_event": True}))
         sensed = self.native.runtime.advance(tuple(inputs), allow_idle=not inputs)
@@ -532,9 +569,13 @@ class Mindscape:
         self.native.latest_pulse = sensed
         self._current_topic_frame = None
 
-        feeling = classify_sensed_feeling(sensed, events)
-        current_messages = [item.text for item in context.contributions
-                            if item.section == "messages" and item.producer == "pulse_event"]
+        dashboard_target = ({"recipient": self.config.get("creator_name", "User"),
+                             "channel": "dashboard", "source": "configured primary dashboard"}
+                            if self.config.get("primary_channel") == "dashboard" else None)
+        feeling = classify_sensed_feeling(sensed, events, delivery_target=dashboard_target)
+        current_items = [item for item in context.contributions
+                         if item.section == "messages" and item.producer == "pulse_event"]
+        current_messages = [item.text for item in current_items]
         if current_messages:
             from core.mindscape_intention import (
                 requires_workspace_observation,
@@ -546,11 +587,19 @@ class Mindscape:
             target = (feeling.get("inbound_speaker"), feeling.get("inbound_channel"))
             if old and (old["recipient"], old["channel"]) != target:
                 raise RuntimeError("A different recipient has an unfinished native action; inputs preserved for explicit routing")
-            all_messages = old.get("messages", []) + current_messages
+            old_ids = old.get("message_ids", ["legacy:" + hashlib.sha256(msg.encode()).hexdigest()
+                                              for msg in old.get("messages", ())])
+            fresh_items = [item for item in current_items if item.source_ids[0] not in old_ids]
+            if old.get("messages") and fresh_items:
+                context = context.extend(ContextContribution(
+                    "task", "My continuing purpose, from the earlier request:\n" + "\n".join(old["messages"]),
+                    "pending_interaction", kind="unresolved_request", evidence="actual received messages"))
+            all_messages = old.get("messages", []) + [item.text for item in fresh_items]
             extracted_obl = extract_workspace_obligations(all_messages)
             self.continuation["pending"] = {
                 "recipient": target[0], "channel": target[1],
                 "messages": all_messages,
+                "message_ids": old_ids + [item.source_ids[0] for item in fresh_items],
                 "observation_required": old.get("observation_required", False) or any(
                     requires_workspace_observation(message) for message in current_messages),
                 "obligations": {
@@ -569,13 +618,8 @@ class Mindscape:
             feeling = classify_sensed_feeling(sensed, pending["messages"])
             feeling["recipient_source"] = "persisted unfinished interaction, not a newly received message"
             context = context.extend(ContextContribution(
-                "task", "This is my unfinished request, not a newly received message:\n" + "\n".join(pending["messages"]),
+                "task", "My continuing purpose, from the earlier request:\n" + "\n".join(pending["messages"]),
                 "pending_interaction", kind="unresolved_request", evidence="actual received messages"))
-            if pending.get("thoughts"):
-                last_thoughts = pending["thoughts"]
-                context = context.extend(ContextContribution(
-                    "thinking", "My thoughts on this unresolved task so far:\n" + "\n".join(last_thoughts),
-                    "pending_thinking", kind="internal_monologue", evidence="prior conscious thoughts"))
         self._observed_return_id = self.continuation.get("return", {}).get("id")
         pending = self.continuation.get("pending", {})
         if self.continuation.get("interface_feedback"):
@@ -595,16 +639,16 @@ class Mindscape:
             if not item.get("consumed") and not any(item["content"] in event for event in events):
                 event = f"Native action [{item['id']}] returned: " + item["content"]
                 events.append(event)
-                context = context.extend(ContextContribution("work", event, "native_body",
+                context = context.extend(ContextContribution("tool_observations", event, "native_body",
                     (item["id"],), "action_observation", "actual native receipt"))
         self._observed_motor_ids = {item["id"] for item in self.continuation.get("motor_returns", [])
                                     if any(item["content"] in event for event in events)}
         self.needs_native_observation = self.motor.pending or bool(self._receptive_pending)
         if self.needs_native_observation:
             feeling.update(is_external=False, modality="INTERNAL_ACTION_REQUIRED",
-                           delivery_gate="the independent motor body is processing the actual received request")
+                           delivery_gate="the independent motor body is processing an actual request or autonomous action")
             feeling["feeling_guidance"] = (
-                "My body has an unfinished movement, reading or execution request. "
+                "My body has an unfinished movement, reading, execution, or autonomous exploratory action. "
                 "Its motor loop runs independently of my language stream. I can think privately while waiting. "
                 "Actual sensory returns will show the results. My prose does not dispatch actions.")
         self.last_sensed_feeling = feeling
@@ -643,6 +687,7 @@ class Mindscape:
             weights = dict(focus.weights)
             weights["module" if self.body.workspace.active_module() else "environment"] = 1.0
             context = replace(context, focus=ContextFocus(weights, focus.source + "+home_interface"))
+        context = context.extend(*self.motor.procedure_context(current_messages or pending.get("messages", [])))
         packet = self.loom.compiler.compile_pulse(context, scope="helix", input_allowance=input_allowance,
                                                  covered_source_hashes=covered_source_hashes)
         frame = self._current_topic_frame
@@ -658,21 +703,20 @@ class Mindscape:
             recurrent_state=state,
             mrag=mrag, loom_packet=packet.to_dict(), graph_trace=self.graph_lane.trace,
             context_assembly=self.loom.compiler.last_assembly_receipt)
-        if admitted_motor_ids:
-            # The motor brain receives the actual production compiler output,
-            # including all admitted retrieval lanes, before it can emit a
-            # signal. This advances recurrent state without language decoding.
-            compiled_ids = self.native.backend.encode(packet.rendered)
-            state_before = hashlib.sha256(self.native.backend.dump_state()).hexdigest()
-            if compiled_ids:
-                self.native.backend.consume(compiled_ids)
-            self._receipt("motor_context_model_admission", context_id=packet.id,
-                          request_ids=admitted_motor_ids, model=self.native.backend.identity,
-                          device=str(self.native.backend.device), tokens=len(compiled_ids),
-                          content_sha256=hashlib.sha256(packet.rendered.encode()).hexdigest(),
-                          joint_state_before=state_before,
-                          joint_state_after=hashlib.sha256(self.native.backend.dump_state()).hexdigest(),
-                          output="recurrent state, no language decoding")
+        # Every native branch receives the actual production compiler output
+        # before independent motor selection, including without a user request.
+        compiled_ids = self.native.backend.encode(packet.rendered)
+        state_before = hashlib.sha256(self.native.backend.dump_state()).hexdigest()
+        if compiled_ids:
+            self.native.backend.consume(compiled_ids)
+        self._receipt("motor_context_model_admission", context_id=packet.id,
+                      request_ids=admitted_motor_ids, model=self.native.backend.identity,
+                      device=str(self.native.backend.device), tokens=len(compiled_ids),
+                      content_sha256=hashlib.sha256(packet.rendered.encode()).hexdigest(),
+                      joint_state_before=state_before,
+                      joint_state_after=hashlib.sha256(self.native.backend.dump_state()).hexdigest(),
+                      output="recurrent state, no language decoding")
+        self._motor_context_id = packet.id
         self.motor.link_context(admitted_motor_ids, packet.id)
         return packet.rendered
 
@@ -688,21 +732,23 @@ class Mindscape:
                 "topical", frame.rendered, "habitus_topical", kind="internal_state",
                 evidence="current graph traversal, not external evidence"))
 
-    def finish(self, thought, pulse, *, delivered_external=False, observed_motor_ids=None):
+    def finish(self, thought, pulse, *, delivered_external=False, observed_motor_ids=None,
+               private_continuation=None):
         try:
             self.sync()
-            return self._worker.submit(self._finish, thought, pulse, delivered_external, observed_motor_ids).result()
+            return self._worker.submit(self._finish, thought, pulse, delivered_external,
+                                       observed_motor_ids, private_continuation).result()
         except Exception as error:
             self.fail(error, [], thought, pulse)
             raise
 
-    def _admit_foreground(self, thought, pulse, delivered_external=False):
+    def _admit_foreground(self, thought, pulse, delivered_external=False, *, channel="foreground"):
         # The recurrent controller must experience its own foreground output.
         # This is internal state advancement, never an external observation or
         # an implicit successful action. No gradients or motor forms are trained.
         from habitus_ai.developmental_runtime import DevelopmentalInput
         from habitus_ai.types import InputTrunk
-        identity = (pulse, hashlib.sha256(thought.encode()).hexdigest())
+        identity = (pulse, channel, hashlib.sha256(thought.encode()).hexdigest())
         if self._admitted_foreground == identity:
             return
         before = hashlib.sha256(self.native.backend.dump_state()).hexdigest()
@@ -711,12 +757,14 @@ class Mindscape:
             self.native.backend.consume(ids)
         own_output = DevelopmentalInput(
             content=thought, lane=InputTrunk.NOTICE,
-            source_id=f"helix-own-output:{self.session_id}:{pulse}", motor_eligible=False,
+            source_id=f"helix-own-output:{self.session_id}:{pulse}:{channel}", motor_eligible=False,
             embedding=tuple(self.native.runtime.embedder.embed(thought)),
             metadata={"helix_pulse": pulse, "self_generated": True,
-                      "external_evidence": False, "delivered_external": bool(delivered_external)})
+                      "external_evidence": False, "delivered_external": bool(delivered_external),
+                      "output_channel": channel})
         self.native.latest_pulse = self.native.runtime.advance((own_output,))
         self._receipt("foreground_internal_admission", helix_pulse=pulse, rwkv_tokens=len(ids),
+                      output_channel=channel,
                       source_id=own_output.source_id, joint_state_before=before,
                       joint_state_after=hashlib.sha256(self.native.backend.dump_state()).hexdigest(),
                       external_evidence=False, gradient_updates=0)
@@ -724,6 +772,28 @@ class Mindscape:
 
     def _save_continuation(self):
         self.native.mind.store.set_metadata("helix_pulse_continuation", json.dumps(self.continuation, ensure_ascii=False))
+
+    def private_continuation(self):
+        """Restore private continuity before retrieval, including after restart."""
+        return self._worker.submit(self._load_private_continuation).result()
+
+    def _load_private_continuation(self):
+        saved = self.continuation.get("private_thought")
+        if saved:
+            saved = dict(saved)
+            for key in ("source_ids", "anchor_queries"):
+                saved[key] = tuple(saved.get(key, ()))
+            return ContextContribution(**saved)
+        # Older checkpoints kept thoughts inside unfinished interactions. Read
+        # only the latest as active cognition; canonical memory retains history.
+        thoughts = self.continuation.get("pending", {}).get("thoughts", ())
+        if thoughts:
+            text = thoughts[-1]
+            if text.startswith("[thought]"):
+                text = text[len("[thought]"):].lstrip()
+            return ContextContribution("thinking", text, "foreground_private",
+                                       kind="thought", evidence="legacy private continuation", owner="agent")
+        return None
 
     def pending_events(self):
         def read():
@@ -763,6 +833,33 @@ class Mindscape:
                                  frame["scene_sha256"], frame["surroundings"]["path"])
         self.foreground_home_observation = {"text": json.dumps(frame, sort_keys=True),
                                            "producer": "home_filesystem", "source_ids": [frame["observation_id"]]}
+        self.continuation["body_scene"] = {"id": frame["observation_id"], "action": "sense",
+            "path": frame["surroundings"]["path"], "status": "success",
+            "output": frame["surroundings"], "source": "actual filesystem sensor"}
+
+    def _autonomous_motor_step(self):
+        """Native quiet deliberation on the body clock, even during speech inference."""
+        if not self._motor_context_id or self._receptive_pending:
+            return
+        from core.mindscape_intention import resolve_subconscious_action
+        self.native.latest_pulse = self.native.runtime.advance((), allow_idle=True)
+        self.native.backend.begin_slice()
+        trunks = self.get_active_subconscious_trunks()
+        observations = list(self.continuation.get("body_observations", {}).values())
+        if self.continuation.get("body_scene"):
+            observations.append(self.continuation["body_scene"])
+        # Explicit requests already have their independent, target-bound jobs.
+        # Quiet native selection only resolves observed exploratory targets.
+        intention = resolve_subconscious_action({}, observations,
+            current_position=self.body.workspace.position, active_trunks=trunks)
+        sensed = self.native.latest_pulse
+        self._receipt("native_autonomous_decision", context_id=self._motor_context_id,
+            native_cycle_id=sensed.cycle.cycle_id, active_trunks=sorted(str(t) for t in trunks),
+            disposition="act" if intention else "no_motor_action", intention=intention,
+            selection="native quiet pulse; bootstrap observed-target resolver; no foreground completion required")
+        if intention:
+            self.motor.submit_action(intention["action"], intention["arguments"]["path"],
+                                     context_id=self._motor_context_id)
 
     def _execute_motor(self, signal, arguments):
         from core.native_motor import MotorSignal, MotorOpcode, ACTION
@@ -772,16 +869,14 @@ class Mindscape:
         result = self.body.execute(action, arguments)
         result.update(action=action, intent_source="native_motor_signal", motor_signal=asdict(signal),
                       arguments=arguments)
-        content = json.dumps(result, sort_keys=True, default=str)
-        ids = self.native.backend.encode(content)
-        if ids:
-            self.native.backend.consume(ids)
+        tokens = self.learning.returned(result, self.body.last_action_eligibility)
         from core.mindscape_intention import observation_text
         receipt_id = result["receipt"]["receipt_id"]
         self.continuation.setdefault("motor_returns", []).append({
             "id": receipt_id, "content": observation_text(result), "consumed": False})
+        self._remember_body_result(result)
         self._save_continuation()
-        self._receipt("native_action_return", rwkv_return_tokens=len(ids), **result)
+        self._receipt("native_action_return", rwkv_return_tokens=tokens, **result)
         return result
 
     def has_subconscious_motor_impulse(self) -> bool:
@@ -803,25 +898,79 @@ class Mindscape:
                 pass
         return False
 
+    def get_active_subconscious_trunks(self):
+        sensed = getattr(getattr(self, "native", None), "latest_pulse", None)
+        if sensed and hasattr(sensed, "cycle"):
+            cycle = sensed.cycle
+            selected_outputs = getattr(cycle, "selected_outputs", ()) or ()
+            return {getattr(item, "trunk", None) for item in selected_outputs if getattr(item, "trunk", None) is not None}
+        return set()
+
     def act(self, thought, pulse):
         """Process private intention or subconscious motor impulse."""
+        return self._worker.submit(self._select_and_act, thought, pulse).result()
+
+    def _select_and_act(self, thought, pulse):
         from core.mindscape_intention import (
             parse_natural_or_wire_intention,
             resolve_subconscious_action,
         )
-
+        # Feed the completed output back before selecting, on the same owner
+        # as native motor execution and gradient updates. It is not a target.
+        self._admit_foreground(thought, pulse)
+        if getattr(getattr(self, "motor", None), "pending", False) or getattr(self, "_receptive_pending", ()):
+            self._receipt("autonomous_decision", helix_pulse=pulse, disposition="body_busy",
+                          reason="existing native work retains its real return")
+            return None
         intention = parse_natural_or_wire_intention(thought)
+        intention_source = "foreground_intention" if intention is not None else "native_trunk"
         if intention is None and self.has_subconscious_motor_impulse():
             pending = self.continuation.get("pending", {})
             obligations = pending.get("obligations") or {}
-            obs_list = pending.get("observations", [])
+            obs_list = list(pending.get("observations", []))
+            obs_list.extend(self.continuation.get("body_observations", {}).values())
+            if self.continuation.get("body_scene"):
+                obs_list.append(self.continuation["body_scene"])
             current_pos = getattr(getattr(getattr(self, "body", None), "workspace", None), "position", ".")
-            intention = resolve_subconscious_action(obligations, obs_list, current_position=current_pos, thought=thought)
+            active_trunks = self.get_active_subconscious_trunks()
+            intention = resolve_subconscious_action(
+                obligations,
+                obs_list,
+                current_position=current_pos,
+                thought=thought,
+                active_trunks=active_trunks,
+            )
 
+        sensed = getattr(getattr(self, "native", None), "latest_pulse", None)
+        cycle = getattr(sensed, "cycle", None)
+        self._receipt("autonomous_decision", helix_pulse=pulse,
+            native_cycle_id=getattr(cycle, "cycle_id", None),
+            active_trunks=sorted(str(t) for t in self.get_active_subconscious_trunks()),
+            disposition="act" if intention else "no_motor_action", intention=intention,
+            intention_source=intention_source,
+            selection="native selection with bootstrap target resolver; not a learned target decoder")
         if intention is None:
             return None
+        self._receipt("autonomous_action_selected", helix_pulse=pulse, intention=intention,
+            active_trunks=sorted(str(t) for t in self.get_active_subconscious_trunks()),
+            selection="foreground intention or native trunk with actual observed targets; bootstrap target resolver")
+        return self._act_intention(intention, thought, pulse)
 
-        return self._worker.submit(self._act_intention, intention, thought, pulse).result()
+    def _remember_body_result(self, result):
+        """Derived latest-return index; complete history remains in native receipts."""
+        receipt = result.get("receipt", {})
+        if receipt.get("verified") is not True:
+            return
+        output = receipt.get("output") or {}
+        if not isinstance(output, dict):
+            output = {}
+        action = result.get("action")
+        path = output.get("path") or output.get("position") or receipt.get("arguments", {}).get("path")
+        entry = {"id": receipt["receipt_id"], "action": action, "path": path,
+                 "status": receipt.get("status"), "verified": True,
+                 "output": output, "arguments": receipt.get("arguments", {})}
+        observations = self.continuation.setdefault("body_observations", {})
+        observations[json.dumps([action, path])] = entry
 
     def _act(self, thought, pulse):
         from core.mindscape_intention import parse_natural_or_wire_intention
@@ -843,12 +992,8 @@ class Mindscape:
         result.update(action=action, helix_pulse=pulse, intent_source="subconscious_or_natural",
                       intention_sha256=hashlib.sha256(thought.encode()).hexdigest())
         receipt_id = result.get("receipt", {}).get("receipt_id") or f"native-attempt:{uuid.uuid4().hex}"
-        content = json.dumps(result, ensure_ascii=False, sort_keys=True, default=str)
-        # ToolRegistry already settled the observed return through the same
-        # cortex. Its actual result also reaches the coupled RWKV token state.
-        ids = self.native.backend.encode(content)
-        if ids:
-            self.native.backend.consume(ids)
+        tokens = self.learning.returned(result, getattr(self.body, "last_action_eligibility", None))
+        self._remember_body_result(result)
         from core.mindscape_intention import observation_text
         observed_text = observation_text(result)
         self.continuation["return"] = {"id": receipt_id, "content": observed_text, "consumed": False}
@@ -869,11 +1014,26 @@ class Mindscape:
         self._save_continuation()
         self.last_sensed_feeling["is_external"] = False
         self.last_sensed_feeling["modality"] = "INTERNAL_ACTION_INTENTION"
-        self._receipt("native_action_return", rwkv_return_tokens=len(ids), **result)
+        self._receipt("native_action_return", rwkv_return_tokens=tokens, **result)
         return result
 
-    def _finish(self, thought, pulse, delivered_external=False, observed_motor_ids=None):
+    def _finish(self, thought, pulse, delivered_external=False, observed_motor_ids=None,
+                private_continuation=None):
         self._admit_foreground(thought, pulse, delivered_external)
+        if private_continuation is None:
+            # Support native callers that supply a private-only pulse directly.
+            private_continuation = self._load_private_continuation()
+            if thought.strip().startswith("[thought]") and thought.strip()[len("[thought]"):].strip():
+                private_continuation = ContextContribution(
+                    "thinking", thought.strip()[len("[thought]"):].lstrip(), "foreground_private",
+                    (f"helix-own-output:{self.session_id}:{pulse}",),
+                    kind="thought", evidence="private thought, not external evidence", owner="agent")
+        if private_continuation is not None:
+            previous = self._load_private_continuation()
+            saved = asdict(private_continuation)
+            if previous != private_continuation and private_continuation.text != thought.removeprefix("[thought] "):
+                self._admit_foreground(private_continuation.text, pulse, channel="private")
+            self.continuation["private_thought"] = saved
         workspace = getattr(getattr(self, "body", None), "workspace", None)
         returned = self.continuation.get("return")
         for item in self.continuation.get("motor_returns", []):
@@ -889,8 +1049,8 @@ class Mindscape:
             workspace.disengage()
         if delivered_external and not self.needs_native_observation:
             self.continuation.pop("pending", None)
-        elif not delivered_external and thought.strip().startswith("[thought]") and self.continuation.get("pending"):
-            self.continuation["pending"].setdefault("thoughts", []).append(thought.strip())
+        if private_continuation is not None and self.continuation.get("pending"):
+            self.continuation["pending"].pop("thoughts", None)
         if self.needs_native_observation and not hasattr(self, "motor") and getattr(self, "_last_native_action_pulse", None) != pulse:
             from core.mindscape_intention import step_guidance_for_pending
             guidance = step_guidance_for_pending(
@@ -928,6 +1088,7 @@ class Mindscape:
         manifest = self.native.save(label=label)
         self._receipt("joint_checkpoint", label=label, generation=manifest["generation"],
                       numeric_state_sha256=manifest["numeric_state_sha256"], files=manifest["files"])
+        return manifest
 
     def _release(self):
         if self.loom is not None:
